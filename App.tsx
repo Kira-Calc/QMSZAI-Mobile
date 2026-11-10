@@ -1,4 +1,6 @@
 import { SymbolView } from 'expo-symbols';
+import { AppIcon } from './src/components/AppIcon';
+import { cardSurface, elevation, m3, pressedDim, pressedSurface, ripple, shape, type as typeScale } from './src/material';
 import { ChatWorkspace } from './src/ChatWorkspace';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useCallback, useMemo, useRef, useState, type ComponentProps } from 'react';
@@ -33,6 +35,7 @@ import {
   Segmented,
   SheetHeader,
   animateContentChange,
+  palette,
 } from './src/ui';
 import { FaceToolsScreen } from './src/screens/FaceToolsScreen';
 import { FusionScreen } from './src/screens/FusionScreen';
@@ -85,13 +88,15 @@ const tokenStatusLabel: Record<TokenStatus, string> = {
   expired: '过期',
 };
 
+const ios = Platform.OS === 'ios';
+
 const statusColor: Record<ModelStatus | TokenStatus, string> = {
-  stable: '#157A5B',
-  watch: '#9A6500',
-  limited: '#B3404A',
-  active: '#157A5B',
-  paused: '#9A6500',
-  expired: '#B3404A',
+  stable: ios ? '#157A5B' : palette.green,
+  watch: ios ? '#9A6500' : palette.orange,
+  limited: ios ? '#B3404A' : palette.red,
+  active: ios ? '#157A5B' : palette.green,
+  paused: ios ? '#9A6500' : palette.orange,
+  expired: ios ? '#B3404A' : palette.red,
 };
 
 export default function App() {
@@ -388,7 +393,6 @@ export default function App() {
                 ...task,
                 progress: 100,
                 state: 'succeeded',
-                elapsed: '已完成',
                 note: '模拟任务已完成，结果仅保留在本次运行中。',
               }
             : { ...task, progress };
@@ -618,115 +622,182 @@ function Overview({
       onScroll={onScroll}
       scrollEventThrottle={16}
     >
-      <Segmented
-        values={usageRangeOptions.map((option) => option.label)}
-        selectedIndex={usageRangeOptions.findIndex((option) => option.key === usageRange)}
-        onChange={(index) => {
-          animateContentChange();
-          onRangeChange(usageRangeOptions[index].key);
-        }}
-      />
-      <View style={styles.heroPanel}>
-        <View style={styles.heroTopRow}>
-          <View>
-            <Text style={styles.panelLabel}>请求次数</Text>
-            <Text style={styles.heroMetric}>{metrics.requests}</Text>
+      {ios ? (
+        <>
+        <Segmented
+          values={usageRangeOptions.map((option) => option.label)}
+          selectedIndex={usageRangeOptions.findIndex((option) => option.key === usageRange)}
+          onChange={(index) => {
+            animateContentChange();
+            onRangeChange(usageRangeOptions[index].key);
+          }}
+        />
+        <View style={styles.heroPanel}>
+          <View style={styles.heroTopRow}>
+            <View>
+              <Text style={styles.panelLabel}>请求次数</Text>
+              <Text style={styles.heroMetric}>{metrics.requests}</Text>
+            </View>
+            <Text style={styles.mutedText}>成功率 {metrics.reliability}</Text>
           </View>
-          <Text style={styles.mutedText}>成功率 {metrics.reliability}</Text>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${usagePercent}%` }]} />
+          </View>
+          <View style={styles.metricRow}>
+            <Text style={styles.mutedText}>{metrics.totalUsage.toLocaleString()} 已使用</Text>
+            <Text style={styles.mutedText}>{metrics.totalQuota.toLocaleString()} 总额度</Text>
+          </View>
         </View>
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${usagePercent}%` }]} />
+
+        <View style={styles.gridTwo}>
+          <StatBlock label="可用模型" value={availableModels} tone="blue" />
+          <StatBlock label="启用令牌" value={`${activeTokens}`} tone="green" />
+          <StatBlock label="平均延迟" value={metrics.averageLatency} tone="amber" />
+          <StatBlock label="异常队列" value={`${metrics.issueCount}`} tone="rose" />
         </View>
-        <View style={styles.metricRow}>
-          <Text style={styles.mutedText}>{metrics.totalUsage.toLocaleString()} 已使用</Text>
-          <Text style={styles.mutedText}>{metrics.totalQuota.toLocaleString()} 总额度</Text>
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>快捷访问</Text>
         </View>
-      </View>
+        <View style={styles.actionList}>
+          <QuickAction
+            symbol="square.stack.3d.up"
+            icon="▦"
+            title="模型目录"
+            onPress={onOpenModels}
+          />
+          <QuickAction
+            symbol="key"
+            icon="◇"
+            title="API 令牌"
+            onPress={onOpenTokens}
+          />
+        </View>
 
-      <View style={styles.gridTwo}>
-        <StatBlock label="可用模型" value={availableModels} tone="blue" />
-        <StatBlock label="启用令牌" value={`${activeTokens}`} tone="green" />
-        <StatBlock label="平均延迟" value={metrics.averageLatency} tone="amber" />
-        <StatBlock label="异常队列" value={`${metrics.issueCount}`} tone="rose" />
-      </View>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>AI 功能</Text>
+        </View>
+        <View style={styles.actionList}>
+          <QuickAction
+            symbol="sparkles"
+            icon="✦"
+            title="AI 创作"
+            onPress={onOpenMedia}
+          />
+          <QuickAction
+            symbol="text.bubble"
+            icon="◇"
+            title="模型体验"
+            onPress={onOpenExperience}
+          />
+          <QuickAction
+            symbol="person.crop.square"
+            icon="◎"
+            title="人脸工具"
+            onPress={onOpenFace}
+          />
+          <QuickAction
+            symbol="arrow.triangle.merge"
+            icon="◈"
+            title="模型融合"
+            onPress={onOpenFusion}
+          />
+          <QuickAction
+            symbol="square.grid.2x2"
+            icon="▦"
+            title="模型广场"
+            onPress={onOpenPricing}
+          />
+        </View>
 
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>快捷访问</Text>
-      </View>
-      <View style={styles.actionList}>
-        <QuickAction
-          symbol="square.stack.3d.up"
-          icon="▦"
-          title="模型目录"
-          onPress={onOpenModels}
-        />
-        <QuickAction
-          symbol="key"
-          icon="◇"
-          title="API 令牌"
-          onPress={onOpenTokens}
-        />
-      </View>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>用量与消息</Text>
+        </View>
+        <View style={styles.actionList}>
+          <QuickAction
+            symbol="doc.text.magnifyingglass"
+            icon="▤"
+            title="用量日志"
+            onPress={onOpenLogs}
+          />
+          <QuickAction
+            symbol="square.stack.3d.up"
+            icon="◫"
+            title="任务"
+            onPress={onOpenTasks}
+          />
+          <QuickAction
+            symbol="bell"
+            icon="✉"
+            title="消息"
+            onPress={onOpenMessages}
+          />
+        </View>
+        </>
+      ) : (
+        <>
+          <Segmented
+            values={usageRangeOptions.map((option) => option.label)}
+            selectedIndex={usageRangeOptions.findIndex((option) => option.key === usageRange)}
+            onChange={(index) => {
+              animateContentChange();
+              onRangeChange(usageRangeOptions[index].key);
+            }}
+          />
 
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>AI 功能</Text>
-      </View>
-      <View style={styles.actionList}>
-        <QuickAction
-          symbol="sparkles"
-          icon="✦"
-          title="AI 创作"
-          onPress={onOpenMedia}
-        />
-        <QuickAction
-          symbol="text.bubble"
-          icon="◇"
-          title="模型体验"
-          onPress={onOpenExperience}
-        />
-        <QuickAction
-          symbol="person.crop.square"
-          icon="◎"
-          title="人脸工具"
-          onPress={onOpenFace}
-        />
-        <QuickAction
-          symbol="arrow.triangle.merge"
-          icon="◈"
-          title="模型融合"
-          onPress={onOpenFusion}
-        />
-        <QuickAction
-          symbol="square.grid.2x2"
-          icon="▦"
-          title="模型广场"
-          onPress={onOpenPricing}
-        />
-      </View>
+          <View style={styles.heroCard}>
+            <View style={styles.heroCardTop}>
+              <View style={styles.heroCardMain}>
+                <Text style={styles.heroCardLabel}>请求次数</Text>
+                <Text style={styles.heroCardValue}>{metrics.requests}</Text>
+              </View>
+              <View style={styles.heroCardAside}>
+                <Text style={styles.heroCardAsideLabel}>成功率</Text>
+                <Text style={styles.heroCardAsideValue}>{metrics.reliability}</Text>
+              </View>
+            </View>
+            <View style={styles.heroCardTrack}>
+              <View style={[styles.heroCardFill, { width: `${usagePercent}%` }]} />
+            </View>
+            <View style={styles.heroCardMetaRow}>
+              <Text style={styles.heroCardMeta}>{metrics.totalUsage.toLocaleString()} 已使用</Text>
+              <Text style={styles.heroCardMeta}>{metrics.totalQuota.toLocaleString()} 总额度</Text>
+            </View>
+          </View>
 
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>用量与消息</Text>
-      </View>
-      <View style={styles.actionList}>
-        <QuickAction
-          symbol="doc.text.magnifyingglass"
-          icon="▤"
-          title="用量日志"
-          onPress={onOpenLogs}
-        />
-        <QuickAction
-          symbol="square.stack.3d.up"
-          icon="◫"
-          title="任务"
-          onPress={onOpenTasks}
-        />
-        <QuickAction
-          symbol="bell"
-          icon="✉"
-          title="消息"
-          onPress={onOpenMessages}
-        />
-      </View>
+          <Group style={styles.overviewGroup}>
+            <Row title="可用模型" accessory={<Text style={styles.overviewStatValue}>{availableModels}</Text>} />
+            <Row title="启用令牌" accessory={<Text style={styles.overviewStatValue}>{activeTokens}</Text>} />
+            <Row
+              title="平均延迟"
+              accessory={<Text style={styles.overviewStatValue}>{metrics.averageLatency}</Text>}
+            />
+            <Row
+              title="异常队列"
+              accessory={<Text style={styles.overviewStatValue}>{metrics.issueCount}</Text>}
+            />
+          </Group>
+
+          <Group header="快捷访问" style={styles.overviewGroup}>
+            <Row title="模型目录" icon="square.stack.3d.up" chevron onPress={onOpenModels} />
+            <Row title="API 令牌" icon="key" chevron onPress={onOpenTokens} />
+          </Group>
+
+          <Group header="AI 功能" style={styles.overviewGroup}>
+            <Row title="AI 创作" icon="sparkles" chevron onPress={onOpenMedia} />
+            <Row title="模型体验" icon="text.bubble" chevron onPress={onOpenExperience} />
+            <Row title="人脸工具" icon="person.crop.square" chevron onPress={onOpenFace} />
+            <Row title="模型融合" icon="arrow.triangle.merge" chevron onPress={onOpenFusion} />
+            <Row title="模型广场" icon="square.grid.2x2" chevron onPress={onOpenPricing} />
+          </Group>
+
+          <Group header="用量与消息" style={styles.overviewGroup}>
+            <Row title="用量日志" icon="doc.text.magnifyingglass" chevron onPress={onOpenLogs} />
+            <Row title="任务" icon="square.stack.3d.up" chevron onPress={onOpenTasks} />
+            <Row title="消息" icon="bell" chevron onPress={onOpenMessages} />
+          </Group>
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -749,6 +820,11 @@ function ModelsView({
   return (
     <View style={styles.splitContent}>
       <View style={styles.modelsSearchWrap}>
+        {Platform.OS === 'ios' ? null : (
+          <View style={styles.searchIconBox} pointerEvents="none">
+            <AppIcon name="magnifyingglass" size={20} color={palette.secondaryLabel} />
+          </View>
+        )}
         <TextInput
           value={query}
           onChangeText={setQuery}
@@ -769,7 +845,11 @@ function ModelsView({
             <Pressable
               key={model.id}
               onPress={() => setSelectedModel(model)}
-              style={[styles.modelRow, selected ? styles.modelRowSelected : null]}
+              style={({ pressed }) => [
+                styles.modelRow,
+                selected ? styles.modelRowSelected : null,
+                pressed && !ios ? pressedSurface : null,
+              ]}
             >
               <View style={styles.modelRowIdentity}>
                 <ModelLogo name={model.name} size={30} />
@@ -778,7 +858,14 @@ function ModelsView({
                   <Text style={styles.modelVendor}>{model.vendor}</Text>
                 </View>
               </View>
-              <View style={[styles.pill, { borderColor: statusColor[model.status] }]}>
+              <View
+                style={[
+                  styles.pill,
+                  ios
+                    ? { borderColor: statusColor[model.status] }
+                    : { backgroundColor: `${statusColor[model.status]}1F` },
+                ]}
+              >
                 <Text style={[styles.pillText, { color: statusColor[model.status] }]}>
                   {statusLabel[model.status]}
                 </Text>
@@ -787,7 +874,7 @@ function ModelsView({
           );
         })}
       </ScrollView>
-      <Modal visible={selectedModel !== null} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setSelectedModel(null)}>
+      <Modal visible={selectedModel !== null} animationType="slide" presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'} statusBarTranslucent onRequestClose={() => setSelectedModel(null)}>
         <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
           <SheetHeader title="模型详情" onClose={() => setSelectedModel(null)} />
           <ScrollView contentContainerStyle={styles.detailSheetContent}>
@@ -854,7 +941,11 @@ function TokensView({
       onScroll={onScroll}
       scrollEventThrottle={16}
     >
-      <Pressable accessibilityRole="button" onPress={onCreate} style={styles.primaryButton}>
+      <Pressable
+        accessibilityRole="button"
+        onPress={onCreate}
+        style={({ pressed }) => [styles.primaryButton, pressed ? pressedDim : null]}
+      >
         <Text style={styles.primaryButtonIcon}>＋</Text>
         <Text style={styles.primaryButtonText}>新建模拟令牌</Text>
       </Pressable>
@@ -937,7 +1028,7 @@ function AccountView({
         {Platform.OS === 'ios' ? (
           <SymbolView name="chevron.right" tintColor="#C7C7CC" style={styles.accountChevron} />
         ) : (
-          <Text style={styles.accountChevronText}>›</Text>
+          <AppIcon name="chevron.right" size={18} color="#C7C7CC" />
         )}
       </Pressable>
 
@@ -952,12 +1043,6 @@ function AccountView({
         <Row title="钱包" chevron icon="creditcard" onPress={onOpenWallet} />
       </Group>
 
-      <View style={styles.noticePanel}>
-        <Text style={styles.noticeTitle}>关于演示模式</Text>
-        <Text style={styles.noticeCopy}>
-          当前显示示例数据，修改仅在本次运行中生效。账户登录与网站业务同步尚未接入。
-        </Text>
-      </View>
     </ScrollView>
   );
 }
@@ -1160,11 +1245,11 @@ function QuickAction({
   onPress: () => void;
 }) {
   return (
-    <Pressable onPress={onPress} style={styles.quickAction}>
+    <Pressable onPress={onPress} android_ripple={ripple()} style={styles.quickAction}>
       {Platform.OS === 'ios' ? (
         <SymbolView name={symbol} tintColor="#007AFF" style={styles.quickSymbol} />
       ) : (
-        <Text style={styles.quickIcon}>{icon}</Text>
+        <AppIcon name={symbol} size={24} color={palette.blue} style={{ marginRight: 12 }} />
       )}
       <View style={styles.quickBody}>
         <Text style={styles.quickTitle}>{title}</Text>
@@ -1206,11 +1291,11 @@ const baseStyles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#F2F2F7',
+    backgroundColor: palette.groupedBackground,
   },
   subpagePane: {
     flex: 1,
-    backgroundColor: '#F2F2F7',
+    backgroundColor: palette.groupedBackground,
   },
   subpageShadow: {
     shadowColor: '#000000',
@@ -1234,28 +1319,27 @@ const baseStyles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   eyebrow: {
-    color: '#66707A',
+    color: m3.onSurfaceVariant,
     fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0,
+    fontWeight: '500',
+    letterSpacing: 0.4,
     marginBottom: 4,
   },
   title: {
-    color: '#111418',
-    fontSize: 31,
-    fontWeight: '800',
-    letterSpacing: 0,
+    color: m3.onSurface,
+    fontSize: 30,
+    fontWeight: '600',
+    letterSpacing: -0.3,
   },
   liveBadge: {
-    height: 34,
-    paddingHorizontal: 12,
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: '#CCD3DA',
-    backgroundColor: '#FFFFFF',
+    height: 32,
+    paddingHorizontal: 14,
+    borderRadius: shape.full,
+    backgroundColor: m3.surfaceContainerLowest,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
+    ...elevation.level1,
   },
   liveDot: {
     width: 8,
@@ -1264,9 +1348,9 @@ const baseStyles = StyleSheet.create({
     backgroundColor: '#26A269',
   },
   liveText: {
-    color: '#30363D',
-    fontSize: 13,
-    fontWeight: '700',
+    color: m3.onSurfaceVariant,
+    fontSize: 12,
+    fontWeight: '500',
   },
   content: {
     flex: 1,
@@ -1277,36 +1361,37 @@ const baseStyles = StyleSheet.create({
     gap: 16,
   },
   rangeSwitch: {
-    minHeight: 44,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#D2D8DE',
-    backgroundColor: '#FFFFFF',
+    minHeight: 48,
+    borderRadius: shape.full,
+    backgroundColor: m3.surfaceContainer,
     padding: 4,
     flexDirection: 'row',
-    gap: 4,
+    gap: 2,
   },
   rangeButton: {
     flex: 1,
-    borderRadius: 6,
+    borderRadius: shape.full,
     alignItems: 'center',
     justifyContent: 'center',
   },
   rangeButtonActive: {
-    backgroundColor: '#15191E',
+    backgroundColor: m3.surfaceContainerLowest,
+    ...elevation.level1,
   },
   rangeButtonText: {
-    color: '#69737D',
-    fontSize: 13,
-    fontWeight: '800',
+    color: m3.onSurfaceVariant,
+    ...typeScale.labelLarge,
   },
   rangeButtonTextActive: {
-    color: '#FFFFFF',
+    color: m3.onSurface,
+    ...typeScale.labelLarge,
+    fontWeight: '600',
   },
   heroPanel: {
-    borderRadius: 8,
-    padding: 18,
-    backgroundColor: '#111418',
+    borderRadius: shape.xl,
+    padding: 20,
+    backgroundColor: '#141A1E',
+    ...elevation.level2,
   },
   heroTopRow: {
     flexDirection: 'row',
@@ -1314,15 +1399,15 @@ const baseStyles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   panelLabel: {
-    color: '#B9C0C8',
+    color: '#B9C6CF',
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '500',
   },
   heroMetric: {
     color: '#FFFFFF',
-    fontSize: 42,
-    fontWeight: '800',
-    letterSpacing: 0,
+    fontSize: 44,
+    fontWeight: '600',
+    letterSpacing: -1,
     marginTop: 2,
   },
   scoreRing: {
@@ -1333,11 +1418,6 @@ const baseStyles = StyleSheet.create({
     borderColor: '#58C7A8',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  scoreText: {
-    color: '#FFFFFF',
-    fontSize: 17,
-    fontWeight: '800',
   },
   progressTrack: {
     height: 8,
@@ -1369,65 +1449,128 @@ const baseStyles = StyleSheet.create({
   },
   statBlock: {
     width: '48.2%',
-    minHeight: 96,
-    borderRadius: 8,
-    padding: 14,
+    minHeight: 104,
+    borderRadius: shape.lg,
+    padding: 16,
     justifyContent: 'space-between',
-    borderWidth: 1,
   },
   statBlock_blue: {
-    backgroundColor: '#EEF6FC',
-    borderColor: '#C9DEEE',
+    backgroundColor: '#E9F3FA',
   },
   statBlock_green: {
-    backgroundColor: '#EEF8F2',
-    borderColor: '#C7E6D3',
+    backgroundColor: '#E6F4EE',
   },
   statBlock_amber: {
-    backgroundColor: '#FFF7E8',
-    borderColor: '#EED9AA',
+    backgroundColor: '#FCF2DC',
   },
   statBlock_rose: {
-    backgroundColor: '#FFF1F2',
-    borderColor: '#EFCAD0',
+    backgroundColor: '#FBE9EA',
   },
   statLabel: {
-    color: '#69737D',
+    color: m3.onSurfaceVariant,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
   },
   statValue: {
-    color: '#15191E',
+    color: m3.onSurface,
     fontSize: 30,
-    fontWeight: '800',
-    letterSpacing: 0,
+    fontWeight: '600',
+    letterSpacing: -0.5,
   },
   sectionHeader: {
     marginTop: 2,
   },
   sectionTitle: {
-    color: '#15191E',
-    fontSize: 18,
-    fontWeight: '800',
+    color: m3.onSurface,
+    fontSize: 20,
+    fontWeight: '600',
+    letterSpacing: -0.2,
+  },
+  // 安卓概览：单张白色数据卡 + 分组列表，信息层级与 iOS 版一致。
+  heroCard: {
+    backgroundColor: m3.surfaceContainerLowest,
+    padding: 20,
+    gap: 16,
+    ...cardSurface,
+  },
+  heroCardTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  heroCardMain: {
+    flex: 1,
+    gap: 2,
+  },
+  heroCardLabel: {
+    color: m3.onSurfaceVariant,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  heroCardValue: {
+    color: m3.onSurface,
+    fontSize: 40,
+    fontWeight: '600',
+    letterSpacing: -1,
+    fontVariant: ['tabular-nums'],
+  },
+  heroCardAside: {
+    alignItems: 'flex-end',
+    gap: 2,
+    paddingTop: 2,
+  },
+  heroCardAsideLabel: {
+    color: m3.onSurfaceVariant,
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  heroCardAsideValue: {
+    color: m3.onSurface,
+    fontSize: 16,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  heroCardTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: m3.surfaceContainerHighest,
+    overflow: 'hidden',
+  },
+  heroCardFill: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: m3.primary,
+  },
+  heroCardMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  heroCardMeta: {
+    color: m3.onSurfaceVariant,
+    fontSize: 12,
+  },
+  overviewGroup: {
+    marginTop: 0,
+  },
+  overviewStatValue: {
+    color: m3.onSurface,
+    fontSize: 16,
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
   },
   actionList: {
     gap: 10,
   },
   quickAction: {
-    minHeight: 60,
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D9DEE4',
-    paddingHorizontal: 14,
+    minHeight: 64,
+    borderRadius: shape.xl,
+    backgroundColor: m3.surfaceContainerLowest,
+    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  quickIcon: {
-    width: 36,
-    color: '#286E8F',
-    fontSize: 26,
-    fontWeight: '800',
+    ...elevation.level1,
   },
   quickSymbol: {
     width: 34,
@@ -1437,12 +1580,12 @@ const baseStyles = StyleSheet.create({
     flex: 1,
   },
   quickTitle: {
-    color: '#15191E',
+    color: m3.onSurface,
     fontSize: 16,
-    fontWeight: '800',
+    fontWeight: '500',
   },
   chevron: {
-    color: '#8A929B',
+    color: m3.outline,
     fontSize: 32,
     fontWeight: '300',
   },
@@ -1453,15 +1596,22 @@ const baseStyles = StyleSheet.create({
   modelsSearchWrap: {
     paddingHorizontal: 20,
   },
+  searchIconBox: {
+    position: 'absolute',
+    left: 36,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    zIndex: 1,
+  },
   searchInput: {
-    height: 46,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#D2D8DE',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 14,
-    color: '#15191E',
-    fontSize: 16,
+    height: 52,
+    borderRadius: shape.full,
+    backgroundColor: m3.surfaceContainerHigh,
+    paddingLeft: 48,
+    paddingRight: 20,
+    color: m3.onSurface,
+    fontSize: 15,
   },
   modelList: {
     paddingTop: 12,
@@ -1470,19 +1620,18 @@ const baseStyles = StyleSheet.create({
     paddingBottom: 96,
   },
   modelRow: {
-    minHeight: 74,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#D9DEE4',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 14,
+    minHeight: 80,
+    borderRadius: shape.xl,
+    backgroundColor: m3.surfaceContainerLowest,
+    overflow: 'hidden',
+    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    ...elevation.level1,
   },
   modelRowSelected: {
-    borderColor: '#2E7EA5',
-    backgroundColor: '#F1F8FC',
+    backgroundColor: m3.secondaryContainer,
   },
   modelRowIdentity: {
     flex: 1,
@@ -1495,38 +1644,36 @@ const baseStyles = StyleSheet.create({
     paddingRight: 12,
   },
   modelName: {
-    color: '#15191E',
-    fontSize: 17,
-    fontWeight: '800',
-    marginBottom: 4,
+    color: m3.onSurface,
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 2,
   },
   modelVendor: {
-    color: '#69737D',
+    color: m3.onSurfaceVariant,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '400',
     lineHeight: 18,
   },
   pill: {
     minWidth: 58,
-    height: 30,
-    borderRadius: 15,
-    borderWidth: 1,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 10,
-    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
   },
   pillText: {
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
   detailSheetContent: { padding: 16, paddingBottom: 40 },
   detailPanel: {
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D9DEE4',
-    padding: 16,
+    borderRadius: shape.xl,
+    backgroundColor: m3.surfaceContainerLowest,
+    padding: 18,
+    ...elevation.level1,
   },
   detailHeader: {
     flexDirection: 'row',
@@ -1535,10 +1682,10 @@ const baseStyles = StyleSheet.create({
     gap: 12,
   },
   detailTitle: {
-    color: '#15191E',
-    fontSize: 21,
-    fontWeight: '800',
-    letterSpacing: 0,
+    color: m3.onSurface,
+    fontSize: 22,
+    fontWeight: '600',
+    letterSpacing: -0.3,
   },
   statusText: {
     fontSize: 13,
@@ -1550,25 +1697,23 @@ const baseStyles = StyleSheet.create({
     marginTop: 16,
   },
   billingGrid: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E1E5EA',
-    backgroundColor: '#FBFCFD',
+    borderRadius: shape.lg,
+    backgroundColor: m3.surfaceContainerLow,
     overflow: 'hidden',
     marginTop: 14,
   },
   miniStat: {
     flex: 1,
-    minHeight: 66,
-    borderRadius: 8,
-    backgroundColor: '#F6F7F9',
-    padding: 10,
+    minHeight: 70,
+    borderRadius: shape.md,
+    backgroundColor: m3.surfaceContainerLowest,
+    padding: 12,
     justifyContent: 'space-between',
   },
   miniValue: {
-    color: '#15191E',
+    color: m3.onSurface,
     fontSize: 17,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   detailNote: {
     color: '#30363D',
@@ -1583,23 +1728,25 @@ const baseStyles = StyleSheet.create({
     marginTop: 14,
   },
   tag: {
-    borderRadius: 14,
-    backgroundColor: '#EEF1F4',
-    color: '#4D5964',
+    borderRadius: shape.sm,
+    backgroundColor: m3.surfaceContainer,
+    color: m3.onSurfaceVariant,
     paddingHorizontal: 10,
     paddingVertical: 6,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
   },
   primaryButton: {
-    minHeight: 50,
-    borderRadius: 8,
-    backgroundColor: '#15191E',
-    paddingHorizontal: 16,
+    minHeight: 56,
+    borderRadius: shape.full,
+    backgroundColor: m3.primary,
+    overflow: 'hidden',
+    paddingHorizontal: 24,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    ...elevation.level1,
   },
   primaryButtonIcon: {
     color: '#FFFFFF',
@@ -1607,29 +1754,27 @@ const baseStyles = StyleSheet.create({
     fontWeight: '500',
   },
   primaryButtonText: {
-    color: '#FFFFFF',
+    color: m3.onPrimary,
     fontSize: 16,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   emptyState: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#D9DEE4',
-    backgroundColor: '#FFFFFF',
-    padding: 16,
+    borderRadius: shape.xl,
+    backgroundColor: m3.surfaceContainerLowest,
+    padding: 18,
+    ...elevation.level1,
   },
   emptyTitle: {
-    color: '#15191E',
-    fontSize: 17,
-    fontWeight: '800',
-    marginBottom: 5,
+    color: m3.onSurface,
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 4,
   },
   tokenCard: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#D9DEE4',
-    backgroundColor: '#FFFFFF',
-    padding: 14,
+    borderRadius: shape.xl,
+    backgroundColor: m3.surfaceContainerLowest,
+    padding: 16,
+    ...elevation.level1,
   },
   tokenMain: {
     gap: 10,
@@ -1641,9 +1786,9 @@ const baseStyles = StyleSheet.create({
     gap: 12,
   },
   tokenTitle: {
-    color: '#15191E',
-    fontSize: 17,
-    fontWeight: '800',
+    color: m3.onSurface,
+    fontSize: 16,
+    fontWeight: '600',
   },
   scopeText: {
     color: '#30363D',
@@ -1654,19 +1799,20 @@ const baseStyles = StyleSheet.create({
   progressTrackCompact: {
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#E4E8EC',
+    backgroundColor: m3.surfaceContainerHighest,
     overflow: 'hidden',
   },
   progressFillCompact: {
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#2E7EA5',
+    backgroundColor: m3.primary,
   },
   secondaryButton: {
-    height: 38,
-    borderRadius: 8,
+    height: 44,
+    borderRadius: shape.full,
     borderWidth: 1,
-    borderColor: '#CCD3DA',
+    borderColor: m3.outlineVariant,
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 14,
@@ -1675,22 +1821,22 @@ const baseStyles = StyleSheet.create({
     opacity: 0.45,
   },
   secondaryButtonText: {
-    color: '#15191E',
+    color: m3.primary,
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   accountHeader: {
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D9DEE4',
-    padding: 16,
+    borderRadius: shape.xl,
+    backgroundColor: m3.surfaceContainerLowest,
+    overflow: 'hidden',
+    padding: 18,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
+    ...elevation.level1,
   },
   accountHeaderPressed: {
-    backgroundColor: '#F2F2F7',
+    backgroundColor: m3.surfaceContainerLow,
   },
   accountHeaderMain: {
     flex: 1,
@@ -1708,7 +1854,7 @@ const baseStyles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#2E7EA5',
+    backgroundColor: m3.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1721,13 +1867,6 @@ const baseStyles = StyleSheet.create({
     color: '#15191E',
     fontSize: 18,
     fontWeight: '800',
-  },
-  settingsList: {
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D9DEE4',
-    overflow: 'hidden',
   },
   settingsRow: {
     minHeight: 54,
@@ -1751,24 +1890,6 @@ const baseStyles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     textAlign: 'right',
-  },
-  noticePanel: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#D9DEE4',
-    backgroundColor: '#FFF7E8',
-    padding: 16,
-  },
-  noticeTitle: {
-    color: '#15191E',
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  noticeCopy: {
-    color: '#4D5964',
-    fontSize: 14,
-    lineHeight: 21,
-    marginTop: 8,
   },
   modalBackdrop: {
     flex: 1,
@@ -1884,9 +2005,6 @@ const iosStyles = StyleSheet.create({
   searchInput: { minHeight: 40, borderRadius: 10, backgroundColor: '#E5E5EA', paddingHorizontal: 12, color: '#000', fontSize: 17 },
   modelName: { color: '#000', fontSize: 17, fontWeight: '600', marginBottom: 4 },
   modelRowSelected: { borderColor: '#007AFF', backgroundColor: '#FFF' },
-  noticePanel: { paddingHorizontal: 16, paddingTop: 4, backgroundColor: 'transparent' },
-  noticeTitle: { fontSize: 13, color: '#6D6D72', fontWeight: '400' },
-  noticeCopy: { fontSize: 13, color: '#8E8E93', lineHeight: 19, marginTop: 6 },
   detailTitle: { fontSize: 22, fontWeight: '600' },
   formLabel: { color: '#6C6C70', fontSize: 13, fontWeight: '400' },
   formInput: { minHeight: 46, borderRadius: 10, borderWidth: 0, backgroundColor: '#F2F2F7', paddingHorizontal: 12, color: '#000', fontSize: 17, fontWeight: '400' },
@@ -1994,5 +2112,47 @@ const iosStyles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     padding: 16,
   },
+  // 以下是 iOS 专用原值：baseStyles 里的同名键已按 M3 改写，这里整体覆盖回来。
+  pill: {
+    minWidth: 58,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#C6C6C8',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  pillText: { fontSize: 12, fontWeight: '800' },
+  modelVendor: { color: '#69737D', fontSize: 13, fontWeight: '600', lineHeight: 18 },
+  chevron: { color: '#8A929B', fontSize: 32, fontWeight: '300' },
+  tag: {
+    borderRadius: 14,
+    backgroundColor: '#EEF1F4',
+    color: '#4D5964',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  emptyTitle: { color: '#15191E', fontSize: 17, fontWeight: '800', marginBottom: 5 },
+  billingGrid: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E1E5EA',
+    backgroundColor: '#FBFCFD',
+    overflow: 'hidden',
+    marginTop: 14,
+  },
+  miniStat: {
+    flex: 1,
+    minHeight: 66,
+    borderRadius: 8,
+    backgroundColor: '#F6F7F9',
+    padding: 10,
+    justifyContent: 'space-between',
+  },
+  miniValue: { color: '#15191E', fontSize: 17, fontWeight: '800' },
 });
 const styles = Platform.OS === 'ios' ? { ...baseStyles, ...iosStyles } : baseStyles;

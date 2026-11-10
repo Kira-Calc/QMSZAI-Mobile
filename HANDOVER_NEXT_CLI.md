@@ -1,8 +1,44 @@
 # QMSZAI Mobile — 下一 CLI 接手
 
-更新时间：2026-11-09。本文件是最新简明入口；详细历史见 HANDOVER.md。先核对实际文件，可能有其他 CLI 同时工作，勿覆盖其改动。
+更新时间：2026-11-10。本文件是最新简明入口；详细历史见 HANDOVER.md。先核对实际文件，可能有其他 CLI 同时工作，勿覆盖其改动。
 
-## 本轮增量（2026-11-10，第二十一轮：玻璃层兜底）
+## 本轮增量（2026-11-10，第二十四轮：安卓蓝色主题 + 概览页对齐 iOS）
+
+- `src/material.ts` 主色改正统蓝：`primary #1A73E8`、`primaryContainer #D3E3FD`、`onPrimaryContainer #041E49`、`secondaryContainer #DCE7F6`、`onSecondaryContainer #101C2B`，默认 ripple `rgba(26,115,232,0.12)`。
+- `App.tsx` 概览页拆成 `ios ? 原 JSX : 新安卓 JSX`：安卓按 iOS 层级排 `Segmented`（24h/7d/30d）→ `heroCard` 白色数据卡（请求次数/成功率/8 高进度条/已使用·总额度）→ 四行统计 `Group` → 「快捷访问」「AI 功能」「用量与消息」三个 `Group`；弃用深色 hero + 2×2 tonal 磁贴。新增 `heroCard*`、`overviewGroup`、`overviewStatValue` 样式。
+- 修 `iosStyles` 整键覆盖泄漏：补齐 `pill`/`pillText`/`modelVendor`/`chevron`/`tag`/`emptyTitle`/`billingGrid`/`miniStat`/`miniValue` 的 iOS 原值；模型状态徽标 iOS 走 `borderColor` 描边、安卓走 tonal 底色。
+- `statusColor` 改平台三元（iOS 原值 / 安卓 `palette`）；账户头像底色改 `m3.primary`（iOS 仍 `#007AFF`）。
+- 模拟任务完成时保留原耗时，不再写成「已完成」导致重复。
+- 验证：typecheck、双端 `expo export` 通过；安卓 16 张截图重拍覆盖 `~/Desktop/qmszai-android/`；iOS 概览/模型目录/令牌/模型详情 pageSheet 无回归。
+- 同日补充：iOS 卡片圆角回归。`cardSurface` 的 iOS 分支改为 `{ borderRadius: 12, borderCurve: 'continuous' }`（安卓仍 28 + elevation），并把 10 个子页被 M3 改掉的 iOS 圆角/高度/内边距/字号用 `ios ? 原值 : M3 值` 恢复；原先 10pt 的小卡片单独回 10。注意 `borderRadius: undefined` 会覆盖展开值，安卓需显式写 28。iOS 逐页截图与安卓模型体验/AI 创作复核通过。
+- 同日补充二：安卓按压态方块。`android_ripple` 的蒙版恒为矩形（RN `getMask` 只给 `ColorDrawable`），圆角宿主上必然画方块，`overflow:'hidden'` 也裁不到自身背景。已新增 `pressedSurface`（白面 `m3.surfaceContainer`）/`pressedDim`（彩色面 `opacity 0.8`），圆角面（底栏项、各主按钮、chip、建议卡、签到/退出、兑换、复制邀请、底部「完成」、账户头卡、模型行）改用 `Pressable` 的 `pressed` 状态；矩形行仍用 ripple，由 `groupBody` 的圆角裁剪兜住。验证：按住底栏/令牌按钮为圆角胶囊，iOS 截图无变化。
+- 同日补充三：新增 GitHub 展示用中文 `README.md`，以及 `docs/screenshots/` 8 张双端截图（宽 700）。iOS 用 `--no-dev --minify`（8095）关掉开发浮层，移动 `DevMenuFAB` 后两次截图按差异区合成；安卓在 Dev Menu 关闭 Tools button 后直拍。现已还原 `App.tsx` 初始态、关闭 8095 Metro、还原 FAB 位置。
+- 未提交、未推送。
+
+## 上一轮增量（2026-11-10，第二十三轮：安卓 Material 3 重做）
+
+- 删除账户页「关于演示模式」提示块（`App.tsx` 与 `baseStyles`/`iosStyles` 的 notice* 样式一并清理）。
+- 新增 `src/material.ts`：M3 色板 `m3`（surface 层级、primary/primaryContainer、error/success/warning 容器）、`shape`（4/8/12/16/28/full）、`type`（M3 字阶）、`elevation`（level1/2）、`ripple()`，以及平台感知的 `cardSurface` / `softShadow`（iOS 返回空对象，安卓给 28/16 圆角 + 1 级海拔）。
+- `ui.tsx` 安卓分支接入 `m3`：`palette` 安卓值改由 `m3` 提供；分段控件改胶囊 + 选中态白底微阴影；Group 28 圆角无描边 + elevation；Row 56 高、标题 500 字重；Badge 改 M3 tonal chip（无描边、12% 同色底）；EmptyState/Sheet/GlassPillButton 尺寸对齐 M3；行与分段加 `android_ripple`。
+- `LiquidTabBar` 安卓改 M3 底栏：`primaryContainer` 胶囊选中指示器、primary 图标与文字、surfaceContainerLowest 底 + elevation，scrim 颜色改用 `palette.groupedBackground`。
+- `App.tsx`（`baseStyles` 只作用于安卓）：标题 30/600、eyebrow 12/500 + 0.4 字距、区间切换改胶囊分段、状态块改 tonal 色块（16 圆角无描边）、快捷访问与卡片 28 圆角 + 极淡阴影、搜索框改 52 高胶囊并加左侧搜索图标、状态徽标改 tonal chip、主按钮改 M3 filled 胶囊、次按钮改 outlined、进度条用 `m3.primary`。
+- `ChatWorkspace.tsx`：工具栏/气泡/建议卡/历史列表/输入条按 M3 调整（气泡 16 圆角、输入条 52 高胶囊、发送按钮 42 圆形），并把硬编码的 iOS 蓝/灰改成 `palette`；iOS 分支保留原值。
+- `src/screens/*.tsx` 10 个子页：卡片换 `cardSurface`/`softShadow`，按钮改胶囊（52 高），抽屉/输入框/标签圆角对齐 M3，行高与内边距加大，列表行与主要按钮加 ripple；`Subpage` 安卓改 M3 top app bar（圆形返回键 + 22sp 左对齐标题），Sheet 头部「完成」改文字按钮。
+- 清理：移除「价格与分组为演示数据」「进度为演示数据…」等演示说明小字，删除无引用的 notice*/settingsList/scoreText/quickIcon 样式。
+
+验证：`npm run typecheck` 通过；iOS/Android `expo export` 通过；安卓 16 模拟器逐页截图（聊天、概览、模型、令牌、账户、对话历史、AI 创作、模型广场、个人设置、任务、消息、用量日志、钱包、模型体验、人脸工具、模型融合）；iOS 27 截图复核聊天/概览/账户/个人设置无回归。截图在 `~/Desktop/qmszai-android/`。
+
+新增待办：iOS 端部分按钮因共用样式也变成胶囊（签到、兑换、发送等），符合 iOS 26 观感；若要严格回退，可用 `ios ? 原值 : 新值` 拆分。
+
+## 上一轮增量（2026-11-10，第二十二轮：安卓实机验证 + 跨平台图标）
+
+- 本机装好安卓环境：JDK 17（华为云镜像）+ SDK（cmdline-tools/emulator/platform-36/系统镜像）+ AVD `qmszai_pixel`（Pixel 7, Android 16）。Expo Go 58.0.5 经 gh-proxy 下载安装，`adb reverse tcp:8091` 连 Metro。
+- 新增 `src/components/AppIcon.tsx`：iOS 用 `SymbolView`、Android 用 Ionicons，修掉安卓端所有 Unicode 占位图标（底栏、行图标、空状态、快捷访问等）。新增依赖 `@expo/vector-icons`。
+- 修安卓子页顶部色带：`subpageOverlay`/`subpagePane`/`ChatWorkspace.sheetRoot` 改用 `palette.groupedBackground`。
+- 修安卓 Modal 顶部灰条：`pageSheet` 改为 iOS 用 pageSheet、安卓用 `fullScreen`，并加 `statusBarTranslucent`。
+- 验证：typecheck、双端 export、安卓逐页截图、iOS 回归对比。
+
+## 上一轮增量（2026-11-10，第二十一轮：玻璃层兜底）
 
 - 修复「历史」胶囊偶发丢失白色底：`GlassSurface` 的 `GlassView` 加 0.5 白色背景，`LiquidTabBar.barGlass` 加 0.42 白色背景，作为玻璃材质未渲染时的兜底，视觉不变。
 - 验证：typecheck、双端 export、iOS 截图对比工具栏与底栏。

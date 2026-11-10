@@ -24,6 +24,9 @@ import {
   palette,
   type Tone,
 } from '../ui';
+import { cardSurface, pressedDim, pressedSurface, softShadow } from '../material';
+
+const ios = Platform.OS === 'ios';
 import type { MediaGeneration, MediaKind, TaskKind } from '../types';
 
 type ParamConfig = { key: string; label: string; options: string[]; value: string };
@@ -247,7 +250,10 @@ export function MediaStudioScreen({
                   key={preset}
                   accessibilityRole="button"
                   onPress={() => setPrompt(`${preset}：欢迎使用阡陌数智语音合成，这是一段用于移动端演示的示例文本。`)}
-                  style={styles.presetChip}
+                  style={({ pressed }) => [
+                    styles.presetChip,
+                    pressed ? pressedSurface : null,
+                  ]}
                 >
                   <Text style={styles.presetText}>{preset}</Text>
                 </Pressable>
@@ -364,7 +370,11 @@ export function MediaStudioScreen({
             accessibilityState={{ disabled: !canSubmit }}
             disabled={!canSubmit}
             onPress={submit}
-            style={[styles.submitButton, !canSubmit ? styles.submitDisabled : null]}
+            style={({ pressed }) => [
+              styles.submitButton,
+              !canSubmit ? styles.submitDisabled : null,
+              pressed ? pressedDim : null,
+            ]}
           >
             <Text style={styles.submitText}>{busy ? '正在提交…' : config.action}</Text>
           </Pressable>
@@ -427,10 +437,9 @@ const styles = StyleSheet.create({
   },
   hero: {
     backgroundColor: palette.card,
-    borderRadius: 12,
-    borderCurve: 'continuous',
-    padding: 16,
+    padding: ios ? 16 : 18,
     gap: 5,
+    ...cardSurface,
   },
   heroTitle: {
     color: palette.label,
@@ -443,11 +452,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   presetChip: {
-    borderRadius: 16,
-    borderCurve: 'continuous',
+    borderRadius: ios ? 16 : 18,
+    overflow: 'hidden',
     backgroundColor: palette.card,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: ios ? 12 : 16,
+    paddingVertical: ios ? 7 : 9,
+    ...softShadow,
   },
   presetText: {
     color: palette.blue,
@@ -455,11 +465,10 @@ const styles = StyleSheet.create({
   },
   inputCard: {
     backgroundColor: palette.card,
-    borderRadius: 12,
-    borderCurve: 'continuous',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: ios ? 16 : 18,
+    paddingVertical: ios ? 12 : 14,
     gap: 8,
+    ...cardSurface,
   },
   inputHeader: {
     flexDirection: 'row',
@@ -494,17 +503,18 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: palette.secondaryLabel,
-    fontSize: 13,
-    marginLeft: 16,
+    fontSize: ios ? 13 : 12,
+    fontWeight: '500',
+    marginLeft: 4,
   },
   sectionMeta: {
     color: palette.tertiaryLabel,
     fontSize: 12,
-    marginRight: 16,
+    marginRight: 4,
   },
   genRow: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: ios ? 12 : 14,
     gap: 5,
   },
   genRowPressed: {
@@ -546,10 +556,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 16,
     paddingHorizontal: 16,
-    paddingTop: 10,
+    paddingTop: 12,
     paddingBottom: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: palette.separator,
     backgroundColor: palette.groupedBackground,
   },
   footerMeta: {
@@ -566,9 +574,9 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     minWidth: 168,
-    minHeight: 48,
-    borderRadius: 12,
-    borderCurve: 'continuous',
+    overflow: 'hidden',
+    minHeight: ios ? 48 : 52,
+    borderRadius: ios ? 12 : 26,
     backgroundColor: palette.blue,
     alignItems: 'center',
     justifyContent: 'center',

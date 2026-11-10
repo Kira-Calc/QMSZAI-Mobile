@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Badge, Group, Row, Subpage, palette } from '../ui';
+import { cardSurface, pressedDim, pressedSurface } from '../material';
+
+const ios = Platform.OS === 'ios';
 import type { RedeemRecord } from '../types';
 
 const inviteLink = 'https://qmszai.cn/register?aff=DEMO493';
@@ -91,7 +94,11 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
               accessibilityState={{ disabled: code.trim().length === 0 }}
               disabled={code.trim().length === 0}
               onPress={redeem}
-              style={[styles.redeemButton, code.trim().length === 0 ? styles.disabled : null]}
+              style={({ pressed }) => [
+                styles.redeemButton,
+                code.trim().length === 0 ? styles.disabled : null,
+                pressed ? pressedDim : null,
+              ]}
             >
               <Text style={styles.redeemText}>兑换</Text>
             </Pressable>
@@ -119,7 +126,11 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
               {inviteLink}
             </Text>
           </View>
-          <Pressable accessibilityRole="button" onPress={copyInvite} style={styles.copyRow}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={copyInvite}
+            style={({ pressed }) => [styles.copyRow, pressed ? pressedSurface : null]}
+          >
             <Text style={[styles.copyText, { color: palette.blue }]}>复制邀请链接</Text>
           </Pressable>
         </Group>
@@ -164,11 +175,10 @@ const styles = StyleSheet.create({
   },
   hero: {
     backgroundColor: palette.card,
-    borderRadius: 12,
-    borderCurve: 'continuous',
     padding: 20,
     gap: 4,
     marginTop: 4,
+    ...cardSurface,
   },
   heroLabel: {
     color: palette.secondaryLabel,
@@ -203,20 +213,21 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   input: {
-    minHeight: 46,
-    borderRadius: 10,
+    minHeight: ios ? 46 : 52,
+    borderRadius: ios ? 10 : 26,
     backgroundColor: palette.fill,
-    paddingHorizontal: 12,
+    paddingHorizontal: ios ? 12 : 20,
     color: palette.label,
-    fontSize: 17,
+    fontSize: ios ? 17 : 16,
   },
   feedback: {
     fontSize: 13,
     lineHeight: 18,
   },
   redeemButton: {
-    minHeight: 44,
-    borderRadius: 10,
+    minHeight: ios ? 44 : 52,
+    overflow: 'hidden',
+    borderRadius: ios ? 10 : 26,
     backgroundColor: palette.blue,
     alignItems: 'center',
     justifyContent: 'center',
@@ -251,8 +262,8 @@ const styles = StyleSheet.create({
   },
   linkBox: {
     marginHorizontal: 16,
-    padding: 12,
-    borderRadius: 10,
+    padding: ios ? 12 : 14,
+    borderRadius: ios ? 10 : 16,
     backgroundColor: palette.fill,
     gap: 4,
   },
@@ -265,7 +276,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   copyRow: {
-    minHeight: 44,
+    minHeight: ios ? 44 : 48,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -286,7 +297,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: ios ? 12 : 14,
   },
   recordMain: {
     flex: 1,

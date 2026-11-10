@@ -3,6 +3,10 @@ import { useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppIcon } from '../components/AppIcon';
+
+const ios = Platform.OS === 'ios';
+
 import {
   Badge,
   EmptyState,
@@ -15,6 +19,7 @@ import {
   palette,
 } from '../ui';
 import { ModelLogo } from '../components/ModelLogo';
+import { ripple } from '../material';
 import { marketModels } from '../data/mockConsole';
 import type { MarketModel } from '../types';
 
@@ -82,7 +87,7 @@ export function ModelMarketplaceScreen({ onBack }: { onBack: () => void }) {
           {Platform.OS === 'ios' ? (
             <SymbolView name="magnifyingglass" tintColor={palette.tertiaryLabel} style={styles.searchIcon} />
           ) : (
-            <Text style={styles.searchFallback}>⌕</Text>
+            <AppIcon name="magnifyingglass" size={16} color={palette.tertiaryLabel} />
           )}
           <TextInput
             value={query}
@@ -109,7 +114,7 @@ export function ModelMarketplaceScreen({ onBack }: { onBack: () => void }) {
         />
 
         <Text style={styles.summary}>
-          {filtered.length} 个模型 · 价格与分组为演示数据
+          {filtered.length} 个模型
         </Text>
 
         {filtered.length === 0 ? (
@@ -125,6 +130,7 @@ export function ModelMarketplaceScreen({ onBack }: { onBack: () => void }) {
                 key={model.id}
                 accessibilityRole="button"
                 onPress={() => setSelected(model)}
+                android_ripple={ripple()}
                 style={({ pressed }) => [styles.modelRow, pressed ? styles.modelRowPressed : null]}
               >
                 <View style={styles.modelLogo}>
@@ -209,10 +215,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    minHeight: 40,
-    borderRadius: 10,
+    minHeight: ios ? 40 : 52,
+    borderRadius: ios ? 10 : 26,
     backgroundColor: palette.card,
-    paddingHorizontal: 10,
+    paddingHorizontal: ios ? 10 : 16,
   },
   searchIcon: {
     width: 16,
@@ -225,8 +231,8 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     color: palette.label,
-    fontSize: 17,
-    paddingVertical: 8,
+    fontSize: ios ? 17 : 16,
+    paddingVertical: ios ? 8 : 10,
   },
   clear: {
     color: palette.tertiaryLabel,
@@ -241,12 +247,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: ios ? 12 : 14,
     gap: 12,
   },
   modelLogo: {
     width: 26,
     alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginTop: 1,
   },
   modelBody: {
     flex: 1,
@@ -287,7 +295,7 @@ const styles = StyleSheet.create({
     color: palette.secondaryLabel,
     fontSize: 11,
     backgroundColor: palette.fill,
-    borderRadius: 6,
+    borderRadius: ios ? 6 : 8,
     paddingHorizontal: 6,
     paddingVertical: 2,
     overflow: 'hidden',

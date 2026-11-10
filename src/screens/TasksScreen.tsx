@@ -1,7 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { cardSurface, ripple } from '../material';
+
+const ios = Platform.OS === 'ios';
 import {
   Badge,
   EmptyState,
@@ -108,7 +111,6 @@ export function TasksScreen({
             {running} 个进行中
             {queued > 0 ? ` · ${queued} 个排队` : ''}
           </Text>
-          <Text style={styles.summaryMeta}>进度为演示数据，会随停留时间推进；仅保存在本次运行中。</Text>
         </View>
 
         {filtered.length === 0 ? (
@@ -126,6 +128,7 @@ export function TasksScreen({
                   key={task.id}
                   accessibilityRole="button"
                   onPress={() => setSelected(task)}
+                  android_ripple={ripple()}
                   style={({ pressed }) => [styles.taskRow, pressed ? styles.taskRowPressed : null]}
                 >
                   <View style={styles.taskTop}>
@@ -209,24 +212,20 @@ const styles = StyleSheet.create({
   },
   summary: {
     backgroundColor: palette.card,
-    borderRadius: 10,
     padding: 16,
     gap: 4,
+    ...cardSurface,
+    borderRadius: ios ? 10 : 28,
   },
   summaryTitle: {
     color: palette.label,
     fontSize: 20,
     fontWeight: '600',
   },
-  summaryMeta: {
-    color: palette.secondaryLabel,
-    fontSize: 13,
-    lineHeight: 19,
-  },
   taskRow: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 7,
+    paddingVertical: ios ? 12 : 14,
+    gap: 8,
   },
   taskRowPressed: {
     backgroundColor: palette.fill,
@@ -267,10 +266,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   sheetProgress: {
-    borderRadius: 10,
     backgroundColor: palette.card,
     padding: 16,
     gap: 8,
+    ...cardSurface,
+    borderRadius: ios ? 10 : 28,
   },
   sheetProgressText: {
     color: palette.secondaryLabel,
@@ -286,8 +286,8 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
   action: {
-    minHeight: 48,
-    borderRadius: 10,
+    minHeight: ios ? 48 : 52,
+    borderRadius: ios ? 10 : 26,
     backgroundColor: palette.card,
     alignItems: 'center',
     justifyContent: 'center',

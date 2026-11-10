@@ -14,6 +14,11 @@ import {
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppIcon } from '../components/AppIcon';
+import { cardSurface, pressedSurface, softShadow } from '../material';
+
+const ios = Platform.OS === 'ios';
+
 import { Badge, GlassPillButton, Group, Row, Sheet, Subpage, palette } from '../ui';
 
 type ChatMessage = { id: number; role: 'user' | 'assistant'; text: string };
@@ -161,7 +166,10 @@ export function ModelExperienceScreen({ onBack }: { onBack: () => void }) {
                     key={suggestion}
                     accessibilityRole="button"
                     onPress={() => setDraft(suggestion)}
-                    style={styles.suggestion}
+                    style={({ pressed }) => [
+                      styles.suggestion,
+                      pressed ? pressedSurface : null,
+                    ]}
                   >
                     <Text style={styles.suggestionText}>{suggestion}</Text>
                   </Pressable>
@@ -225,11 +233,7 @@ export function ModelExperienceScreen({ onBack }: { onBack: () => void }) {
               onPress={send}
               style={[styles.sendButton, draft.trim().length === 0 ? styles.sendDisabled : null]}
             >
-              {Platform.OS === 'ios' ? (
-                <SymbolView name="arrow.up" tintColor="#FFFFFF" style={styles.sendIcon} />
-              ) : (
-                <Text style={styles.sendText}>发送</Text>
-              )}
+              <AppIcon name="arrow.up" size={18} color="#FFFFFF" />
             </Pressable>
           )}
         </View>
@@ -276,10 +280,9 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 10,
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderCurve: 'continuous',
+    paddingVertical: ios ? 10 : 12,
     backgroundColor: palette.card,
+    ...cardSurface,
   },
   modelInfo: {
     flex: 1,
@@ -332,10 +335,12 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   suggestion: {
-    borderRadius: 10,
+    overflow: 'hidden',
     backgroundColor: palette.card,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    paddingHorizontal: ios ? 14 : 18,
+    paddingVertical: ios ? 11 : 14,
+    ...cardSurface,
+    borderRadius: ios ? 10 : 28,
   },
   suggestionText: {
     color: palette.blue,
@@ -354,14 +359,14 @@ const styles = StyleSheet.create({
   },
   bubble: {
     maxWidth: '84%',
-    borderRadius: 16,
-    borderCurve: 'continuous',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    borderRadius: ios ? 16 : 20,
+    paddingHorizontal: ios ? 14 : 16,
+    paddingVertical: ios ? 10 : 12,
   },
   bubbleAssistant: {
     backgroundColor: palette.card,
     borderTopLeftRadius: 4,
+    ...softShadow,
   },
   bubbleUser: {
     backgroundColor: palette.blue,
@@ -382,8 +387,9 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 22,
+    borderRadius: ios ? 22 : 28,
     backgroundColor: palette.card,
+    ...softShadow,
   },
   composerInput: {
     flex: 1,
@@ -396,9 +402,9 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   sendButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: ios ? 34 : 42,
+    height: ios ? 34 : 42,
+    borderRadius: ios ? 17 : 21,
     backgroundColor: palette.blue,
     alignItems: 'center',
     justifyContent: 'center',
@@ -416,9 +422,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   stopButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: ios ? 34 : 42,
+    height: ios ? 34 : 42,
+    borderRadius: ios ? 17 : 21,
     backgroundColor: palette.fill,
     alignItems: 'center',
     justifyContent: 'center',
@@ -434,7 +440,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: ios ? 12 : 14,
   },
   modelRowPressed: {
     backgroundColor: palette.fill,

@@ -1,6 +1,124 @@
-最新独立交接入口：`HANDOVER_NEXT_CLI.md`（2026-11-09，已含液体玻璃底栏、模型体验、AI 创作、人脸、模型广场、个人设置与钱包）。
+最新独立交接入口：`HANDOVER_NEXT_CLI.md`（2026-11-10，已含安卓蓝色主题、概览页对齐 iOS、Material 3 底栏与全部子页）。
 
-# 最新接手摘要（2026-11-10，第二十一轮：液体玻璃兜底，避免玻璃层丢失变空白）
+## GitHub 展示 README（2026-11-10 同日补充三）
+
+- 新增根目录 `README.md`（中文，面向 GitHub 展示）：简介、双端截图、14 项功能表、设计说明（令牌/样式分支/主色/圆角/按压态/安全区）、技术栈、快速开始、目录结构、状态与边界、文档链接、许可。
+- 新增 `docs/screenshots/` 共 8 张、统一宽 700、约 1.4MB：iOS 聊天/概览/模型广场/个人设置，Android 聊天/概览/AI 创作/令牌。截图无密钥、无浮层工具球。
+- 截图来源：iOS 用 `--no-dev --minify` 构建（端口 8095）关闭开发浮层，再改 `DevMenuFAB.positionX/positionY` 两组位置分别截图，按差异区域合成补掉悬浮球（`/tmp/iosA-*`、`/tmp/iosB-*`、`/tmp/iosE-*`）；Android 在 Expo Go Dev Menu 关闭 Tools button 后直接 `screencap`。
+- iOS 模拟器无脚本化触摸，只能改初始 `activeTab`/`subpage` 后重启截图；脚本 `/tmp/shot-subpage.sh`、`/tmp/shot-ios2.sh` 会自动还原源码。截图后已确认 `App.tsx` 回到 `activeTab='chat'`、`subpage=null`，8095 Metro 已关闭，`DevMenuFAB` 位置已还原。
+- README 与截图均未提交、未推送。
+
+## 安卓按压态修正（2026-11-10 同日补充）
+
+- 现象：安卓底栏、按钮等圆角面点按时出现矩形方块高亮。
+- 根因：RN 的 `android_ripple` 蒙版恒为矩形（`ReactDrawableHelper.getMask` 只返回 `ColorDrawable`），`borderless:false` 时无法跟随圆角；`overflow: 'hidden'` 只裁剪子视图、裁不到自身背景，所以之前给宿主加 `overflow` 无效。
+- 修法：`src/material.ts` 新增 `pressedSurface`（白面压深到 `m3.surfaceContainer`）与 `pressedDim`（彩色面整体 `opacity 0.8`），圆角宿主统一改用 `Pressable` 的 `pressed` 状态（M3 状态层），并在 `ripple()` 注释里写明「只用于矩形行」。
+- 已改：`LiquidTabBar` 底栏项（按下为圆角胶囊 `rgba(26,115,232,0.10)`，与选中标记区分）、令牌页「新建模拟令牌」、账户头卡、模型列表行、`Sheet` 底部「完成」、人脸工具主按钮、融合页预设 chip 与发送键、AI 创作预设 chip 与提交键、模型体验建议卡、个人设置签到/退出、钱包兑换/复制邀请。
+- 保留 `android_ripple` 的只有矩形行（分组成员行、任务/消息/用量/模型广场行、快捷访问行、返回按钮 `borderless`），这些行被 `groupBody` 的圆角 `overflow: 'hidden'` 裁好，实测圆角正确。
+- 验证：底栏、令牌页按钮按住截图（圆角胶囊，无方块）；账户页分组首行按住时圆角被正确裁剪；安卓钱包/AI 创作/融合/模型体验/个人设置静态截图无回归；iOS 模型体验、个人设置截图与修改前一致（`pressedSurface/pressedDim` 在 iOS 返回空对象）；`npx tsc --noEmit` 与双端 `expo export` 通过。未提交、未推送。
+
+# 最新接手摘要（2026-11-10，第二十四轮：安卓蓝色主题 + 概览页对齐 iOS）
+
+用户要求：安卓主题色换成「正常的蓝色」，概览页参照 iOS 端的信息层级重构，并说明两端代码关系。
+
+## 主色换蓝（仅安卓）
+- `src/material.ts`：`primary #1A73E8`、`primaryContainer #D3E3FD`、`onPrimaryContainer #041E49`、`secondaryContainer #DCE7F6`、`onSecondaryContainer #101C2B`；默认 ripple 改 `rgba(26,115,232,0.12)`。iOS 继续走系统蓝 `#007AFF`，不受影响。
+- `App.tsx` 的 `statusColor` 改为平台三元：iOS 保留 `#157A5B/#9A6500/#B3404A`，安卓用 `palette.green/orange/red`。
+- 账户页 `avatar` 底色由旧品牌青蓝 `#2E7EA5` 改 `m3.primary`（`iosStyles.avatar` 仍是 `#007AFF`）。
+
+## 概览页重构（安卓）
+- `Overview` 改为 `ios ? 原 JSX : 新安卓 JSX`，安卓分支顺序与 iOS 一致：
+  1. `Segmented`（24h/7d/30d，切区间仍触发 `animateContentChange`）；
+  2. `heroCard` 白色数据卡：请求次数 + 成功率、8 高蓝色进度条、已使用/总额度；
+  3. `Group` 四行统计：可用模型 / 启用令牌 / 平均延迟 / 异常队列；
+  4. `Group header="快捷访问"`：模型目录、API 令牌；
+  5. `Group header="AI 功能"`：AI 创作、模型体验、人脸工具、模型融合、模型广场；
+  6. `Group header="用量与消息"`：用量日志、任务、消息。
+- 弃用安卓原来的深色 hero + 2×2 tonal 统计磁贴。新增样式：`heroCard*`（10 个）、`overviewGroup`（`marginTop: 0`，避免与 `scrollContent` 的 gap 叠加）、`overviewStatValue`；`App.tsx` 引入 `cardSurface`。
+
+## 修 iosStyles 整键覆盖泄漏
+- `styles = ios ? { ...baseStyles, ...iosStyles } : baseStyles` 是**整键替换**：M3 改过的同名键若没写进 `iosStyles`，iOS 会直接吃到安卓值。
+- 把 9 个键的 iOS 原值补进 `iosStyles`：`pill`/`pillText`/`modelVendor`/`chevron`/`tag`/`emptyTitle`/`billingGrid`/`miniStat`/`miniValue`。
+- 模型状态徽标的内联背景按平台拆开：iOS 只给 `borderColor` 保持描边胶囊，安卓用 `${statusColor}1F` tonal 底色。
+
+## 顺带修
+- 模拟任务完成时不再把 `elapsed` 覆盖成「已完成」，避免出现「已完成 / 已完成」重复，保留原耗时。
+
+## 验证
+- `npx tsc --noEmit` 通过；`npx expo export --platform ios --platform android` 通过。
+- 安卓 16 张截图全部重拍并覆盖 `~/Desktop/qmszai-android/`（1-chat … 16-fusion），确认无残留青蓝：底栏指示器、分段选中、聊天发送键与历史徽标、令牌主按钮/进度条、模型广场 chip、账户头像均为蓝。
+- iOS 27 复核概览（布局与改动前一致）、模型目录（状态徽标恢复描边）、令牌页、模型详情 pageSheet（miniStat/billing 网格）无回归。
+- 未提交、未推送（用户自行处理）。
+
+## 两端代码关系（回答用户）
+- 同一套代码与 JSX：`App.tsx` + `src/*` 同时构建 iOS/Android，没有两份页面。
+- 差异只在样式与少量分支：`Platform.OS` / `ios` 常量、`baseStyles`（安卓）与 `iosStyles`（iOS 整键覆盖）、`ios ? A : B` 三元、`AppIcon`（SF Symbol ↔ Ionicons）、Modal `presentationStyle`（pageSheet/fullScreen）、`palette`/`m3` 平台分支。
+- 代价：`iosStyles` 必须完整覆盖被安卓改过的键，否则会泄漏；本轮已补齐。
+
+## iOS 圆角回归修复（2026-11-10 同日补充）
+
+- 现象：iOS 模型体验等页面的白色卡片变成直角，用户要求整体检查、改安卓不得影响 iOS。
+- 根因：M3 重做把各屏卡片的 `borderRadius` 换成了 `...cardSurface`，而 `cardSurface` 在 iOS 返回 `{}`，iOS 因此丢掉圆角。
+- 修法：`cardSurface` 的 iOS 分支改为 `{ borderRadius: 12, borderCurve: 'continuous' }`，安卓仍是 28 + `elevation.level1`。
+- 同时逐屏把被 M3 改动的 iOS 值恢复为 `ios ? 原值 : M3 值`（安卓不变）：FaceTools / Fusion / MediaStudio / Messages / ModelExperience / ModelMarketplace / Personal / Tasks / UsageLogs / Wallet 的卡片内边距、按钮圆角与高度、输入框、气泡、chip、行高、字号；原先 10pt 的小卡片（消息详情、建议卡、任务摘要/进度、用量摘要）单独恢复到 10。
+- 坑：RN 里 `borderRadius: undefined` 会覆盖前面展开的值，安卓端也会丢圆角；这些位置改成显式 `: 28`。
+- 验证：iOS 27 逐页截图（模型体验、AI 创作、人脸、融合、任务、消息、用量、钱包、个人、模型广场、聊天、账户、模型目录）圆角与 M3 前一致；安卓模型体验、AI 创作复核仍为 28 圆角；`npx tsc --noEmit` 与双端 `expo export` 通过。未提交、未推送。
+
+# 上一轮接手摘要（2026-11-10，第二十三轮：安卓 Material 3 重做）
+
+用户要求：删掉「关于演示模式」提示；安卓 UI 太丑，按 Google Material 3 重做并向 iOS 观感靠拢。
+
+## 设计令牌
+- 新增 `src/material.ts`，是安卓改造的唯一来源：
+  - `m3` 色板：`surface #F7F9FA`、`surfaceContainerLowest #FFFFFF`、`Low #F2F5F7`、`#ECF0F3`、`High #E5EAEE`、`Highest #DFE4E9`、`onSurface #181C1F`、`onSurfaceVariant #43494E`、`outline #737A80`、`outlineVariant #C3C9CE`、`primary #0F6690`（第二十四轮已改 `#1A73E8`）、`primaryContainer #C7E7FF`、`secondaryContainer #D6E8F3`、error/success/warning 容器色。
+  - `shape`：xs4 / sm8 / md12 / lg16 / xl28 / full999。
+  - `type`：M3 字阶（headlineSmall 28/600 … labelSmall 11/500）。
+  - `elevation.level1/2`：浅阴影 + 安卓 `elevation` 值。
+  - `ripple(color)`：安卓水波纹。
+  - `cardSurface`（安卓 28 圆角 + level1，iOS `{}`）、`softShadow`（安卓 level1，iOS `{}`）——iOS 拿空对象，样式零变化。
+
+## 落地范围
+1. `ui.tsx`：`palette` 的安卓分支改指向 `m3`；Segmented 胶囊 + 白底微阴影；Group 28 圆角、无描边、带 elevation；Row 56 高、16/500；Badge 改 tonal chip（12% 同色底、无描边）；EmptyState 40 图标；GlassPillButton 安卓 40 高；Row/Segmented 加 ripple；Subpage 安卓改 M3 top app bar（44 圆形返回键、22sp 左对齐标题、64 高）；Sheet 头部「完成」改文字按钮。
+2. `LiquidTabBar.tsx`：安卓用 `primaryContainer` 胶囊指示器、primary 文字/图标、surfaceContainerLowest 底 + level2 阴影、ripple；scrim 颜色改 `palette.groupedBackground`。iOS 分支保持原 SF/玻璃值。
+3. `App.tsx` `baseStyles`（只作用安卓）：标题 30/600、`liveBadge` 32 胶囊带阴影、区间切换胶囊、hero 20 内边距 28 圆角、状态块 16 圆角 tonal 无描边、快捷访问 64 高 28 圆角、搜索框 52 高胶囊 + 左侧搜索图标（`searchIconBox`，仅安卓渲染）、状态徽标 tonal chip、主按钮 M3 filled 胶囊、次按钮 outlined、进度条 `m3.primary`。账户页删除「关于演示模式」块，并清掉对应的 notice*/settingsList/scoreText/quickIcon 死代码。
+4. `ChatWorkspace.tsx`：工具栏 14/500、气泡安卓 16 圆角无描边 + level1、建议卡 56 高胶囊（28 圆角）、最近对话/历史列表 28 圆角、输入条 52 高胶囊 + 阴影、发送按钮 42 圆、模型 chip 用 `m3.surfaceContainerHigh`；把硬编码 `#007AFF`/`#8E8E93`/`#1C1C1E` 换成 `palette`（iOS 用三元保留原值）。
+5. `src/screens/*.tsx` 十个子页：卡片用 `cardSurface`、气泡/输入条用 `softShadow`、按钮统一 52 高胶囊、输入框 52 高胶囊、标签 8 圆角、行高加到 14 垂直内边距、列表行与主按钮加 ripple；`FaceTools` 上传槽改 20 圆角虚线框；`ModelMarketplace` 搜索框 52 胶囊 + 搜索图标、模型 logo 顶部对齐；`ModelExperience` 气泡 20 圆角、composer 28 圆角、发送/停止 42 圆。
+6. 文案清理：删除「价格与分组为演示数据」「进度为演示数据，会随停留时间推进」等演示说明。
+
+## 验证
+- `npm run typecheck` 通过。
+- `npx expo export --platform android` / `--platform ios` 通过。
+- Android 16（Pixel 7, 1080x2400）逐页截图：聊天、概览、模型目录、令牌、账户、对话历史、AI 创作、模型广场、个人设置、任务、消息、用量日志、钱包、模型体验、人脸工具、模型融合；截图为 `~/Desktop/qmszai-android/`（1-chat … 16-fusion）。
+- iOS 27（iPhone 18 Pro）截图复核聊天、概览、账户、个人设置：液体玻璃底栏、SF Symbols、分组列表、pageSheet 均无回归。
+
+## 已知取舍
+- 子页里少数共用样式（签到按钮、兑换按钮、发送按钮、输入框、气泡圆角）在 iOS 上也变成胶囊/更大圆角，符合 iOS 26 观感；如需严格保持旧值，用 `ios ? 旧值 : 新值` 拆分。
+- 「移动端模式 / Mock data only」行仍保留在账户页，属于既有内容，未擅自删除。
+- 未提交、未推送（用户自行处理 commit/push）。
+
+# 上一轮接手摘要（2026-11-10，第二十二轮：安卓真机环境验证 + 跨平台图标）
+
+## 安卓运行环境（本机已就绪）
+- JDK 17：`~/Library/Java/JavaVirtualMachines/jdk-17.0.2.jdk`（华为云镜像下载，`JAVA_HOME=.../Contents/Home`）
+- Android SDK：`~/Library/Android/sdk`（cmdline-tools/latest、platform-tools、emulator、platforms;android-36、system-images;android-36;google_apis;arm64-v8a）
+- AVD：`qmszai_pixel`（Pixel 7 / Android 16 / 1080x2400）
+- 启动：`emulator -avd qmszai_pixel -no-snapshot-load -gpu auto -no-boot-anim`
+- 连 Metro：`adb reverse tcp:8091 tcp:8091`，然后 `adb shell am start -a android.intent.action.VIEW -d "exp://127.0.0.1:8091" host.exp.exponent`
+- Expo Go：`Expo-Go-58.0.5.apk`（215MB，GitHub 直连只有 20KB/s，改走 `https://gh-proxy.com/https://github.com/...`）
+- 截图：`adb exec-out screencap -p > /tmp/x.png`
+
+## 本轮修的问题
+1. **底部标签栏 / 行图标在安卓退化成 Unicode 占位符**（◇ ⌂ ▦ ◇ ○）。
+   - 新增 `src/components/AppIcon.tsx`：iOS 走 `SymbolView`（保持原 SF Symbols 尺寸），Android 走 `@expo/vector-icons/Ionicons`，按 SF Symbol 名映射 26 个同义图标；`package.json` 增加 `@expo/vector-icons`。
+   - 替换处：`LiquidTabBar` 底部栏、`ui.tsx` 的 GlassIconButton / GlassPillButton / Row / EmptyState / 行尾箭头、`App.tsx` 账户头像箭头与快捷访问、`ChatWorkspace` 的本地 `Icon`、`ModelMarketplaceScreen` 搜索图标、`ModelExperienceScreen` 发送按钮。
+   - iOS 尺寸按原值对齐（底栏 24、行图标 24、空状态 40、圆形按钮 `size*0.44`），截图对比与改动前一致。
+2. **子页顶部安全区还是 iOS 底色 `#F2F2F7`**，安卓底色是 `#F6F7F9`，顶部出现一条明显色带。`subpageOverlay` / `subpagePane` 改用 `palette.groupedBackground`；`ChatWorkspace.sheetRoot` 同步改。
+3. **安卓 Modal 顶部出现灰色遮罩条**：`presentationStyle="pageSheet"` 在安卓不适用，Modal 窗口不覆盖状态栏，`FLAG_DIM_BEHIND` 把状态栏那一条底下的页面压暗。改为 `presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}` 并加 `statusBarTranslucent`，四条 Modal（选模型、对话历史、Sheet、模型详情）统一处理。
+4. 概览「快捷访问」在安卓上图标与文字贴在一起，补 12pt 间距。
+
+验证：`npm run typecheck` 通过；iOS/Android `expo export` 通过；Android 16 模拟器逐页截图（聊天 / 概览 / 模型 / 令牌 / 账户 / 模型目录 / 模型广场 / 对话历史 / AI 创作）；iOS 27 截图对比底栏与模型广场，无回归。截图存放 `~/Desktop/qmszai-android/`。
+
+# 上一轮接手摘要（2026-11-10，第二十一轮：液体玻璃兜底，避免玻璃层丢失变空白）
 
 - 现象：聊天工具栏的「历史」胶囊偶尔整块失去白色底（只剩文字和计数徽标），模型胶囊仍正常；强制重启 App 后恢复。排查为 expo-glass-effect 的 `GlassView` 在 JS 重载后玻璃材质层偶发未渲染，属渲染兜底问题，非布局问题。
 - 修法：`ui.tsx` 的 `GlassSurface` 在 `GlassView` 上补 `backgroundColor: 'rgba(255,255,255,0.5)'`；`LiquidTabBar` 的 `barGlass` 补 `backgroundColor: 'rgba(255,255,255,0.42)'`。玻璃材质正常时视觉基本不变（截图对比一致），材质丢失时仍有白色底，不会出现「透明胶囊」或空底栏。

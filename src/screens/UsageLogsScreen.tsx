@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,6 +22,9 @@ import {
   palette,
   type Tone,
 } from '../ui';
+import { cardSurface, ripple } from '../material';
+
+const ios = Platform.OS === 'ios';
 import type { LogStatus, UsageLog } from '../types';
 
 const statusMeta: Record<LogStatus, { label: string; tone: Tone }> = {
@@ -110,6 +114,7 @@ export function UsageLogsScreen({
                   key={log.id}
                   accessibilityRole="button"
                   onPress={() => setSelected(log)}
+                  android_ripple={ripple()}
                   style={({ pressed }) => [styles.logRow, pressed ? styles.logRowPressed : null]}
                 >
                   <View style={styles.logTop}>
@@ -184,9 +189,10 @@ const styles = StyleSheet.create({
   },
   summary: {
     backgroundColor: palette.card,
-    borderRadius: 10,
     padding: 16,
     gap: 4,
+    ...cardSurface,
+    borderRadius: ios ? 10 : 28,
   },
   summaryValue: {
     color: palette.label,
@@ -204,7 +210,7 @@ const styles = StyleSheet.create({
   },
   logRow: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: ios ? 12 : 14,
     gap: 4,
   },
   logRowPressed: {
@@ -241,7 +247,8 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   loadMore: {
-    minHeight: 44,
+    minHeight: ios ? 44 : 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
   },

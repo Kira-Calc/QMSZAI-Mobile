@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,7 +11,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { cardSurface, pressedDim, pressedSurface } from '../material';
 import { Badge, GlassPillButton, Group, Row, Sheet, Subpage, palette } from '../ui';
+
+const ios = Platform.OS === 'ios';
 
 const fusionModels = [
   'GLM-4-Flash_免费',
@@ -138,7 +142,11 @@ export function FusionScreen({ onBack }: { onBack: () => void }) {
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                   onPress={() => applyPreset(preset.key)}
-                  style={[styles.presetChip, active ? styles.presetChipActive : null]}
+                  style={({ pressed }) => [
+                    styles.presetChip,
+                    active ? styles.presetChipActive : null,
+                    pressed && !active ? pressedSurface : null,
+                  ]}
                 >
                   <Text style={[styles.presetText, active ? styles.presetTextActive : null]}>
                     {preset.key}
@@ -199,7 +207,11 @@ export function FusionScreen({ onBack }: { onBack: () => void }) {
           accessibilityState={{ disabled: !canSend }}
           disabled={!canSend}
           onPress={send}
-          style={[styles.sendButton, !canSend ? styles.disabled : null]}
+          style={({ pressed }) => [
+            styles.sendButton,
+            !canSend ? styles.disabled : null,
+            pressed ? pressedDim : null,
+          ]}
         >
           <Text style={styles.sendText}>{busy ? '融合中…' : '发送并融合'}</Text>
         </Pressable>
@@ -278,10 +290,9 @@ const styles = StyleSheet.create({
   },
   hero: {
     backgroundColor: palette.card,
-    borderRadius: 12,
-    borderCurve: 'continuous',
-    padding: 16,
+    padding: ios ? 16 : 18,
     gap: 6,
+    ...cardSurface,
   },
   heroTitleRow: {
     flexDirection: 'row',
@@ -298,8 +309,9 @@ const styles = StyleSheet.create({
   },
   presetLabel: {
     color: palette.secondaryLabel,
-    fontSize: 13,
-    marginLeft: 16,
+    fontSize: ios ? 13 : 12,
+    fontWeight: '500',
+    marginLeft: 4,
   },
   presets: {
     flexDirection: 'row',
@@ -307,9 +319,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   presetChip: {
-    minHeight: 34,
-    paddingHorizontal: 14,
-    borderRadius: 17,
+    minHeight: ios ? 34 : 36,
+    overflow: 'hidden',
+    paddingHorizontal: ios ? 14 : 16,
+    borderRadius: ios ? 17 : 18,
     backgroundColor: palette.card,
     alignItems: 'center',
     justifyContent: 'center',
@@ -333,9 +346,9 @@ const styles = StyleSheet.create({
   },
   tag: {
     backgroundColor: palette.fill,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    borderRadius: ios ? 6 : 8,
+    paddingHorizontal: ios ? 8 : 10,
+    paddingVertical: ios ? 3 : 4,
   },
   tagText: {
     color: palette.secondaryLabel,
@@ -343,10 +356,9 @@ const styles = StyleSheet.create({
   },
   inputCard: {
     backgroundColor: palette.card,
-    borderRadius: 12,
-    borderCurve: 'continuous',
-    padding: 14,
+    padding: ios ? 14 : 16,
     gap: 6,
+    ...cardSurface,
   },
   input: {
     minHeight: 96,
@@ -362,10 +374,10 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   sendButton: {
-    minHeight: 48,
-    borderRadius: 12,
-    borderCurve: 'continuous',
+    minHeight: ios ? 48 : 52,
+    borderRadius: ios ? 12 : 26,
     backgroundColor: palette.blue,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -385,19 +397,19 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: palette.secondaryLabel,
-    fontSize: 13,
-    marginLeft: 16,
+    fontSize: ios ? 13 : 12,
+    fontWeight: '500',
+    marginLeft: 4,
   },
   sectionMeta: {
     color: palette.tertiaryLabel,
     fontSize: 12,
-    marginRight: 16,
+    marginRight: 4,
   },
   empty: {
     backgroundColor: palette.card,
-    borderRadius: 12,
-    borderCurve: 'continuous',
     padding: 24,
+    ...cardSurface,
     alignItems: 'center',
     gap: 5,
   },
@@ -413,10 +425,9 @@ const styles = StyleSheet.create({
   },
   resultCard: {
     backgroundColor: palette.card,
-    borderRadius: 12,
-    borderCurve: 'continuous',
-    padding: 16,
+    padding: ios ? 16 : 18,
     gap: 8,
+    ...cardSurface,
   },
   resultPrompt: {
     color: palette.secondaryLabel,

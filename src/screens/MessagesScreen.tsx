@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -14,6 +14,9 @@ import {
   palette,
   type Tone,
 } from '../ui';
+import { cardSurface, ripple } from '../material';
+
+const ios = Platform.OS === 'ios';
 import type { MessageCategory, MessageRecord } from '../types';
 
 const categoryMeta: Record<MessageCategory, { label: string; tone: Tone }> = {
@@ -109,6 +112,7 @@ export function MessagesScreen({
                   key={message.id}
                   accessibilityRole="button"
                   onPress={() => open(message)}
+                  android_ripple={ripple()}
                   style={({ pressed }) => [styles.row, pressed ? styles.rowPressed : null]}
                 >
                   <View style={styles.rowTop}>
@@ -177,7 +181,7 @@ const styles = StyleSheet.create({
   },
   row: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: ios ? 12 : 14,
     gap: 5,
   },
   rowPressed: {
@@ -238,8 +242,9 @@ const styles = StyleSheet.create({
   },
   detailBody: {
     backgroundColor: palette.card,
-    borderRadius: 10,
     padding: 16,
+    ...cardSurface,
+    borderRadius: ios ? 10 : 28,
   },
   detailBodyText: {
     color: palette.label,
@@ -247,8 +252,8 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   deleteButton: {
-    minHeight: 48,
-    borderRadius: 10,
+    minHeight: ios ? 48 : 52,
+    borderRadius: ios ? 10 : 26,
     borderWidth: 1,
     borderColor: palette.red,
     alignItems: 'center',

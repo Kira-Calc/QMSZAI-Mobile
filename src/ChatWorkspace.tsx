@@ -21,7 +21,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ModelLogo } from './components/ModelLogo';
 import { models } from './data/mockConsole';
 import type { Model } from './types';
-import { GlassIconButton, GlassSurface, SheetHeader } from './ui';
+import { GlassIconButton, GlassSurface, SheetHeader, palette } from './ui';
+import { AppIcon } from './components/AppIcon';
+import { elevation, m3, shape } from './material';
+
+const ios = Platform.OS === 'ios';
 
 type ChatMessage = {
   id: number;
@@ -374,7 +378,7 @@ export function ChatWorkspace({
 
         >
           <View style={styles.welcomeIcon}>
-            <Icon name="sparkles" fallback="✦" size={40} color="#007AFF" />
+            <Icon name="sparkles" fallback="✦" size={40} color={palette.blue} />
           </View>
           <Text style={styles.welcomeTitle}>开始新的对话</Text>
 
@@ -387,7 +391,7 @@ export function ChatWorkspace({
                 style={({ pressed }) => [styles.suggestion, pressed ? styles.pressed : null]}
               >
                 <Text style={styles.suggestionText}>{suggestion}</Text>
-                <Icon name="arrow.up.right" fallback="↗" size={13} color="#8E8E93" />
+                <Icon name="arrow.up.right" fallback="↗" size={13} color={ios ? '#8E8E93' : palette.secondaryLabel} />
               </Pressable>
             ))}
           </View>
@@ -440,14 +444,14 @@ export function ChatWorkspace({
               label="AI 功能"
               onPress={openTools}
               size={48}
-              tint="#1C1C1E"
+              tint={ios ? '#1C1C1E' : palette.label}
             />
           </View>
           <View style={styles.composerField}>
             <TextInput
               accessibilityLabel="聊天消息"
               placeholder={`给 ${currentModel.name} 发消息`}
-              placeholderTextColor="#8E8E93"
+              placeholderTextColor={ios ? '#8E8E93' : palette.tertiaryLabel}
               multiline
               maxLength={8000}
               value={draft}
@@ -479,7 +483,8 @@ export function ChatWorkspace({
       <Modal
         visible={historyVisible}
         animationType="slide"
-        presentationStyle="pageSheet"
+        statusBarTranslucent
+        presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
         onRequestClose={() => setHistoryVisible(false)}
       >
         <SafeAreaView style={styles.sheetRoot} edges={['top', 'bottom', 'left', 'right']}>
@@ -492,7 +497,7 @@ export function ChatWorkspace({
               style={({ pressed }) => [styles.newConversation, pressed ? styles.pressed : null]}
             >
               <View style={styles.newConversationIcon}>
-                <Icon name="plus.bubble" fallback="＋" size={19} color="#007AFF" />
+                <Icon name="plus.bubble" fallback="＋" size={19} color={palette.blue} />
               </View>
               <Text style={styles.newConversationText}>新建对话</Text>
             </Pressable>
@@ -529,7 +534,7 @@ export function ChatWorkspace({
                               {conversation.title}
                             </Text>
                             {isSelected ? (
-                              <Icon name="checkmark" fallback="✓" size={15} color="#007AFF" />
+                              <Icon name="checkmark" fallback="✓" size={15} color={palette.blue} />
                             ) : null}
                           </View>
                           <Text numberOfLines={1} style={styles.historyPreview}>
@@ -587,7 +592,7 @@ export function ChatWorkspace({
                   <Text style={styles.popoverVendor}>{model.vendor}</Text>
                 </View>
                 {isSelected ? (
-                  <Icon name="checkmark" fallback="✓" size={16} color="#007AFF" />
+                  <Icon name="checkmark" fallback="✓" size={16} color={palette.blue} />
                 ) : null}
               </Pressable>
             );
@@ -597,7 +602,7 @@ export function ChatWorkspace({
         <Modal
           visible={modelPickerVisible}
           animationType="slide"
-          presentationStyle="pageSheet"
+          presentationStyle="fullScreen"
           onRequestClose={() => setModelPickerVisible(false)}
         >
           <SafeAreaView style={styles.sheetRoot} edges={['top', 'bottom', 'left', 'right']}>
@@ -667,7 +672,7 @@ export function ChatWorkspace({
               pressed ? styles.popoverRowPressed : null,
             ]}
           >
-            <Icon name={tool.icon} fallback={tool.fallback} size={21} color="#007AFF" />
+            <Icon name={tool.icon} fallback={tool.fallback} size={21} color={palette.blue} />
             <Text style={styles.toolMenuLabel}>{tool.label}</Text>
           </Pressable>
         ))}
@@ -853,19 +858,15 @@ function TypingBubble({ model }: { model: Model }) {
 
 function Icon({
   name,
-  fallback,
   size = 20,
-  color = '#007AFF',
+  color = palette.blue,
 }: {
   name: ComponentProps<typeof SymbolView>['name'];
-  fallback: string;
+  fallback?: string;
   size?: number;
   color?: string;
 }) {
-  if (Platform.OS === 'ios') {
-    return <SymbolView name={name} tintColor={color} style={{ width: size, height: size }} />;
-  }
-  return <Text style={{ fontSize: size * 0.85, color, lineHeight: size }}>{fallback}</Text>;
+  return <AppIcon name={name} size={size} color={color} />;
 }
 
 function relativeTime(timestamp: number) {
@@ -898,13 +899,13 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingHorizontal: 10,
   },
-  toolLabel: { color: '#1C1C1E', fontSize: 13, fontWeight: '600' },
+  toolLabel: { color: palette.label, fontSize: ios ? 13 : 14, fontWeight: ios ? '600' : '500' },
   countBadge: {
     minWidth: 16,
     height: 16,
     borderRadius: 8,
     paddingHorizontal: 4,
-    backgroundColor: '#007AFF',
+    backgroundColor: palette.blue,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -923,7 +924,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 12,
   },
-  modelButtonText: { color: '#1C1C1E', fontSize: 14, fontWeight: '600', flexShrink: 1 },
+  modelButtonText: { color: palette.label, fontSize: 14, fontWeight: '500', flexShrink: 1 },
   pressed: { opacity: 0.55 },
   messages: { flex: 1 },
   thread: { flex: 1 },
@@ -938,31 +939,35 @@ const styles = StyleSheet.create({
   userRow: { alignItems: 'flex-end' },
   userBubble: {
     maxWidth: '82%',
-    backgroundColor: '#007AFF',
+    backgroundColor: palette.blue,
     borderRadius: 20,
     borderBottomRightRadius: 6,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
-  userText: { color: '#FFFFFF', fontSize: 17, lineHeight: 23 },
+  userText: { color: '#FFFFFF', fontSize: ios ? 17 : 16, lineHeight: ios ? 23 : 22 },
   assistantRow: { alignItems: 'flex-start', maxWidth: '88%' },
   assistantMeta: {
-    color: '#8E8E93',
+    color: palette.secondaryLabel,
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '500',
     marginLeft: 4,
     marginBottom: 4,
   },
   assistantBubble: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    borderBottomLeftRadius: 6,
+    backgroundColor: palette.card,
+    borderRadius: ios ? 20 : shape.lg,
+    borderBottomLeftRadius: ios ? 6 : shape.xs,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(60,60,67,0.10)',
+    ...(ios
+      ? {
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: 'rgba(60,60,67,0.10)',
+        }
+      : elevation.level1),
   },
-  assistantText: { color: '#1C1C1E', fontSize: 17, lineHeight: 23 },
+  assistantText: { color: palette.label, fontSize: ios ? 17 : 16, lineHeight: ios ? 23 : 22 },
   typingBubble: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -970,47 +975,55 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     paddingHorizontal: 16,
   },
-  typingDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#8E8E93' },
+  typingDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: palette.tertiaryLabel },
   welcome: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24 },
   welcomeIcon: {
     alignItems: 'flex-start',
     marginBottom: 10,
   },
-  welcomeTitle: { color: '#1C1C1E', fontSize: 22, fontWeight: '700' },
+  welcomeTitle: { color: palette.label, fontSize: ios ? 22 : 24, fontWeight: ios ? '700' : '600' },
   suggestionList: { marginTop: 20, gap: 8 },
   suggestion: {
-    minHeight: 46,
-    borderRadius: 14,
-    paddingHorizontal: 14,
+    minHeight: ios ? 46 : 56,
+    borderRadius: ios ? 14 : shape.xl,
+    paddingHorizontal: ios ? 14 : 18,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.card,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(60,60,67,0.10)',
+    ...(ios
+      ? {
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: 'rgba(60,60,67,0.10)',
+        }
+      : elevation.level1),
   },
-  suggestionText: { color: '#1C1C1E', fontSize: 15, flex: 1 },
+  suggestionText: { color: palette.label, fontSize: ios ? 15 : 16, flex: 1 },
   recentHeader: {
     marginTop: 26,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  recentTitle: { color: '#6C6C70', fontSize: 13, fontWeight: '600' },
-  link: { color: '#007AFF', fontSize: 13, fontWeight: '600' },
+  recentTitle: { color: palette.secondaryLabel, fontSize: ios ? 13 : 12, fontWeight: '500' },
+  link: { color: palette.blue, fontSize: ios ? 13 : 14, fontWeight: '500' },
   recentList: {
     marginTop: 8,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    backgroundColor: palette.card,
+    borderRadius: ios ? 14 : shape.xl,
     overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(60,60,67,0.10)',
+    ...(ios
+      ? {
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: 'rgba(60,60,67,0.10)',
+        }
+      : elevation.level1),
   },
   recentRow: {
-    minHeight: 62,
-    paddingHorizontal: 14,
+    minHeight: ios ? 62 : 68,
+    paddingHorizontal: ios ? 14 : 18,
     paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
@@ -1018,13 +1031,14 @@ const styles = StyleSheet.create({
   },
   recentRowBorder: {
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(60,60,67,0.12)',
+    borderBottomColor: palette.separator,
+    marginLeft: ios ? 0 : 18,
   },
-  recentRowPressed: { backgroundColor: 'rgba(118,118,128,0.08)' },
+  recentRowPressed: { backgroundColor: palette.fill },
   recentMain: { flex: 1, gap: 2 },
-  recentName: { color: '#1C1C1E', fontSize: 15, fontWeight: '600' },
-  recentPreview: { color: '#8E8E93', fontSize: 13 },
-  recentTime: { color: '#8E8E93', fontSize: 12 },
+  recentName: { color: palette.label, fontSize: ios ? 15 : 16, fontWeight: '500' },
+  recentPreview: { color: palette.secondaryLabel, fontSize: 13 },
+  recentTime: { color: palette.secondaryLabel, fontSize: 12 },
   composerBar: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6 },
   composerRow: {
     flexDirection: 'row',
@@ -1034,28 +1048,32 @@ const styles = StyleSheet.create({
   toolsButton: { width: 48, height: 48 },
   composerField: {
     flex: 1,
-    minHeight: 48,
-    borderRadius: 24,
-    backgroundColor: '#FFFFFF',
+    minHeight: ios ? 48 : 52,
+    borderRadius: ios ? 24 : shape.full,
+    backgroundColor: palette.card,
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingLeft: 16,
     paddingRight: 5,
     paddingVertical: 5,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(60,60,67,0.12)',
+    ...(ios
+      ? {
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: 'rgba(60,60,67,0.12)',
+        }
+      : elevation.level1),
   },
-  input: { flex: 1, minHeight: 38, maxHeight: 120, paddingTop: 8, paddingBottom: 8, color: '#1C1C1E', fontSize: 17, lineHeight: 22 },
+  input: { flex: 1, minHeight: 38, maxHeight: 120, paddingTop: 8, paddingBottom: 8, color: palette.label, fontSize: ios ? 17 : 16, lineHeight: 22 },
   sendButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#007AFF',
+    width: ios ? 38 : 42,
+    height: ios ? 38 : 42,
+    borderRadius: ios ? 19 : shape.full,
+    backgroundColor: palette.blue,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stopButton: { backgroundColor: '#1C1C1E' },
-  sendButtonDisabled: { backgroundColor: '#C7C7CC' },
+  stopButton: { backgroundColor: palette.label },
+  sendButtonDisabled: { backgroundColor: ios ? '#C7C7CC' : m3.surfaceContainerHighest },
   popoverRoot: { flex: 1 },
   popover: { position: 'absolute' },
   popoverShadow: {
@@ -1067,7 +1085,7 @@ const styles = StyleSheet.create({
   popoverCard: { overflow: 'hidden' },
   popoverScrollContent: { paddingVertical: 0 },
   popoverBacking: {
-    backgroundColor: 'rgba(255,255,255,0.95)',
+    backgroundColor: ios ? 'rgba(255,255,255,0.95)' : palette.card,
     paddingVertical: 4,
   },
   popoverRow: {
@@ -1079,12 +1097,12 @@ const styles = StyleSheet.create({
   },
   popoverRowBorder: {
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(60,60,67,0.12)',
+    borderBottomColor: palette.separator,
   },
-  popoverRowPressed: { backgroundColor: 'rgba(118,118,128,0.10)' },
+  popoverRowPressed: { backgroundColor: palette.fill },
   popoverMain: { flex: 1, gap: 1 },
-  popoverName: { color: '#1C1C1E', fontSize: 16, fontWeight: '600' },
-  popoverVendor: { color: '#8E8E93', fontSize: 12 },
+  popoverName: { color: palette.label, fontSize: 16, fontWeight: '500' },
+  popoverVendor: { color: palette.secondaryLabel, fontSize: 12 },
   toolRow: {
     minHeight: 52,
     flexDirection: 'row',
@@ -1092,43 +1110,46 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 16,
   },
-  toolMenuLabel: { color: '#1C1C1E', fontSize: 16 },
-  sheetRoot: { flex: 1, backgroundColor: '#F2F2F7' },
+  toolMenuLabel: { color: palette.label, fontSize: 16, fontWeight: ios ? '400' : '500' },
+  sheetRoot: { flex: 1, backgroundColor: palette.groupedBackground },
   sheetContent: { paddingHorizontal: 16, paddingBottom: 32, gap: 12 },
   newConversation: {
-    minHeight: 54,
-    borderRadius: 14,
+    minHeight: ios ? 54 : 60,
+    borderRadius: ios ? 14 : shape.xl,
     paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.card,
+    ...(ios ? {} : elevation.level1),
   },
   newConversationIcon: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#EAF2FF',
+    backgroundColor: ios ? '#EAF2FF' : m3.primaryContainer,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  newConversationText: { color: '#007AFF', fontSize: 17, fontWeight: '600' },
-  groupLabel: { color: '#6C6C70', fontSize: 13, fontWeight: '600', marginLeft: 4, marginTop: 6 },
+  newConversationText: { color: palette.blue, fontSize: ios ? 17 : 16, fontWeight: ios ? '600' : '500' },
+  groupLabel: { color: palette.secondaryLabel, fontSize: ios ? 13 : 12, fontWeight: '500', marginLeft: 4, marginTop: 6 },
   historyList: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    backgroundColor: palette.card,
+    borderRadius: ios ? 14 : shape.xl,
     overflow: 'hidden',
+    ...(ios ? {} : elevation.level1),
   },
   historyRow: { flexDirection: 'row', alignItems: 'center' },
   historyRowBorder: {
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(60,60,67,0.12)',
+    borderBottomColor: palette.separator,
+    marginLeft: ios ? 0 : 18,
   },
   historyMain: { flex: 1, paddingHorizontal: 14, paddingVertical: 12, gap: 3 },
   historyTop: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  historyName: { flexShrink: 1, color: '#1C1C1E', fontSize: 16, fontWeight: '600' },
-  historyPreview: { color: '#6C6C70', fontSize: 13 },
-  historyMeta: { color: '#8E8E93', fontSize: 11, marginTop: 1 },
+  historyName: { flexShrink: 1, color: palette.label, fontSize: 16, fontWeight: '500' },
+  historyPreview: { color: palette.secondaryLabel, fontSize: 13 },
+  historyMeta: { color: palette.secondaryLabel, fontSize: 11, marginTop: 1 },
   deleteButton: {
     width: 44,
     height: 44,
@@ -1137,9 +1158,9 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   historyEmpty: { alignItems: 'center', paddingTop: 80, gap: 8 },
-  historyEmptyTitle: { color: '#1C1C1E', fontSize: 17, fontWeight: '600' },
-  historyEmptyCopy: { color: '#8E8E93', fontSize: 13, textAlign: 'center' },
-  modelList: { backgroundColor: '#FFFFFF', borderRadius: 14, overflow: 'hidden' },
+  historyEmptyTitle: { color: palette.label, fontSize: 17, fontWeight: '500' },
+  historyEmptyCopy: { color: palette.secondaryLabel, fontSize: 13, textAlign: 'center' },
+  modelList: { backgroundColor: palette.card, borderRadius: ios ? 14 : shape.xl, overflow: 'hidden' },
   modelRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1149,26 +1170,26 @@ const styles = StyleSheet.create({
     minHeight: 74,
   },
   modelMain: { flex: 1, gap: 3 },
-  modelName: { color: '#1C1C1E', fontSize: 17, fontWeight: '600' },
-  modelVendor: { color: '#6C6C70', fontSize: 13 },
+  modelName: { color: palette.label, fontSize: 17, fontWeight: '500' },
+  modelVendor: { color: palette.secondaryLabel, fontSize: 13 },
   modelChips: { flexDirection: 'row', gap: 6, marginTop: 2 },
   modelChip: {
-    color: '#6C6C70',
+    color: palette.secondaryLabel,
     fontSize: 11,
     fontWeight: '500',
-    backgroundColor: 'rgba(118,118,128,0.10)',
+    backgroundColor: ios ? 'rgba(118,118,128,0.10)' : m3.surfaceContainerHigh,
     paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: ios ? 6 : shape.sm,
     overflow: 'hidden',
   },
   checkCircle: {
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: '#007AFF',
+    backgroundColor: palette.blue,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sheetNote: { color: '#8E8E93', fontSize: 12, lineHeight: 18, paddingHorizontal: 4, marginTop: 4 },
+  sheetNote: { color: palette.secondaryLabel, fontSize: 12, lineHeight: 18, paddingHorizontal: 4, marginTop: 4 },
 });

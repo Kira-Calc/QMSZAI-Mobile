@@ -1,6 +1,10 @@
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { cardSurface, pressedDim, ripple } from '../material';
+
+const ios = Platform.OS === 'ios';
 
 import {
   Badge,
@@ -144,7 +148,11 @@ export function FaceToolsScreen({ onBack }: { onBack: () => void }) {
           accessibilityState={{ disabled: !ready || busy }}
           disabled={!ready || busy}
           onPress={run}
-          style={[styles.primaryButton, !ready || busy ? styles.disabled : null]}
+          style={({ pressed }) => [
+            styles.primaryButton,
+            !ready || busy ? styles.disabled : null,
+            pressed ? pressedDim : null,
+          ]}
         >
           <Text style={styles.primaryText}>
             {busy ? '识别中…' : mode === 0 ? '开始检测' : '开始比对'}
@@ -168,6 +176,7 @@ export function FaceToolsScreen({ onBack }: { onBack: () => void }) {
                 key={`${result.title}-${index}`}
                 accessibilityRole="button"
                 onPress={() => setSelected(result)}
+                android_ripple={ripple()}
                 style={({ pressed }) => [styles.resultRow, pressed ? styles.resultRowPressed : null]}
               >
                 <View style={styles.resultMain}>
@@ -240,10 +249,9 @@ const styles = StyleSheet.create({
   },
   hero: {
     backgroundColor: palette.card,
-    borderRadius: 12,
-    borderCurve: 'continuous',
-    padding: 16,
+    padding: ios ? 16 : 18,
     gap: 5,
+    ...cardSurface,
   },
   heroTitle: {
     color: palette.label,
@@ -256,15 +264,15 @@ const styles = StyleSheet.create({
   },
   slot: {
     flex: 1,
-    borderRadius: 12,
-    borderCurve: 'continuous',
+    overflow: 'hidden',
+    borderRadius: ios ? 12 : 20,
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: palette.tertiaryLabel,
+    borderColor: palette.separator,
     backgroundColor: palette.card,
-    padding: 12,
+    padding: ios ? 12 : 14,
     gap: 8,
-    minHeight: 132,
+    minHeight: ios ? 132 : 140,
   },
   slotPressed: {
     backgroundColor: palette.fill,
@@ -290,10 +298,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   primaryButton: {
-    minHeight: 48,
-    borderRadius: 12,
-    borderCurve: 'continuous',
+    minHeight: ios ? 48 : 52,
+    borderRadius: ios ? 12 : 26,
     backgroundColor: palette.blue,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -313,19 +321,19 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: palette.secondaryLabel,
-    fontSize: 13,
-    marginLeft: 16,
+    fontSize: ios ? 13 : 12,
+    fontWeight: '500',
+    marginLeft: 4,
   },
   sectionMeta: {
     color: palette.tertiaryLabel,
     fontSize: 12,
-    marginRight: 16,
+    marginRight: 4,
   },
   empty: {
     backgroundColor: palette.card,
-    borderRadius: 12,
-    borderCurve: 'continuous',
     padding: 24,
+    ...cardSurface,
     alignItems: 'center',
     gap: 5,
   },
@@ -344,7 +352,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: ios ? 12 : 14,
   },
   resultRowPressed: {
     backgroundColor: palette.fill,

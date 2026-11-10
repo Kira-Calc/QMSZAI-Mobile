@@ -3,6 +3,7 @@ import NativeSegmentedControl, {
 } from '@react-native-segmented-control/segmented-control';
 import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
+import { AppIcon } from './components/AppIcon';
 import {
   Children,
   Fragment,
@@ -26,6 +27,8 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { elevation, m3, ripple, shape, type } from './material';
 
 // Upstream legacy NativeMethods constructor typing is incompatible with React 19.
 const SegmentedControl = NativeSegmentedControl as unknown as ComponentType<SegmentedControlProps>;
@@ -54,17 +57,17 @@ export const palette = ios
       red: '#FF3B30',
     }
   : {
-      groupedBackground: '#F6F7F9',
-      card: '#FFFFFF',
-      label: '#15191E',
-      secondaryLabel: '#69737D',
-      tertiaryLabel: '#A6AEB7',
-      separator: '#DDE2E7',
-      fill: '#E9EDF1',
-      blue: '#286E8F',
-      green: '#157A5B',
-      orange: '#9A6500',
-      red: '#B3404A',
+      groupedBackground: m3.surface,
+      card: m3.surfaceContainerLowest,
+      label: m3.onSurface,
+      secondaryLabel: m3.onSurfaceVariant,
+      tertiaryLabel: m3.outline,
+      separator: m3.outlineVariant,
+      fill: m3.surfaceContainer,
+      blue: m3.primary,
+      green: m3.success,
+      orange: m3.warning,
+      red: m3.error,
     };
 
 export const toneColor = {
@@ -170,15 +173,7 @@ export function GlassIconButton({
       ]}
     >
       <GlassSurface radius={size / 2} interactive style={styles.glassIconFill}>
-        {ios ? (
-          <SymbolView
-            name={icon}
-            tintColor={tint}
-            style={{ width: size * 0.44, height: size * 0.44 }}
-          />
-        ) : (
-          <Text style={{ color: tint, fontSize: size * 0.4 }}>{fallback}</Text>
-        )}
+        <AppIcon name={icon} size={Math.round(size * 0.44)} color={tint} />
       </GlassSurface>
     </Pressable>
   );
@@ -214,13 +209,7 @@ export function GlassPillButton({
       ]}
     >
       <GlassSurface radius={18} interactive style={styles.glassPillFill}>
-        {icon ? (
-          ios ? (
-            <SymbolView name={icon} tintColor={tint} style={styles.glassPillIcon} />
-          ) : (
-            <Text style={[styles.glassPillLabel, { color: tint }]}>{fallback}</Text>
-          )
-        ) : null}
+        {icon ? <AppIcon name={icon} size={15} color={tint} /> : null}
         <Text style={[styles.glassPillLabel, { color: tint }]}>{label}</Text>
         {children}
       </GlassSurface>
@@ -328,8 +317,12 @@ export function Row({
 }) {
   const content = (
     <>
-      {ios && icon ? (
-        <SymbolView name={icon} tintColor={destructive ? palette.red : palette.blue} style={styles.rowIcon} />
+      {icon ? (
+        <AppIcon
+          name={icon}
+          size={24}
+          color={destructive ? palette.red : palette.blue}
+        />
       ) : null}
       <View style={styles.rowMain}>
         <Text style={[styles.rowTitle, destructive ? { color: palette.red } : null]} numberOfLines={1}>
@@ -344,7 +337,7 @@ export function Row({
         ios ? (
           <SymbolView name="chevron.right" tintColor={palette.tertiaryLabel} style={styles.chevron} />
         ) : (
-          <Text style={styles.chevronText}>›</Text>
+          <AppIcon name="chevron.right" size={16} color={palette.tertiaryLabel} />
         )
       ) : null}
     </>
@@ -358,7 +351,8 @@ export function Row({
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed ? styles.rowPressed : null]}
+      android_ripple={ios ? undefined : ripple()}
+      style={({ pressed }) => [styles.row, pressed && ios ? styles.rowPressed : null]}
     >
       {content}
     </Pressable>
@@ -368,7 +362,7 @@ export function Row({
 export function Badge({ text, tone = 'neutral' }: { text: string; tone?: Tone }) {
   const color = toneColor[tone];
   return (
-    <View style={[styles.badge, { borderColor: color }]}>
+    <View style={[styles.badge, ios ? { borderColor: color } : { backgroundColor: `${color}1F` }]}>
       <Text style={[styles.badgeText, { color }]}>{text}</Text>
     </View>
   );
@@ -385,9 +379,7 @@ export function EmptyState({
 }) {
   return (
     <View style={styles.empty}>
-      {ios ? (
-        <SymbolView name={icon} tintColor={palette.tertiaryLabel} style={styles.emptyIcon} />
-      ) : null}
+      <AppIcon name={icon} size={40} color={palette.tertiaryLabel} />
       <Text style={styles.emptyTitle}>{title}</Text>
       <Text style={styles.emptyMessage}>{message}</Text>
     </View>
@@ -405,6 +397,30 @@ export function Subpage({
   right?: ReactNode;
   children: ReactNode;
 }) {
+  if (!ios) {
+    // 安卓走 M3 top app bar：圆形返回按钮 + 左对齐标题。
+    return (
+      <View style={styles.subpage}>
+        <View style={styles.navBar}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="返回"
+            onPress={onBack}
+            android_ripple={{ ...ripple(), borderless: true }}
+            style={styles.navBackButton}
+          >
+            <AppIcon name="chevron.left" size={22} color={palette.label} />
+          </Pressable>
+          <Text style={styles.navTitleAndroid} numberOfLines={1}>
+            {title}
+          </Text>
+          <View style={styles.navRight}>{right}</View>
+        </View>
+        {children}
+      </View>
+    );
+  }
+
   return (
     <View style={styles.subpage}>
       <View style={styles.navBar}>
@@ -432,7 +448,20 @@ export function SheetHeader({ title, onClose }: { title: string; onClose: () => 
         {title}
       </Text>
       <View style={styles.sheetNavRight}>
-        <GlassPillButton label="完成" onPress={onClose} />
+        {ios ? (
+          <GlassPillButton label="完成" onPress={onClose} />
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            onPress={onClose}
+            style={({ pressed }) => [
+              styles.textButton,
+              pressed ? styles.textButtonPressed : null,
+            ]}
+          >
+            <Text style={styles.textButtonLabel}>完成</Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );
@@ -455,7 +484,8 @@ export function Sheet({
     <Modal
       visible={visible}
       animationType="slide"
-      presentationStyle="pageSheet"
+      statusBarTranslucent
+      presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
       onRequestClose={onClose}
     >
       <SafeAreaView style={styles.sheetRoot} edges={['top', 'bottom', 'left', 'right']}>
@@ -484,45 +514,46 @@ const styles = StyleSheet.create({
   androidSegmented: {
     flexDirection: 'row',
     backgroundColor: palette.fill,
-    borderRadius: 10,
-    padding: 3,
-    gap: 3,
+    borderRadius: shape.full,
+    padding: 4,
+    gap: 2,
   },
   androidSegment: {
     flex: 1,
-    minHeight: 36,
-    borderRadius: 8,
+    minHeight: 40,
+    borderRadius: shape.full,
     alignItems: 'center',
     justifyContent: 'center',
   },
   androidSegmentActive: {
     backgroundColor: palette.card,
+    ...elevation.level1,
   },
   androidSegmentText: {
     color: palette.secondaryLabel,
-    fontSize: 13,
-    fontWeight: '600',
+    ...type.labelLarge,
   },
   androidSegmentTextActive: {
     color: palette.label,
-    fontWeight: '700',
+    ...type.labelLarge,
+    fontWeight: '600',
   },
   group: {
-    marginTop: 24,
+    marginTop: ios ? 24 : 20,
   },
   groupHeader: {
     color: palette.secondaryLabel,
-    fontSize: 13,
-    marginBottom: 7,
-    marginLeft: 0,
+    fontSize: ios ? 13 : 12,
+    fontWeight: ios ? undefined : '500',
+    marginBottom: ios ? 7 : 8,
+    marginLeft: ios ? 0 : 4,
   },
   groupBody: {
     backgroundColor: palette.card,
-    borderRadius: 12,
+    borderRadius: ios ? 12 : shape.xl,
     borderCurve: 'continuous',
     overflow: 'hidden',
-    borderWidth: ios ? 0 : 1,
-    borderColor: palette.separator,
+    ...(ios ? {} : elevation.level1),
   },
   groupFooter: {
     color: palette.secondaryLabel,
@@ -537,16 +568,16 @@ const styles = StyleSheet.create({
     marginLeft: 16,
   },
   row: {
-    minHeight: 47,
+    minHeight: ios ? 47 : 56,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: ios ? 10 : 12,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: ios ? 10 : 12,
     backgroundColor: palette.card,
   },
   rowPressed: {
-    backgroundColor: ios ? palette.fill : '#F1F4F7',
+    backgroundColor: palette.fill,
   },
   rowIcon: {
     width: 24,
@@ -558,7 +589,8 @@ const styles = StyleSheet.create({
   rowTitle: {
     color: palette.label,
     fontSize: ios ? 17 : 16,
-    fontWeight: ios ? '400' : '600',
+    fontWeight: ios ? '400' : '500',
+    letterSpacing: ios ? undefined : 0.1,
   },
   rowSubtitle: {
     color: palette.secondaryLabel,
@@ -569,6 +601,7 @@ const styles = StyleSheet.create({
   rowValue: {
     color: palette.secondaryLabel,
     fontSize: ios ? 17 : 14,
+    fontWeight: ios ? undefined : '400',
     textAlign: 'right',
   },
   rowDetail: {
@@ -586,23 +619,24 @@ const styles = StyleSheet.create({
     fontWeight: '300',
   },
   badge: {
-    minWidth: 52,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-    borderWidth: 1,
+    minWidth: ios ? 52 : 56,
+    paddingHorizontal: ios ? 8 : 10,
+    paddingVertical: ios ? 3 : 4,
+    borderRadius: ios ? 10 : shape.sm,
+    borderWidth: ios ? 1 : 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
   badgeText: {
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: ios ? 11 : 12,
+    fontWeight: ios ? '700' : '500',
+    letterSpacing: ios ? undefined : 0.2,
   },
   empty: {
     alignItems: 'center',
     paddingHorizontal: 32,
-    paddingVertical: 56,
-    gap: 6,
+    paddingVertical: ios ? 56 : 48,
+    gap: ios ? 6 : 8,
   },
   emptyIcon: {
     width: 40,
@@ -611,13 +645,13 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     color: palette.label,
-    fontSize: 17,
-    fontWeight: '600',
+    fontSize: ios ? 17 : 16,
+    fontWeight: ios ? '600' : '500',
   },
   emptyMessage: {
     color: palette.secondaryLabel,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: ios ? 14 : 14,
+    lineHeight: ios ? 20 : 20,
     textAlign: 'center',
   },
   subpage: {
@@ -625,10 +659,40 @@ const styles = StyleSheet.create({
     backgroundColor: palette.groupedBackground,
   },
   navBar: {
-    height: 52,
+    height: ios ? 52 : 64,
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: ios ? 16 : 8,
+  },
+  navBackButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
+  navTitleAndroid: {
+    flex: 1,
+    color: palette.label,
+    fontSize: 22,
+    fontWeight: '600',
+    letterSpacing: -0.2,
+  },
+  textButton: {
+    minHeight: 40,
     paddingHorizontal: 16,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  textButtonPressed: {
+    backgroundColor: m3.surfaceContainer,
+  },
+  textButtonLabel: {
+    color: palette.blue,
+    fontSize: 14,
+    fontWeight: '500',
   },
   backButton: {
     minWidth: 78,
@@ -640,7 +704,7 @@ const styles = StyleSheet.create({
     right: 96,
     textAlign: 'center',
     color: palette.label,
-    fontSize: 17,
+    fontSize: ios ? 17 : 18,
     fontWeight: '600',
   },
   navRight: {
@@ -664,7 +728,7 @@ const styles = StyleSheet.create({
     right: 96,
     textAlign: 'center',
     color: palette.label,
-    fontSize: 17,
+    fontSize: ios ? 17 : 18,
     fontWeight: '600',
   },
   sheetNavRight: {
@@ -697,13 +761,17 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   glassFallback: {
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: ios ? StyleSheet.hairlineWidth : 0,
     borderColor: 'rgba(60,60,67,0.16)',
-    shadowColor: '#000000',
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    ...(ios
+      ? {
+          shadowColor: '#000000',
+          shadowOpacity: 0.12,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 6 },
+          elevation: 6,
+        }
+      : elevation.level1),
   },
   glassPressed: {
     opacity: 0.55,
@@ -714,7 +782,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   glassPillWrap: {
-    height: 36,
+    height: ios ? 36 : 40,
   },
   glassPillFill: {
     flex: 1,
@@ -729,7 +797,7 @@ const styles = StyleSheet.create({
     height: 18,
   },
   glassPillLabel: {
-    fontSize: 15,
+    fontSize: ios ? 15 : 14,
     fontWeight: '600',
   },
 });

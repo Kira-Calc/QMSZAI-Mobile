@@ -1,5 +1,7 @@
 import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
-import { SymbolView } from 'expo-symbols';
+import { AppIcon } from './components/AppIcon';
+import { elevation, m3, shape } from './material';
+import type { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react';
 import {
   AccessibilityInfo,
@@ -15,7 +17,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
+import { palette } from './ui';
 import type { TabKey } from './types';
+
+const ios = Platform.OS === 'ios';
 
 export const appTabs: Array<{
   key: TabKey;
@@ -182,6 +187,10 @@ export function LiquidTabBar({
     }
   };
 
+  // iOS 沿用系统蓝；安卓用 Material 3 的 primary / onSurfaceVariant
+  const activeTint = ios ? '#007AFF' : m3.primary;
+  const inactiveTint = ios ? '#5B6470' : m3.onSurfaceVariant;
+
   const tabItems = appTabs.map((tab) => {
     const selected = activeKey === tab.key;
     return (
@@ -191,18 +200,19 @@ export function LiquidTabBar({
         accessibilityLabel={tab.label}
         accessibilityState={{ selected }}
         onPress={() => onChange(tab.key)}
-        style={({ pressed }) => [styles.item, pressed ? styles.itemPressed : null]}
+        style={({ pressed }) => [
+          styles.item,
+          pressed ? (ios ? styles.itemPressed : styles.itemPressedAndroid) : null,
+        ]}
       >
-        {Platform.OS === 'ios' ? (
-          <SymbolView
-            name={tab.symbol}
-            tintColor={selected ? '#007AFF' : '#5B6470'}
-            style={styles.icon}
-          />
-        ) : (
-          <Text style={[styles.iconText, selected ? styles.textActive : null]}>{tab.icon}</Text>
-        )}
-        <Text style={[styles.label, selected ? styles.textActive : null]}>{tab.label}</Text>
+        <AppIcon
+          name={tab.symbol}
+          size={24}
+          color={selected ? activeTint : inactiveTint}
+        />
+        <Text style={[styles.label, { color: selected ? activeTint : inactiveTint }]}>
+          {tab.label}
+        </Text>
       </Pressable>
     );
   });
@@ -215,11 +225,7 @@ export function LiquidTabBar({
       onPress={() => onMinimizedChange(false)}
       style={({ pressed }) => [styles.miniItem, pressed ? styles.itemPressed : null]}
     >
-      {Platform.OS === 'ios' ? (
-        <SymbolView name={activeTab.symbol} tintColor="#007AFF" style={styles.icon} />
-      ) : (
-        <Text style={[styles.iconText, styles.textActive]}>{activeTab.icon}</Text>
-      )}
+      <AppIcon name={activeTab.symbol} size={24} color={activeTint} />
     </Pressable>
   ) : (
     <>
@@ -252,10 +258,14 @@ export function LiquidTabBar({
         <Svg width="100%" height="100%">
           <Defs>
             <LinearGradient id="tabBarScrim" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0" stopColor="#F6F7F9" stopOpacity={0} />
-              <Stop offset={String(solidFrom * 0.6)} stopColor="#F6F7F9" stopOpacity={0.5} />
-              <Stop offset={String(solidFrom)} stopColor="#F6F7F9" stopOpacity={1} />
-              <Stop offset="1" stopColor="#F6F7F9" stopOpacity={1} />
+              <Stop offset="0" stopColor={palette.groupedBackground} stopOpacity={0} />
+              <Stop
+                offset={String(solidFrom * 0.6)}
+                stopColor={palette.groupedBackground}
+                stopOpacity={0.5}
+              />
+              <Stop offset={String(solidFrom)} stopColor={palette.groupedBackground} stopOpacity={1} />
+              <Stop offset="1" stopColor={palette.groupedBackground} stopOpacity={1} />
             </LinearGradient>
           </Defs>
           <Rect x="0" y="0" width="100%" height="100%" fill="url(#tabBarScrim)" />
@@ -312,7 +322,7 @@ const styles = StyleSheet.create({
   bar: {
     width: '100%',
     height: 64,
-    borderRadius: 32,
+    borderRadius: ios ? 32 : shape.xl,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: PADDING,
@@ -334,14 +344,18 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
   },
   barFallback: {
-    backgroundColor: 'rgba(250,250,252,0.96)',
-    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: ios ? 'rgba(250,250,252,0.96)' : m3.surfaceContainerLowest,
+    borderWidth: ios ? StyleSheet.hairlineWidth : 0,
     borderColor: 'rgba(60,60,67,0.16)',
-    shadowColor: '#000000',
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
+    ...(ios
+      ? {
+          shadowColor: '#000000',
+          shadowOpacity: 0.1,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 8 },
+          elevation: 8,
+        }
+      : elevation.level2),
   },
   selection: {
     position: 'absolute',
@@ -356,8 +370,8 @@ const styles = StyleSheet.create({
   },
   selectionFallback: {
     flex: 1,
-    borderRadius: 26,
-    backgroundColor: '#FFFFFF',
+    borderRadius: ios ? 26 : shape.full,
+    backgroundColor: ios ? '#FFFFFF' : m3.primaryContainer,
     shadowColor: '#000000',
     shadowOpacity: 0.12,
     shadowRadius: 4,
@@ -380,6 +394,10 @@ const styles = StyleSheet.create({
   itemPressed: {
     opacity: 0.6,
   },
+  // 安卓按压态：android_ripple 的遮罩恒为矩形，圆角宿主上会画出方块，改用 M3 状态层。
+  itemPressedAndroid: {
+    backgroundColor: 'rgba(26,115,232,0.10)',
+  },
   icon: {
     width: 24,
     height: 24,
@@ -391,8 +409,8 @@ const styles = StyleSheet.create({
   },
   label: {
     color: '#5B6470',
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: ios ? 11 : 12,
+    fontWeight: ios ? '600' : '500',
   },
   textActive: {
     color: '#007AFF',

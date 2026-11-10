@@ -1,7 +1,10 @@
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { cardSurface, m3, pressedDim } from '../material';
+
+const ios = Platform.OS === 'ios';
 import { Group, Row, Sheet, Subpage, palette } from '../ui';
 
 const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
@@ -119,7 +122,11 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
               accessibilityState={{ disabled: checkedIn }}
               disabled={checkedIn}
               onPress={checkIn}
-              style={[styles.checkinButton, checkedIn ? styles.checkinDone : null]}
+              style={({ pressed }) => [
+                styles.checkinButton,
+                checkedIn ? styles.checkinDone : null,
+                pressed ? pressedDim : null,
+              ]}
             >
               <Text style={[styles.checkinText, checkedIn ? styles.checkinTextDone : null]}>
                 {checkedIn ? '今日已签到' : '立即签到'}
@@ -177,7 +184,11 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
           </View>
         </Group>
 
-        <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOut}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={signOut}
+          style={({ pressed }) => [styles.signOut, pressed ? styles.signOutPressed : null]}
+        >
           <Text style={[styles.signOutText, { color: palette.red }]}>退出登录</Text>
         </Pressable>
       </ScrollView>
@@ -211,10 +222,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     backgroundColor: palette.card,
-    borderRadius: 12,
-    borderCurve: 'continuous',
-    padding: 16,
+    padding: ios ? 16 : 18,
     marginTop: 4,
+    ...cardSurface,
   },
   avatar: {
     width: 56,
@@ -311,8 +321,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   checkinButton: {
-    minHeight: 44,
-    borderRadius: 10,
+    minHeight: ios ? 44 : 52,
+    overflow: 'hidden',
+    borderRadius: ios ? 10 : 26,
     backgroundColor: palette.blue,
     alignItems: 'center',
     justifyContent: 'center',
@@ -360,8 +371,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    minHeight: 47,
+    paddingVertical: ios ? 10 : 12,
+    minHeight: ios ? 47 : 56,
   },
   switchMain: {
     flex: 1,
@@ -377,13 +388,16 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   signOut: {
-    minHeight: 48,
-    borderRadius: 12,
-    borderCurve: 'continuous',
+    minHeight: ios ? 48 : 52,
+    overflow: 'hidden',
+    borderRadius: ios ? 12 : 26,
     backgroundColor: palette.card,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 24,
+  },
+  signOutPressed: {
+    backgroundColor: m3.surfaceContainer,
   },
   signOutText: {
     fontSize: 17,
