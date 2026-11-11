@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Dimensions, Keyboard, Platform, type KeyboardEvent } from 'react-native';
+import { Dimensions, Keyboard, LayoutAnimation, Platform, type KeyboardEvent } from 'react-native';
 
 // Android 边到边窗口由调用方按高度避让；iOS 可选择手动避让，避免重复补偿 KAV。
 export function useKeyboardInsets(manualIOS = false) {
@@ -10,9 +10,25 @@ export function useKeyboardInsets(manualIOS = false) {
     const apply = (height: number, event?: KeyboardEvent) => {
       // will/did 通知经常给出相同终点，不能重新启动正在进行的布局动画。
       if (height === lastHeight) return;
+      const opening = lastHeight <= 0 && height > 0;
+      const closing = lastHeight > 0 && height === 0;
       lastHeight = height;
       if (event && Platform.OS === 'ios' && manualIOS && event.duration > 0) {
-        Keyboard.scheduleLayoutAnimation(event);
+        if (closing) {
+          // 回落快速收尾，避免沿用系统键盘较长的退出曲线。
+          LayoutAnimation.configureNext({
+            duration: Math.min(event.duration, 140),
+            update: { type: LayoutAnimation.Types.easeOut },
+          });
+        } else if (opening) {
+          // JS 布局提交稍晚于系统键盘，缩短首段上移以减少追赶感。
+          LayoutAnimation.configureNext({
+            duration: Math.min(event.duration, 180),
+            update: { type: LayoutAnimation.Types.easeOut },
+          });
+        } else {
+          Keyboard.scheduleLayoutAnimation(event);
+        }
       }
       setState({ visible: height > 0, inset: Platform.OS === 'android' || manualIOS ? height : 0 });
     };
@@ -29,6 +45,7 @@ export function useKeyboardInsets(manualIOS = false) {
       Keyboard.addListener('keyboardDidShow', update),
       Keyboard.addListener('keyboardDidHide', hide),
       ...(Platform.OS === 'ios' ? [
+        Keyboard.addListener('keyboardWillShow', update),
         Keyboard.addListener('keyboardWillChangeFrame', update),
       ] : []),
     ];

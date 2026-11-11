@@ -11,28 +11,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { cardSurface, pressedDim, pressedSurface } from '../material';
+import { chatOnce } from '../api/client';
+import { cardSurface, pressedDim } from '../material';
 import { Badge, GlassPillButton, Group, Row, Sheet, Subpage, palette } from '../ui';
 
 const ios = Platform.OS === 'ios';
 
-const fusionModels = [
-  'GLM-4-Flash_免费',
-  'deepseek-flash_官方',
-  'claude-sonnet-4.5',
-  'gpt-6.1-terra',
-  'Qwen3-Max',
-];
-
-const presets: Array<{
-  key: string;
-  assistants: string[];
-  summary: string;
-}> = [
-  { key: '高质量', assistants: ['gpt-6.1-terra', 'claude-sonnet-4.5', 'deepseek-flash_官方'], summary: 'gpt-6.1-terra' },
-  { key: '低成本', assistants: ['GLM-4-Flash_免费', 'deepseek-flash_官方'], summary: 'deepseek-flash_官方' },
-  { key: '快速', assistants: ['deepseek-flash_官方', 'GLM-4-Flash_免费'], summary: 'GLM-4-Flash_免费' },
-];
+type FusionReply = { model: string; text: string; error?: string };
 
 type FusionMessage = {
   id: number;
@@ -40,9 +25,10 @@ type FusionMessage = {
   answer: string;
   assistants: string[];
   summary: string;
+  replies: FusionReply[];
 };
 
-export function FusionScreen({ onBack }: { onBack: () => void }) {
+export function FusionScreen({ onBack, models }: { onBack: () => void; models: string[] }) {
   const insets = useSafeAreaInsets();
   const [assistants, setAssistants] = useState<string[]>([]);
   const [summary, setSummary] = useState<string | null>(null);
@@ -54,55 +40,88 @@ export function FusionScreen({ onBack }: { onBack: () => void }) {
   const addAssistant = (name: string) => {
     setAssistants((current) => {
       if (current.includes(name)) {
-        return current.filter((item) => item !== name);
+        const next = current.filter((item) => item !== name);
+        if (summary === name) setSummary(next[0] ?? null);
+        return next;
       }
       if (current.length >= 3) {
         Alert.alert('最多 3 个助手模型', '请先取消一个已选模型。');
         return current;
       }
-      return [...current, name];
+      const next = [...current, name];
+      if (!summary) setSummary(name);
+      return next;
     });
   };
 
-  const applyPreset = (key: string) => {
-    const preset = presets.find((item) => item.key === key);
-    if (!preset) {
-      return;
-    }
-    setAssistants(preset.assistants);
-    setSummary(preset.summary);
-  };
+  const canSend = prompt.trim().length > 0 && assistants.length > 0 && summary !== null && !busy;
 
-  const activePreset = presets.find(
-    (preset) =>
-      preset.summary === summary &&
-      preset.assistants.length === assistants.length &&
-      preset.assistants.every((name) => assistants.includes(name)),
-  )?.key;
-
-  const canSend =
-    prompt.trim().length > 0 && assistants.length > 0 && summary !== null && !busy;
-
-  const send = () => {
-    if (!canSend) {
-      return;
-    }
+  const send = async () => {
+    if (!canSend) return;
     const text = prompt.trim();
+    const summaryModel = summary;
+    if (!summaryModel) return;
     setBusy(true);
-    setTimeout(() => {
+    try {
+      const settled = await Promise.allSettled(
+        assistants.map(async (name) => ({
+          model: name,
+          text: await chatOnce({ model: name, messages: [{ role: 'user', content: text }] }),
+        })),
+      );
+
+      const replies: FusionReply[] = settled.map((result, index) => {
+        const name = assistants[index];
+        if (result.status === 'fulfilled') {
+          return { model: name, text: result.value.text.trim() };
+        }
+        const reason = result.reason;
+        return {
+          model: name,
+          text: '',
+          error: reason instanceof Error ? reason.message : '调用失败',
+        };
+      });
+
+      const successful = replies.filter((reply) => reply.text);
+      if (!successful.length) {
+        throw new Error(replies[0]?.error || '所有助手模型均调用失败');
+      }
+
+      const merged = await chatOnce({
+        model: summaryModel,
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是融合助手。请综合多个模型对同一问题的回答，去重、互补、纠正错误，输出一段结构清晰的中文最终答案。',
+          },
+          {
+            role: 'user',
+            content: `问题：${text}\n\n${successful
+              .map((reply, index) => `模型 ${index + 1}（${reply.model}）：\n${reply.text}`)
+              .join('\n\n')}`,
+          },
+        ],
+      });
+
       setMessages((current) => [
         {
           id: Date.now(),
           prompt: text,
           assistants: [...assistants],
-          summary: summary ?? '',
-          answer: `${assistants.length} 个助手模型已分别处理该问题，并由 ${summary} 完成汇总。\n\n这是模型融合的模拟结果：不同模型的观点在此合并为一段回答，真实接入后会显示各助手的独立回复、汇总耗时与用量。\n\n当前问题：“${text}”`,
+          summary: summaryModel,
+          replies,
+          answer: merged.trim() || successful[0].text,
         },
         ...current,
       ]);
       setPrompt('');
+    } catch (error) {
+      Alert.alert('融合失败', error instanceof Error ? error.message : '请稍后重试');
+    } finally {
       setBusy(false);
-    }, 1800);
+    }
   };
 
   const reset = () => {
@@ -116,9 +135,7 @@ export function FusionScreen({ onBack }: { onBack: () => void }) {
     <Subpage
       title="模型融合"
       onBack={onBack}
-      right={
-        messages.length > 0 ? <GlassPillButton label="新建" onPress={reset} /> : null
-      }
+      right={messages.length > 0 ? <GlassPillButton label="新建" onPress={reset} /> : null}
     >
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}
@@ -131,40 +148,7 @@ export function FusionScreen({ onBack }: { onBack: () => void }) {
           </View>
         </View>
 
-        <View style={styles.presetBlock}>
-          <Text style={styles.presetLabel}>快速选择</Text>
-          <View style={styles.presets}>
-            {presets.map((preset) => {
-              const active = activePreset === preset.key;
-              return (
-                <Pressable
-                  key={preset.key}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                  onPress={() => applyPreset(preset.key)}
-                  style={({ pressed }) => [
-                    styles.presetChip,
-                    active ? styles.presetChipActive : null,
-                    pressed && !active ? pressedSurface : null,
-                  ]}
-                >
-                  <Text style={[styles.presetText, active ? styles.presetTextActive : null]}>
-                    {preset.key}
-                  </Text>
-                </Pressable>
-              );
-            })}
-            <View style={[styles.presetChip, !activePreset ? styles.presetChipActive : null]}>
-              <Text style={[styles.presetText, !activePreset ? styles.presetTextActive : null]}>
-                自定义
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        <Group
-          header="模型配置"
-        >
+        <Group header="模型配置">
           <Row
             title="助手模型"
             value={assistants.length > 0 ? `${assistants.length}/3` : '选择模型'}
@@ -234,22 +218,29 @@ export function FusionScreen({ onBack }: { onBack: () => void }) {
                 <Badge text="融合结果" tone="success" />
                 <Text style={styles.resultMeta}>总结：{message.summary}</Text>
               </View>
-              <Text style={styles.resultAnswer}>{message.answer}</Text>
-              <Text style={styles.resultModels}>
-                助手：{message.assistants.join('、')}
+              <Text selectable style={styles.resultAnswer}>
+                {message.answer}
               </Text>
+              {message.replies.map((reply) => (
+                <View key={reply.model} style={styles.replyBlock}>
+                  <Text style={styles.replyModel}>{reply.model}</Text>
+                  <Text
+                    selectable
+                    style={[styles.replyText, reply.error ? styles.replyError : null]}
+                    numberOfLines={reply.error ? 3 : undefined}
+                  >
+                    {reply.error ? reply.error : reply.text}
+                  </Text>
+                </View>
+              ))}
             </View>
           ))
         )}
       </ScrollView>
 
-      <Sheet
-        visible={sheet === 'assistant'}
-        title="选择助手模型"
-        onClose={() => setSheet(null)}
-      >
+      <Sheet visible={sheet === 'assistant'} title="选择助手模型" onClose={() => setSheet(null)}>
         <Group header="最多选择 3 个">
-          {fusionModels.map((name) => (
+          {models.map((name) => (
             <Row
               key={name}
               title={name}
@@ -262,7 +253,7 @@ export function FusionScreen({ onBack }: { onBack: () => void }) {
 
       <Sheet visible={sheet === 'summary'} title="选择总结模型" onClose={() => setSheet(null)}>
         <Group>
-          {fusionModels.map((name) => (
+          {models.map((name) => (
             <Row
               key={name}
               title={name}
@@ -285,9 +276,6 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
     gap: 12,
   },
-  resetText: {
-    fontSize: 16,
-  },
   hero: {
     backgroundColor: palette.card,
     padding: ios ? 16 : 18,
@@ -302,40 +290,6 @@ const styles = StyleSheet.create({
   heroTitle: {
     color: palette.label,
     fontSize: 20,
-    fontWeight: '600',
-  },
-  presetBlock: {
-    gap: 8,
-  },
-  presetLabel: {
-    color: palette.secondaryLabel,
-    fontSize: ios ? 13 : 12,
-    fontWeight: '500',
-    marginLeft: 4,
-  },
-  presets: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  presetChip: {
-    minHeight: ios ? 34 : 36,
-    overflow: 'hidden',
-    paddingHorizontal: ios ? 14 : 16,
-    borderRadius: ios ? 17 : 18,
-    backgroundColor: palette.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  presetChipActive: {
-    backgroundColor: palette.blue,
-  },
-  presetText: {
-    color: palette.secondaryLabel,
-    fontSize: 14,
-  },
-  presetTextActive: {
-    color: '#FFFFFF',
     fontWeight: '600',
   },
   tags: {
@@ -448,8 +402,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
   },
-  resultModels: {
+  replyBlock: {
+    backgroundColor: palette.fill,
+    borderRadius: ios ? 8 : 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 3,
+  },
+  replyModel: {
     color: palette.tertiaryLabel,
-    fontSize: 12,
+    fontSize: 11,
+  },
+  replyText: {
+    color: palette.secondaryLabel,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  replyError: {
+    color: palette.red,
   },
 });

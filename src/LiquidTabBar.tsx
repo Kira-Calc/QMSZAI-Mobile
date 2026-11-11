@@ -373,10 +373,10 @@ const styles = StyleSheet.create({
     borderRadius: ios ? 26 : shape.full,
     backgroundColor: ios ? '#FFFFFF' : m3.primaryContainer,
     shadowColor: '#000000',
-    shadowOpacity: 0.12,
+    shadowOpacity: ios ? 0.12 : 0,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 1 },
-    elevation: 2,
+    elevation: ios ? 2 : 0,
   },
   item: {
     flex: 1,

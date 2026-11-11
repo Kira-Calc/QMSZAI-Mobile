@@ -100,7 +100,7 @@ export function MessagesScreen({
         {filtered.length === 0 ? (
           <EmptyState
             title="没有未读消息"
-            message="新消息会在这里出现；当前数据仅用于演示筛选和已读操作。"
+            message="暂无新消息"
             icon="bell"
           />
         ) : (

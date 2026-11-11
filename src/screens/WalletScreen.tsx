@@ -1,167 +1,90 @@
-import { useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Badge, Group, Row, Subpage, palette } from '../ui';
-import { cardSurface, pressedDim, pressedSurface } from '../material';
+import { formatQuota } from '../api/format';
+import { useAuth } from '../auth/AuthProvider';
+import { pressedSurface } from '../material';
+import { Group, Row, Subpage, palette } from '../ui';
 
 const ios = Platform.OS === 'ios';
-import type { RedeemRecord } from '../types';
 
-const inviteLink = 'https://qmszai.cn/register?aff=DEMO493';
+const REGISTER_HOST = 'https://test.qmszai.cn';
 
 export function WalletScreen({ onBack }: { onBack: () => void }) {
   const insets = useSafeAreaInsets();
-  const [balance, setBalance] = useState(278.44);
-  const [code, setCode] = useState('');
-  const [error, setError] = useState('');
-  const [records, setRecords] = useState<RedeemRecord[]>([]);
-  const [notice, setNotice] = useState('');
+  const { user, quotaPerUnit } = useAuth();
 
-  const redeem = () => {
-    const trimmed = code.trim();
-    if (trimmed.length < 8) {
-      setError('兑换码至少 8 位，请检查后重试。');
-      setNotice('');
-      return;
-    }
-    const amount = 5;
-    const record: RedeemRecord = {
-      id: `redeem-${Date.now()}`,
-      code: trimmed,
-      amount,
-      time: '刚刚',
-      status: 'success',
-    };
-    setRecords((current) => [record, ...current]);
-    setBalance((current) => current + amount);
-    setCode('');
-    setError('');
-    setNotice(`兑换成功，模拟额度 ¥${amount.toFixed(2)} 已加入余额。`);
-  };
+  const affCode = user?.aff_code || '';
+  const inviteLink = affCode ? `${REGISTER_HOST}/register?aff=${affCode}` : '';
 
-  const copyInvite = () => {
-    Alert.alert('邀请链接', `${inviteLink}\n\n演示模式不会写入剪贴板，请在真实接入后使用系统复制能力。`);
+  const copyInvite = async () => {
+    if (!inviteLink) return;
+    await Clipboard.setStringAsync(inviteLink);
+    Alert.alert('已复制邀请链接');
   };
 
   return (
     <Subpage title="钱包" onBack={onBack}>
-      <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}>
         <View style={styles.hero}>
           <Text style={styles.heroLabel}>当前余额</Text>
-          <Text style={styles.heroValue}>¥{balance.toFixed(2)}</Text>
+          <Text style={styles.heroValue}>{formatQuota(user?.quota ?? 0, quotaPerUnit)}</Text>
           <View style={styles.heroMetaRow}>
             <View style={styles.heroMeta}>
-              <Text style={styles.heroMetaValue}>¥22.68</Text>
+              <Text style={styles.heroMetaValue}>{formatQuota(user?.used_quota ?? 0, quotaPerUnit)}</Text>
               <Text style={styles.heroMetaLabel}>历史消耗</Text>
             </View>
             <View style={styles.heroMeta}>
-              <Text style={styles.heroMetaValue}>229</Text>
+              <Text style={styles.heroMetaValue}>{(user?.request_count ?? 0).toLocaleString()}</Text>
               <Text style={styles.heroMetaLabel}>请求次数</Text>
             </View>
             <View style={styles.heroMeta}>
-              <Text style={styles.heroMetaValue}>default</Text>
+              <Text style={styles.heroMetaValue}>{user?.group || '—'}</Text>
               <Text style={styles.heroMetaLabel}>用户分组</Text>
             </View>
           </View>
         </View>
 
-        <Group
-          header="兑换码充值"
-        >
-          <View style={styles.redeemBody}>
-            <TextInput
-              value={code}
-              onChangeText={(text) => {
-                setCode(text);
-                setError('');
-              }}
-              placeholder="输入兑换码"
-              placeholderTextColor={palette.tertiaryLabel}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              style={styles.input}
-            />
-            {error ? <Text style={[styles.feedback, { color: palette.red }]}>{error}</Text> : null}
-            {notice ? (
-              <Text style={[styles.feedback, { color: palette.green }]}>{notice}</Text>
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled: code.trim().length === 0 }}
-              disabled={code.trim().length === 0}
-              onPress={redeem}
-              style={({ pressed }) => [
-                styles.redeemButton,
-                code.trim().length === 0 ? styles.disabled : null,
-                pressed ? pressedDim : null,
-              ]}
-            >
-              <Text style={styles.redeemText}>兑换</Text>
-            </Pressable>
-          </View>
-        </Group>
-
         <Group header="邀请奖励">
           <View style={styles.inviteStats}>
             <View style={styles.inviteStat}>
-              <Text style={styles.inviteValue}>¥0.00</Text>
+              <Text style={styles.inviteValue}>
+                {formatQuota(user?.aff_quota ?? 0, quotaPerUnit)}
+              </Text>
               <Text style={styles.inviteLabel}>待使用收益</Text>
             </View>
             <View style={styles.inviteStat}>
-              <Text style={styles.inviteValue}>¥0.00</Text>
+              <Text style={styles.inviteValue}>
+                {formatQuota(user?.aff_history_quota ?? 0, quotaPerUnit)}
+              </Text>
               <Text style={styles.inviteLabel}>总收益</Text>
             </View>
             <View style={styles.inviteStat}>
-              <Text style={styles.inviteValue}>0</Text>
+              <Text style={styles.inviteValue}>{(user?.aff_count ?? 0).toLocaleString()}</Text>
               <Text style={styles.inviteLabel}>邀请人数</Text>
             </View>
           </View>
           <View style={styles.linkBox}>
-            <Text style={styles.linkLabel}>邀请链接</Text>
+            <Text style={styles.linkLabel}>邀请码</Text>
             <Text selectable style={styles.linkText}>
-              {inviteLink}
+              {affCode || '—'}
             </Text>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={copyInvite}
-            style={({ pressed }) => [styles.copyRow, pressed ? pressedSurface : null]}
-          >
-            <Text style={[styles.copyText, { color: palette.blue }]}>复制邀请链接</Text>
-          </Pressable>
+          {inviteLink ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={copyInvite}
+              style={({ pressed }) => [styles.copyRow, pressed ? pressedSurface : null]}
+            >
+              <Text style={[styles.copyText, { color: palette.blue }]}>复制邀请链接</Text>
+            </Pressable>
+          ) : null}
         </Group>
 
-        <Group header="奖励说明">
-          <View style={styles.noteBody}>
-            <Text style={styles.noteText}>
-              邀请好友注册，好友充值后您可获得相应奖励。奖励额度需要通过划转功能转入账户余额，邀请的好友越多，奖励越多。
-            </Text>
-          </View>
-        </Group>
-
-        <Group header="兑换记录" footer={records.length === 0 ? '本次运行还没有兑换记录。' : undefined}>
-          {records.length === 0 ? (
-            <Row title="暂无记录" value="—" />
-          ) : (
-            records.map((record) => (
-              <View key={record.id} style={styles.recordRow}>
-                <View style={styles.recordMain}>
-                  <Text style={styles.recordCode} numberOfLines={1}>
-                    {record.code}
-                  </Text>
-                  <Text style={styles.recordTime}>{record.time}</Text>
-                </View>
-                <View style={styles.recordRight}>
-                  <Text style={styles.recordAmount}>+¥{record.amount.toFixed(2)}</Text>
-                  <Badge text="成功" tone="success" />
-                </View>
-              </View>
-            ))
-          )}
+        <Group header="额度说明">
+          <Row title="计费单位" value={`${quotaPerUnit.toLocaleString()} 额度 / ¥1`} />
+          <Row title="余额来源" value="签到、兑换码、邀请奖励" />
         </Group>
       </ScrollView>
     </Subpage>
@@ -178,7 +101,8 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 4,
     marginTop: 4,
-    ...cardSurface,
+    borderRadius: ios ? 12 : 28,
+    borderCurve: 'continuous',
   },
   heroLabel: {
     color: palette.secondaryLabel,
@@ -207,38 +131,6 @@ const styles = StyleSheet.create({
   heroMetaLabel: {
     color: palette.secondaryLabel,
     fontSize: 12,
-  },
-  redeemBody: {
-    padding: 16,
-    gap: 10,
-  },
-  input: {
-    minHeight: ios ? 46 : 52,
-    borderRadius: ios ? 10 : 26,
-    backgroundColor: palette.fill,
-    paddingHorizontal: ios ? 12 : 20,
-    color: palette.label,
-    fontSize: ios ? 17 : 16,
-  },
-  feedback: {
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  redeemButton: {
-    minHeight: ios ? 44 : 52,
-    overflow: 'hidden',
-    borderRadius: ios ? 10 : 26,
-    backgroundColor: palette.blue,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  disabled: {
-    opacity: 0.4,
-  },
-  redeemText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
   },
   inviteStats: {
     flexDirection: 'row',
@@ -273,7 +165,9 @@ const styles = StyleSheet.create({
   },
   linkText: {
     color: palette.label,
-    fontSize: 13,
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 1,
   },
   copyRow: {
     minHeight: ios ? 44 : 48,
@@ -283,42 +177,7 @@ const styles = StyleSheet.create({
   copyText: {
     fontSize: 16,
   },
-  noteBody: {
-    padding: 16,
-    gap: 8,
-  },
-  noteText: {
-    color: palette.label,
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  recordRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: ios ? 12 : 14,
-  },
-  recordMain: {
-    flex: 1,
-    gap: 2,
-  },
-  recordCode: {
-    color: palette.label,
-    fontSize: 15,
-  },
-  recordTime: {
-    color: palette.secondaryLabel,
-    fontSize: 12,
-  },
-  recordRight: {
-    alignItems: 'flex-end',
-    gap: 4,
-  },
-  recordAmount: {
-    color: palette.green,
-    fontSize: 15,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
+  disabled: {
+    opacity: 0.4,
   },
 });

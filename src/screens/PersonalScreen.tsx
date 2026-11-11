@@ -1,62 +1,115 @@
-import { useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { fetchCheckin, submitCheckin, updateSelf } from '../api/endpoints';
+import type { CheckinStatus } from '../api/types';
+import { formatQuota, formatQuotaSmart } from '../api/format';
+import { useAuth } from '../auth/AuthProvider';
 import { cardSurface, m3, pressedDim } from '../material';
-
-const ios = Platform.OS === 'ios';
 import { Group, Row, Sheet, Subpage, palette } from '../ui';
 
-const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
-const calendarDays = Array.from({ length: 30 }, (_, index) => index + 1);
+const ios = Platform.OS === 'ios';
 
-const bindings = [
-  { name: '邮箱', status: '未绑定', detail: '用于登录与找回密码' },
-  { name: '微信', status: '未启用', detail: '站点未开启微信登录' },
-  { name: 'GitHub', status: '未绑定', detail: 'OAuth 登录方式' },
-  { name: 'Discord', status: '未绑定', detail: 'OAuth 登录方式' },
-  { name: 'OIDC', status: '未绑定', detail: '企业统一身份认证' },
-  { name: 'Telegram', status: '未绑定', detail: 'OAuth 登录方式' },
-  { name: 'LinuxDO', status: '未绑定', detail: '社区账号登录' },
-];
-
-const languages = ['简体中文', 'English', '日本語'];
+const roleLabel = (role: number) => (role === 1 ? '普通用户' : `角色 ${role}`);
 
 export function PersonalScreen({ onBack }: { onBack: () => void }) {
   const insets = useSafeAreaInsets();
-  const [checkedIn, setCheckedIn] = useState(false);
-  const [checkinCount, setCheckinCount] = useState(0);
-  const [reward, setReward] = useState(0);
-  const [language, setLanguage] = useState('简体中文');
-  const [languageSheet, setLanguageSheet] = useState(false);
-  const [notifications, setNotifications] = useState(true);
-  const [autoSave, setAutoSave] = useState(true);
+  const { user, signOut, refreshUser, quotaPerUnit, siteStatus } = useAuth();
 
-  const checkIn = () => {
-    if (checkedIn) {
-      return;
+  const [checkin, setCheckin] = useState<CheckinStatus | null>(null);
+  const [checkinBusy, setCheckinBusy] = useState(false);
+  const [sheet, setSheet] = useState<null | 'profile' | 'password'>(null);
+  const [displayName, setDisplayName] = useState('');
+  const [originalPassword, setOriginalPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const loadCheckin = useCallback(async () => {
+    try {
+      setCheckin(await fetchCheckin());
+    } catch {
+      setCheckin(null);
     }
-    const amount = 0.5;
-    setCheckedIn(true);
-    setCheckinCount((count) => count + 1);
-    setReward((total) => total + amount);
-    Alert.alert('签到成功', `本次获得模拟额度 ¥${amount.toFixed(2)}，已计入累计获得。`);
+  }, []);
+
+  useEffect(() => {
+    loadCheckin();
+  }, [loadCheckin]);
+
+  const displayNameValue = user?.display_name || user?.username || '';
+  const initial = displayNameValue.trim().charAt(0).toUpperCase() || '·';
+  const checkedIn = checkin?.stats?.checked_in_today ?? false;
+  const checkinEnabled = checkin?.enabled ?? Boolean(siteStatus?.checkin_enabled);
+
+  const checkIn = async () => {
+    if (checkedIn || checkinBusy) return;
+    setCheckinBusy(true);
+    try {
+      const result = await submitCheckin();
+      Alert.alert('签到成功', `获得 ${formatQuotaSmart(result.quota_awarded ?? 0, quotaPerUnit)} 额度`);
+      await Promise.all([loadCheckin(), refreshUser()]);
+    } catch (error) {
+      Alert.alert('签到失败', error instanceof Error ? error.message : '请稍后重试');
+    } finally {
+      setCheckinBusy(false);
+    }
   };
 
-  const bindingAction = (name: string, status: string) => {
-    if (status === '未启用') {
-      Alert.alert('暂不可用', `${name}登录未在站点启用。`);
-      return;
-    }
-    Alert.alert(`绑定${name}`, '演示模式不会发起真实 OAuth 授权。接入登录后，这里会打开系统授权页并在回调中完成绑定。', [
-      { text: '知道了', style: 'cancel' },
-    ]);
+  const openProfile = () => {
+    setDisplayName(user?.display_name || '');
+    setSheet('profile');
   };
 
-  const signOut = () => {
-    Alert.alert('退出登录？', '演示模式没有真实登录态，此操作不会影响网站账号。', [
+  const openPassword = () => {
+    setOriginalPassword('');
+    setNewPassword('');
+    setSheet('password');
+  };
+
+  const saveProfile = async () => {
+    if (!user || busy) return;
+    setBusy(true);
+    try {
+      await updateSelf({
+        username: user.username,
+        display_name: displayName.trim(),
+      });
+      await refreshUser();
+      setSheet(null);
+    } catch (error) {
+      Alert.alert('保存失败', error instanceof Error ? error.message : '请稍后重试');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const savePassword = async () => {
+    if (!user || busy) return;
+    if (newPassword.length < 8 || newPassword.length > 20) {
+      Alert.alert('密码格式不正确', '新密码需为 8–20 位');
+      return;
+    }
+    setBusy(true);
+    try {
+      await updateSelf({
+        username: user.username,
+        original_password: originalPassword,
+        password: newPassword,
+      });
+      setSheet(null);
+      Alert.alert('密码已更新');
+    } catch (error) {
+      Alert.alert('修改失败', error instanceof Error ? error.message : '请稍后重试');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmSignOut = () => {
+    Alert.alert('退出登录？', '退出后需要重新输入账号密码。', [
       { text: '取消', style: 'cancel' },
-      { text: '退出', style: 'destructive', onPress: () => undefined },
+      { text: '退出', style: 'destructive', onPress: () => signOut() },
     ]);
   };
 
@@ -65,148 +118,129 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}>
         <View style={styles.profile}>
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>K</Text>
+            <Text style={styles.avatarText}>{initial}</Text>
           </View>
           <View style={styles.profileMain}>
-            <Text style={styles.name}>kira</Text>
-            <Text style={styles.role}>普通用户 · ID 493</Text>
+            <Text style={styles.name}>{displayNameValue || '未登录'}</Text>
+            <Text style={styles.role}>
+              {roleLabel(user?.role ?? 0)} · ID {user?.id ?? '—'}
+            </Text>
           </View>
           <View style={styles.balanceBlock}>
-            <Text style={styles.balance}>¥278.44</Text>
-            <Text style={styles.balanceLabel}>当前余额</Text>
+            <Text style={styles.balance}>{formatQuota(user?.quota ?? 0, quotaPerUnit)}</Text>
+            <Text style={styles.balanceLabel}>剩余额度</Text>
           </View>
         </View>
 
         <Group>
-          <Row title="历史消耗" value="¥22.56" />
-          <Row title="请求次数" value="218" />
-          <Row title="用户分组" value="default" />
+          <Row title="历史消耗" value={formatQuota(user?.used_quota ?? 0, quotaPerUnit)} />
+          <Row title="请求次数" value={(user?.request_count ?? 0).toLocaleString()} />
+          <Row title="用户分组" value={user?.group || '—'} />
+          <Row title="手机号" value={user?.phone || '—'} />
         </Group>
 
-        <Group
-          header="每日签到"
-        >
-          <View style={styles.checkinBody}>
-            <View style={styles.checkinStats}>
-              <View style={styles.checkinStat}>
-                <Text style={styles.statValue}>{checkinCount}</Text>
-                <Text style={styles.statLabel}>累计签到</Text>
-              </View>
-              <View style={styles.checkinStat}>
-                <Text style={styles.statValue}>¥{reward.toFixed(2)}</Text>
-                <Text style={styles.statLabel}>本次获得</Text>
-              </View>
-              <View style={styles.checkinStat}>
-                <Text style={styles.statValue}>¥{reward.toFixed(2)}</Text>
-                <Text style={styles.statLabel}>累计获得</Text>
-              </View>
-            </View>
-            <View style={styles.weekStrip}>
-              {weekdays.map((day, index) => {
-                const date = 8 + index;
-                const active = date === 9;
-                return (
-                  <View key={day} style={styles.dayCell}>
-                    <Text style={styles.dayLabel}>{day}</Text>
-                    <View style={[styles.dayDot, active ? styles.dayDotActive : null]}>
-                      <Text style={[styles.dayNumber, active ? styles.dayNumberActive : null]}>
-                        {date}
-                      </Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled: checkedIn }}
-              disabled={checkedIn}
-              onPress={checkIn}
-              style={({ pressed }) => [
-                styles.checkinButton,
-                checkedIn ? styles.checkinDone : null,
-                pressed ? pressedDim : null,
-              ]}
-            >
-              <Text style={[styles.checkinText, checkedIn ? styles.checkinTextDone : null]}>
-                {checkedIn ? '今日已签到' : '立即签到'}
-              </Text>
-            </Pressable>
-            <View style={styles.calendar}>
-              {calendarDays.map((day) => (
-                <View key={day} style={styles.calendarCell}>
-                  <Text style={[styles.calendarDay, day === 9 ? styles.calendarToday : null]}>
-                    {day}
-                  </Text>
-                  {day === 9 ? <View style={styles.todayDot} /> : null}
+        {checkinEnabled ? (
+          <Group header="每日签到">
+            <View style={styles.checkinBody}>
+              <View style={styles.checkinStats}>
+                <View style={styles.checkinStat}>
+                  <Text style={styles.statValue}>{checkin?.stats?.checkin_count ?? 0}</Text>
+                  <Text style={styles.statLabel}>累计签到</Text>
                 </View>
-              ))}
+                <View style={styles.checkinStat}>
+                  <Text style={styles.statValue}>
+                    {formatQuotaSmart(checkin?.stats?.total_quota ?? 0, quotaPerUnit)}
+                  </Text>
+                  <Text style={styles.statLabel}>累计获得</Text>
+                </View>
+                <View style={styles.checkinStat}>
+                  <Text style={styles.statValue}>
+                    {formatQuotaSmart(checkin?.max_quota ?? 0, quotaPerUnit)}
+                  </Text>
+                  <Text style={styles.statLabel}>单次上限</Text>
+                </View>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: checkedIn || checkinBusy }}
+                disabled={checkedIn || checkinBusy}
+                onPress={checkIn}
+                style={({ pressed }) => [
+                  styles.checkinButton,
+                  checkedIn ? styles.checkinDone : null,
+                  pressed ? pressedDim : null,
+                ]}
+              >
+                <Text style={[styles.checkinText, checkedIn ? styles.checkinTextDone : null]}>
+                  {checkedIn ? '今日已签到' : checkinBusy ? '签到中…' : '立即签到'}
+                </Text>
+              </Pressable>
             </View>
-          </View>
-        </Group>
+          </Group>
+        ) : null}
 
-        <Group header="账户绑定">
-          {bindings.map((binding) => (
-            <Row
-              key={binding.name}
-              title={binding.name}
-              subtitle={binding.detail}
-              value={binding.status}
-              chevron
-              onPress={() => bindingAction(binding.name, binding.status)}
-            />
-          ))}
-        </Group>
-
-        <Group header="偏好设置">
-          <Row title="语言" value={language} chevron onPress={() => setLanguageSheet(true)} />
-          <View style={styles.switchRow}>
-            <View style={styles.switchMain}>
-              <Text style={styles.switchTitle}>系统通知</Text>
-              <Text style={styles.switchSubtitle}>任务完成、额度与安全提醒</Text>
-            </View>
-            <Switch
-              value={notifications}
-              onValueChange={setNotifications}
-              trackColor={{ true: palette.green }}
-            />
-          </View>
-          <View style={styles.switchRow}>
-            <View style={styles.switchMain}>
-              <Text style={styles.switchTitle}>自动保存草稿</Text>
-              <Text style={styles.switchSubtitle}>在聊天与创作页保留未提交内容</Text>
-            </View>
-            <Switch
-              value={autoSave}
-              onValueChange={setAutoSave}
-              trackColor={{ true: palette.green }}
-            />
-          </View>
+        <Group header="账号">
+          <Row title="用户名" value={user?.username || '—'} />
+          <Row title="显示名称" value={user?.display_name || '—'} chevron onPress={openProfile} />
+          <Row title="登录密码" value={user?.has_password ? '已设置' : '未设置'} chevron onPress={openPassword} />
         </Group>
 
         <Pressable
           accessibilityRole="button"
-          onPress={signOut}
+          onPress={confirmSignOut}
           style={({ pressed }) => [styles.signOut, pressed ? styles.signOutPressed : null]}
         >
           <Text style={[styles.signOutText, { color: palette.red }]}>退出登录</Text>
         </Pressable>
       </ScrollView>
 
-      <Sheet visible={languageSheet} title="语言" onClose={() => setLanguageSheet(false)}>
-        <Group>
-          {languages.map((item) => (
-            <Row
-              key={item}
-              title={item}
-              value={item === language ? '✓' : undefined}
-              onPress={() => {
-                setLanguage(item);
-                setLanguageSheet(false);
-              }}
-            />
-          ))}
-        </Group>
+      <Sheet visible={sheet === 'profile'} title="显示名称" onClose={() => setSheet(null)}>
+        <View style={styles.form}>
+          <TextInput
+            value={displayName}
+            onChangeText={setDisplayName}
+            placeholder="输入显示名称"
+            placeholderTextColor={palette.tertiaryLabel}
+            style={styles.input}
+          />
+          <Pressable
+            accessibilityRole="button"
+            disabled={busy}
+            onPress={saveProfile}
+            style={({ pressed }) => [styles.primary, pressed ? pressedDim : null]}
+          >
+            <Text style={styles.primaryText}>{busy ? '保存中…' : '保存'}</Text>
+          </Pressable>
+        </View>
+      </Sheet>
+
+      <Sheet visible={sheet === 'password'} title="修改密码" onClose={() => setSheet(null)}>
+        <View style={styles.form}>
+          <TextInput
+            value={originalPassword}
+            onChangeText={setOriginalPassword}
+            placeholder="当前密码"
+            placeholderTextColor={palette.tertiaryLabel}
+            secureTextEntry
+            style={styles.input}
+          />
+          <TextInput
+            value={newPassword}
+            onChangeText={setNewPassword}
+            placeholder="新密码（8–20 位）"
+            placeholderTextColor={palette.tertiaryLabel}
+            secureTextEntry
+            style={styles.input}
+          />
+          <Pressable
+            accessibilityRole="button"
+            disabled={busy}
+            onPress={savePassword}
+            style={({ pressed }) => [styles.primary, pressed ? pressedDim : null]}
+          >
+            <Text style={styles.primaryText}>{busy ? '保存中…' : '保存'}</Text>
+          </Pressable>
+        </View>
       </Sheet>
     </Subpage>
   );
@@ -288,38 +322,6 @@ const styles = StyleSheet.create({
     color: palette.secondaryLabel,
     fontSize: 12,
   },
-  weekStrip: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  dayCell: {
-    alignItems: 'center',
-    gap: 5,
-    width: 34,
-  },
-  dayLabel: {
-    color: palette.secondaryLabel,
-    fontSize: 11,
-  },
-  dayDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: palette.fill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayDotActive: {
-    backgroundColor: palette.blue,
-  },
-  dayNumber: {
-    color: palette.secondaryLabel,
-    fontSize: 13,
-  },
-  dayNumberActive: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
   checkinButton: {
     minHeight: ios ? 44 : 52,
     overflow: 'hidden',
@@ -339,54 +341,6 @@ const styles = StyleSheet.create({
   checkinTextDone: {
     color: palette.secondaryLabel,
   },
-  calendar: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: palette.separator,
-    paddingTop: 12,
-  },
-  calendarCell: {
-    width: `${100 / 7}%`,
-    alignItems: 'center',
-    paddingVertical: 5,
-    gap: 2,
-  },
-  calendarDay: {
-    color: palette.secondaryLabel,
-    fontSize: 12,
-  },
-  calendarToday: {
-    color: palette.blue,
-    fontWeight: '600',
-  },
-  todayDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: palette.blue,
-  },
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: ios ? 10 : 12,
-    minHeight: ios ? 47 : 56,
-  },
-  switchMain: {
-    flex: 1,
-    gap: 2,
-  },
-  switchTitle: {
-    color: palette.label,
-    fontSize: 17,
-  },
-  switchSubtitle: {
-    color: palette.secondaryLabel,
-    fontSize: 13,
-    lineHeight: 18,
-  },
   signOut: {
     minHeight: ios ? 48 : 52,
     overflow: 'hidden',
@@ -401,5 +355,29 @@ const styles = StyleSheet.create({
   },
   signOutText: {
     fontSize: 17,
+  },
+  form: {
+    gap: 12,
+    padding: 16,
+  },
+  input: {
+    minHeight: ios ? 44 : 52,
+    paddingHorizontal: 14,
+    borderRadius: ios ? 10 : 12,
+    backgroundColor: palette.fill,
+    color: palette.label,
+    fontSize: 16,
+  },
+  primary: {
+    minHeight: ios ? 46 : 52,
+    borderRadius: ios ? 10 : 26,
+    backgroundColor: palette.blue,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

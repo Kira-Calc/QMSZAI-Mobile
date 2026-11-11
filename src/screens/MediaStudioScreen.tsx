@@ -1,6 +1,10 @@
-import { useRef, useState } from 'react';
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
+import * as Clipboard from 'expo-clipboard';
+import { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -27,78 +31,71 @@ import {
 import { cardSurface, pressedDim, pressedSurface, softShadow } from '../material';
 import { useKeyboardInsets } from '../useKeyboardInsets';
 
-const ios = Platform.OS === 'ios';
-import type { MediaGeneration, MediaKind, TaskKind } from '../types';
+import {
+  fetchAudioTask,
+  fetchMusicTask,
+  fetchMusicV3Task,
+  fetchVideoCapabilities,
+  fetchVideoTask,
+  fetchVoices,
+  generateImageSync,
+  submitMusicTask,
+  submitMusicV3,
+  submitVideoTask,
+} from '../api/endpoints';
+import { speechToFile, writeBase64Audio } from '../api/client';
+import type { PricingPayload } from '../api/types';
+import type { MediaGeneration, MediaKind, Model, TaskKind } from '../types';
+import {
+  firstMediaUrl,
+  modelsForKind,
+  priceLabelOf,
+  taskErrorOf,
+  taskIdOf,
+  taskProgressOf,
+  taskStateOf,
+} from '../services/mediaModels';
 
-type ParamConfig = { key: string; label: string; options: string[]; value: string };
+const ios = Platform.OS === 'ios';
+
+type ParamConfig = { key: string; label: string; options: string[] };
 
 type MediaConfig = {
   label: string;
-  model: string;
-  cost: number;
   taskKind: TaskKind;
   action: string;
   promptLabel: string;
   placeholder: string;
-  params: ParamConfig[];
 };
 
 const configs: Record<MediaKind, MediaConfig> = {
   image: {
     label: '图片',
-    model: 'image-01',
-    cost: 0.2,
     taskKind: 'image',
     action: '生成图片',
     promptLabel: '图片描述',
     placeholder: '例如：雨后的山间小屋，暖色灯光，电影感构图',
-    params: [
-      { key: '尺寸', label: '尺寸', options: ['1024 x 1024', '768 x 1024', '1024 x 768'], value: '1024 x 1024' },
-      { key: '品质', label: '品质', options: ['标准', '高清'], value: '标准' },
-      { key: '风格', label: '风格', options: ['鲜明 (Vivid)', '自然 (Natural)'], value: '鲜明 (Vivid)' },
-      { key: '数量', label: '数量', options: ['1 张', '2 张', '4 张'], value: '1 张' },
-    ],
   },
   video: {
     label: '视频',
-    model: 'cogvideox-3',
-    cost: 2.6,
     taskKind: 'video',
     action: '生成视频',
     promptLabel: '视频描述',
     placeholder: '例如：镜头缓慢推进，展示城市清晨的街道与行人',
-    params: [
-      { key: '时长', label: '时长（秒）', options: ['5 秒', '10 秒'], value: '5 秒' },
-      { key: '宽高比', label: '宽高比', options: ['16:9', '9:16', '1:1'], value: '16:9' },
-      { key: '分辨率', label: '分辨率', options: ['1280x720', '720x1280'], value: '1280x720' },
-    ],
   },
   music: {
     label: '音乐',
-    model: 'music-2.5',
-    cost: 1.2,
     taskKind: 'music',
     action: '生成音乐',
     promptLabel: '音乐描述',
     placeholder: '例如：轻快的民谣，木吉他与口琴，适合清晨通勤',
-    params: [
-      { key: '风格', label: '风格', options: ['流行', '民谣', '电子', '古典'], value: '流行' },
-      { key: '情绪', label: '情绪', options: ['温暖', '明亮', '安静', '振奋'], value: '温暖' },
-      { key: '格式', label: '输出格式', options: ['MP3', 'WAV'], value: 'MP3' },
-    ],
   },
   voice: {
     label: '语音',
-    model: 'speech-01-hd',
-    cost: 0.05,
     taskKind: 'voice',
     action: '生成语音',
     promptLabel: '合成文本',
     placeholder: '输入要朗读的文字，最多 4096 字',
-    params: [
-      { key: '音色', label: '音色', options: ['沉稳高管', '温柔女声', '清朗男声', '活力主播'], value: '沉稳高管' },
-      { key: '语速', label: '语速', options: ['0.8x', '1.0x', '1.2x', '1.5x'], value: '1.0x' },
-    ],
   },
 };
 
@@ -106,15 +103,12 @@ const kindOrder: MediaKind[] = ['image', 'video', 'music', 'voice'];
 
 const voicePresets = ['晨间播报', '产品介绍', '有声书片段'];
 
-const initialValues = kindOrder.reduce<Record<MediaKind, Record<string, string>>>(
-  (accumulator, kind) => {
-    accumulator[kind] = Object.fromEntries(
-      configs[kind].params.map((param) => [param.key, param.value]),
-    );
-    return accumulator;
-  },
-  {} as Record<MediaKind, Record<string, string>>,
-);
+const defaultValues: Record<MediaKind, Record<string, string>> = {
+  image: { 尺寸: '1024x1024', 数量: '1' },
+  video: { 时长: '5', 宽高比: '16:9', 分辨率: '720P' },
+  music: { 时长: '30' },
+  voice: { 音色: '' },
+};
 
 const initialPrompts: Record<MediaKind, string> = {
   image: '',
@@ -123,19 +117,36 @@ const initialPrompts: Record<MediaKind, string> = {
   voice: '',
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  return '生成失败，请稍后重试';
+}
+
 export function MediaStudioScreen({
   onBack,
-  onCreateTask,
+  models,
+  pricing,
+  group,
 }: {
   onBack: () => void;
-  onCreateTask: (input: { title: string; kind: TaskKind; cost: number }) => void;
+  models: Model[];
+  pricing: PricingPayload | null;
+  group?: string;
 }) {
   const insets = useSafeAreaInsets();
   const { inset: keyboardInset } = useKeyboardInsets();
   const [kind, setKind] = useState<MediaKind>('image');
   const [prompts, setPrompts] = useState(initialPrompts);
   const [lyrics, setLyrics] = useState('');
-  const [values, setValues] = useState(initialValues);
+  const [values, setValues] = useState(defaultValues);
+  const [selectedModels, setSelectedModels] = useState<Record<MediaKind, string>>({
+    image: '',
+    video: '',
+    music: '',
+    voice: '',
+  });
   const [picker, setPicker] = useState<{
     key: string;
     label: string;
@@ -144,12 +155,171 @@ export function MediaStudioScreen({
   const [generations, setGenerations] = useState<MediaGeneration[]>([]);
   const [selected, setSelected] = useState<MediaGeneration | null>(null);
   const [busy, setBusy] = useState(false);
+  const [voices, setVoices] = useState<Array<{ label: string; value: string }>>([]);
+  const [capabilities, setCapabilities] = useState<{
+    aspect_ratios: string[];
+    durations: number[];
+    resolutions: string[];
+  } | null>(null);
   const sequence = useRef(0);
+  const mounted = useRef(true);
+  const playerRef = useRef<AudioPlayer | null>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      playerRef.current?.remove();
+      playerRef.current = null;
+    };
+  }, []);
+
+  const playAudio = async (uri: string) => {
+    try {
+      await setAudioModeAsync({ playsInSilentMode: true });
+      playerRef.current?.remove();
+      const player = createAudioPlayer({ uri });
+      playerRef.current = player;
+      player.play();
+    } catch (error) {
+      Alert.alert('播放失败', errorMessage(error));
+    }
+  };
 
   const config = configs[kind];
   const prompt = prompts[kind];
   const currentValues = values[kind];
-  const canSubmit = prompt.trim().length > 0 && !busy;
+  const availableModels = (() => {
+    const list = modelsForKind(models, kind);
+    // music-2.x 上游已停止新用户服务，优先选 music-3.0。
+    if (kind === 'music') {
+      return [...list].sort(
+        (a, b) => Number(b.startsWith('music-3')) - Number(a.startsWith('music-3')),
+      );
+    }
+    return list;
+  })();
+  const model = selectedModels[kind] || availableModels[0] || '';
+
+  useEffect(() => {
+    if (!availableModels.length) return;
+    if (!availableModels.includes(selectedModels[kind])) {
+      setSelectedModels((current) => ({ ...current, [kind]: availableModels[0] }));
+    }
+  }, [availableModels, kind, selectedModels]);
+
+  useEffect(() => {
+    if (kind !== 'voice' || !model) return;
+    let active = true;
+    fetchVoices(model)
+      .then((list) => {
+        if (!active) return;
+        // 站点返回 {label,value}：界面显示 label，提交时用 value。
+        const next = (Array.isArray(list) ? list : [])
+          .map((item) => {
+            if (typeof item === 'string') return { label: item, value: item };
+            if (item && typeof item === 'object') {
+              const record = item as Record<string, string | undefined>;
+              const value = record.value || record.name || record.voice || record.id || '';
+              return value ? { label: record.label || value, value } : null;
+            }
+            return null;
+          })
+          .filter((item): item is { label: string; value: string } => Boolean(item));
+        setVoices(next);
+        if (next.length) {
+          setValues((current) => {
+            const labels = next.map((item) => item.label);
+            return {
+              ...current,
+              voice: {
+                ...current.voice,
+                音色: labels.includes(current.voice.音色) ? current.voice.音色 : next[0].label,
+              },
+            };
+          });
+        }
+      })
+      .catch(() => {
+        if (active) setVoices([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [kind, model]);
+
+  useEffect(() => {
+    if (kind !== 'video' || !model) return;
+    let active = true;
+    fetchVideoCapabilities(model)
+      .then((result) => {
+        if (!active || !result) return;
+        const next = {
+          aspect_ratios: result.aspect_ratios?.length ? result.aspect_ratios : ['16:9'],
+          durations: result.durations?.length ? result.durations : [5],
+          resolutions: result.resolutions?.length ? result.resolutions : ['720P'],
+        };
+        setCapabilities(next);
+        // 站点返回的分辨率形如 1280x720，需要把默认值换成列表内的合法项。
+        setValues((current) => {
+          const video = current.video;
+          const resolution = next.resolutions.includes(video.分辨率)
+            ? video.分辨率
+            : next.resolutions.find((item) => item.includes('720')) ?? next.resolutions[0];
+          const duration = next.durations.map(String).includes(video.时长)
+            ? video.时长
+            : String(next.durations[0]);
+          const aspect = next.aspect_ratios.includes(video.宽高比)
+            ? video.宽高比
+            : next.aspect_ratios[0];
+          return { ...current, video: { ...video, 分辨率: resolution, 时长: duration, 宽高比: aspect } };
+        });
+      })
+      .catch(() => {
+        if (active) setCapabilities(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [kind, model]);
+
+  const params: ParamConfig[] = (() => {
+    if (kind === 'image') {
+      return [
+        { key: '尺寸', label: '尺寸', options: ['1024x1024', '1024x768', '768x1024'] },
+        { key: '数量', label: '数量', options: ['1', '2', '4'] },
+      ];
+    }
+    if (kind === 'video') {
+      return [
+        {
+          key: '时长',
+          label: '时长（秒）',
+          options: (capabilities?.durations ?? [5, 10]).map(String),
+        },
+        {
+          key: '宽高比',
+          label: '宽高比',
+          options: capabilities?.aspect_ratios ?? ['16:9', '9:16', '1:1'],
+        },
+        {
+          key: '分辨率',
+          label: '分辨率',
+          options: capabilities?.resolutions ?? ['720P', '1080P'],
+        },
+      ];
+    }
+    if (kind === 'music') {
+      return [{ key: '时长', label: '时长（秒）', options: ['30', '60', '90'] }];
+    }
+    return [
+      {
+        key: '音色',
+        label: '音色',
+        options: voices.length ? voices.map((item) => item.label) : ['default'],
+      },
+    ];
+  })();
 
   const setPrompt = (text: string) => {
     setPrompts((current) => ({ ...current, [kind]: text }));
@@ -162,57 +332,161 @@ export function MediaStudioScreen({
     }));
   };
 
+  const voiceValue = (label: string) =>
+    voices.find((item) => item.label === label)?.value ?? (label === 'default' ? '' : label);
+
   const summary = () => {
     if (kind === 'image') {
-      return `${currentValues['尺寸']} · ${currentValues['数量']}`;
+      return `${currentValues.尺寸} · ${currentValues.数量} 张`;
     }
     if (kind === 'video') {
-      return `${currentValues['时长']} · ${currentValues['宽高比']} · ${currentValues['分辨率']}`;
+      return `${currentValues.时长} 秒 · ${currentValues.宽高比} · ${currentValues.分辨率}`;
     }
     if (kind === 'music') {
-      return `${currentValues['风格']} · ${currentValues['情绪']}${lyrics.trim() ? ' · 含歌词' : ' · 纯音乐'}`;
+      return `${currentValues.时长} 秒${lyrics.trim() ? ' · 含歌词' : ' · 纯音乐'}`;
     }
-    return `${currentValues['音色']} · 语速 ${currentValues['语速']}`;
+    return currentValues.音色 ? `音色 ${currentValues.音色}` : '默认音色';
   };
 
-  const submit = () => {
-    if (!canSubmit) {
+  // 记录按当前类型展示，避免图片记录混进视频/音乐列表。
+  const visibleGenerations = generations.filter((item) => item.kind === kind);
+
+  const updateRecord = (id: string, patch: Partial<MediaGeneration>) => {
+    if (!mounted.current) return;
+    setGenerations((current) =>
+      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+    setSelected((current) => (current && current.id === id ? { ...current, ...patch } : current));
+  };
+
+  const waitForTask = async (
+    taskKind: 'video' | 'music' | 'voice',
+    taskId: string,
+    recordId: string,
+    baseSummary: string,
+    overrideFetch?: (id: string) => Promise<unknown>,
+  ) => {
+    const fetchTask =
+      overrideFetch ??
+      (taskKind === 'video' ? fetchVideoTask : taskKind === 'music' ? fetchMusicTask : fetchAudioTask);
+    for (let attempt = 0; attempt < 75; attempt += 1) {
+      await sleep(4000);
+      if (!mounted.current) return;
+      const task = await fetchTask(taskId);
+      const state = taskStateOf(task);
+      if (state === 'failed') {
+        throw new Error(taskErrorOf(task) || '上游任务失败');
+      }
+      if (state === 'succeeded') {
+        const url = firstMediaUrl(task);
+        updateRecord(recordId, {
+          status: 'succeeded',
+          url: url ?? undefined,
+          summary: baseSummary,
+          error: url ? undefined : '任务已完成，但未找到媒体地址',
+        });
+        return;
+      }
+      const progress = taskProgressOf(task);
+      if (progress !== null) {
+        updateRecord(recordId, { summary: `${baseSummary} · ${Math.round(progress)}%` });
+      }
+    }
+    throw new Error('任务超时，请稍后在任务页查看结果');
+  };
+
+  const submit = async () => {
+    const text = prompt.trim();
+    if (!text || busy) return;
+    if (!model) {
+      Alert.alert('暂无可用模型', '当前分组没有该类别的模型');
       return;
     }
+
     const id = `gen-${++sequence.current}`;
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const baseSummary = summary();
     const record: MediaGeneration = {
       id,
       kind,
-      prompt: prompt.trim(),
-      model: config.model,
+      prompt: text,
+      model,
       status: 'running',
       createdAt: time,
-      cost: config.cost,
-      summary: summary(),
+      summary: baseSummary,
     };
     setGenerations((current) => [record, ...current]);
-    onCreateTask({
-      title: `${config.label}：${prompt.trim().slice(0, 18)}${prompt.trim().length > 18 ? '…' : ''}`,
-      kind: config.taskKind,
-      cost: config.cost,
-    });
     setBusy(true);
-    setTimeout(() => {
-      setGenerations((current) =>
-        current.map((item) =>
-          item.id === id
-            ? {
-                ...item,
-                status: 'succeeded',
-                summary: `${item.summary} · 模拟结果已生成`,
-              }
-            : item,
-        ),
-      );
-      setBusy(false);
-    }, 2200);
+
+    try {
+      if (kind === 'image') {
+        const result = await generateImageSync({
+          model,
+          prompt: lyrics.trim() ? `${text}\n\n${lyrics.trim()}` : text,
+          n: Number.parseInt(currentValues.数量, 10) || 1,
+          size: currentValues.尺寸,
+        });
+        const url = result?.data?.[0]?.url ?? firstMediaUrl(result);
+        if (!url) throw new Error('未返回图片地址');
+        updateRecord(id, { status: 'succeeded', url, summary: baseSummary });
+      } else if (kind === 'video') {
+        const task = await submitVideoTask({
+          model,
+          prompt: text,
+          duration: Number.parseInt(currentValues.时长, 10) || undefined,
+          aspect_ratio: currentValues.宽高比,
+          resolution: currentValues.分辨率,
+        });
+        const taskId = taskIdOf(task);
+        if (!taskId) throw new Error('未返回任务号');
+        await waitForTask('video', taskId, id, baseSummary);
+      } else if (kind === 'music') {
+        const duration = Number.parseInt(currentValues.时长, 10) || undefined;
+        if (model.startsWith('music-3')) {
+          // music-3.0 同步返回 base64 音频，lyrics 必填，缺失时用描述兜底。
+          const result = await submitMusicV3({
+            model,
+            prompt: text,
+            lyrics: lyrics.trim() || text,
+            duration,
+          });
+          const audio = result?.audio || result?.result_url;
+          if (audio) {
+            const file = await writeBase64Audio(audio);
+            updateRecord(id, {
+              status: 'succeeded',
+              url: file.uri,
+              summary: baseSummary,
+            });
+          } else {
+            const taskId = taskIdOf(result);
+            if (!taskId) throw new Error('未返回音频');
+            await waitForTask('music', taskId, id, baseSummary, fetchMusicV3Task);
+          }
+        } else {
+          const task = await submitMusicTask({
+            model,
+            prompt: text,
+            duration,
+          });
+          const taskId = taskIdOf(task);
+          if (!taskId) throw new Error('未返回任务号');
+          await waitForTask('music', taskId, id, baseSummary);
+        }
+      } else {
+        const audio = await speechToFile({
+          model,
+          input: text,
+          voice: voiceValue(currentValues.音色) || undefined,
+        });
+        updateRecord(id, { status: 'succeeded', url: audio.uri, summary: baseSummary });
+      }
+    } catch (error) {
+      updateRecord(id, { status: 'failed', error: errorMessage(error) });
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
   };
 
   const statusMeta: Record<MediaGeneration['status'], { label: string; tone: Tone }> = {
@@ -220,6 +494,21 @@ export function MediaStudioScreen({
     succeeded: { label: '已完成', tone: 'success' },
     failed: { label: '失败', tone: 'danger' },
   };
+
+  const openUrl = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('无法打开链接');
+    }
+  };
+
+  const copyUrl = async (url: string) => {
+    await Clipboard.setStringAsync(url);
+    Alert.alert('已复制链接');
+  };
+
+  const canSubmit = prompt.trim().length > 0 && !busy && Boolean(model);
 
   return (
     <Subpage title="AI 创作" onBack={onBack}>
@@ -251,11 +540,8 @@ export function MediaStudioScreen({
                 <Pressable
                   key={preset}
                   accessibilityRole="button"
-                  onPress={() => setPrompt(`${preset}：欢迎使用阡陌数智语音合成，这是一段用于移动端演示的示例文本。`)}
-                  style={({ pressed }) => [
-                    styles.presetChip,
-                    pressed ? pressedSurface : null,
-                  ]}
+                  onPress={() => setPrompt(`${preset}：欢迎使用阡陌数智语音合成。`)}
+                  style={({ pressed }) => [styles.presetChip, pressed ? pressedSurface : null]}
                 >
                   <Text style={styles.presetText}>{preset}</Text>
                 </Pressable>
@@ -280,16 +566,20 @@ export function MediaStudioScreen({
             />
           </View>
 
-          {kind === 'music' ? (
+          {kind === 'music' || kind === 'image' ? (
             <View style={styles.inputCard}>
               <View style={styles.inputHeader}>
-                <Text style={styles.inputLabel}>歌词（可选）</Text>
+                <Text style={styles.inputLabel}>{kind === 'music' ? '歌词（可选）' : '附加描述（可选）'}</Text>
                 <Text style={styles.counter}>{lyrics.length}/3500</Text>
               </View>
               <TextInput
                 value={lyrics}
                 onChangeText={setLyrics}
-                placeholder={'支持 [Intro]、[Verse]、[Chorus]、[Bridge]、[Outro] 标签'}
+                placeholder={
+                  kind === 'music'
+                    ? '支持 [Intro]、[Verse]、[Chorus]、[Bridge]、[Outro] 标签'
+                    : '补充构图、光线或风格细节'
+                }
                 placeholderTextColor={palette.tertiaryLabel}
                 multiline
                 style={[styles.promptInput, styles.lyricsInput]}
@@ -297,20 +587,25 @@ export function MediaStudioScreen({
             </View>
           ) : null}
 
-          <Group header="生成参数" footer={`模型 ${config.model} · 预计消耗 ¥${config.cost.toFixed(2)}`}>
-            <Row title="模型" value={config.model} />
-            {config.params.map((param) => (
+          <Group header="生成参数">
+            <Row
+              title="模型"
+              value={model || '暂无可用模型'}
+              chevron={availableModels.length > 0}
+              onPress={() =>
+                availableModels.length
+                  ? setPicker({ key: '模型', label: '模型', options: availableModels })
+                  : undefined
+              }
+            />
+            {params.map((param) => (
               <Row
                 key={param.key}
                 title={param.label}
-                value={currentValues[param.key]}
+                value={currentValues[param.key] || '—'}
                 chevron
                 onPress={() =>
-                  setPicker({
-                    key: param.key,
-                    label: param.label,
-                    options: param.options,
-                  })
+                  setPicker({ key: param.key, label: param.label, options: param.options })
                 }
               />
             ))}
@@ -318,20 +613,16 @@ export function MediaStudioScreen({
 
           <View style={styles.historyHeader}>
             <Text style={styles.sectionTitle}>本次生成记录</Text>
-            {generations.length > 0 ? (
-              <Text style={styles.sectionMeta}>{generations.length} 条</Text>
+            {visibleGenerations.length > 0 ? (
+              <Text style={styles.sectionMeta}>{visibleGenerations.length} 条</Text>
             ) : null}
           </View>
 
-          {generations.length === 0 ? (
-            <EmptyState
-              title="还没有生成记录"
-              message="提交后这里会显示进度与结果；记录仅保留在本次运行中。"
-              icon="sparkles"
-            />
+          {visibleGenerations.length === 0 ? (
+            <EmptyState title="还没有生成记录" icon="sparkles" />
           ) : (
             <Group>
-              {generations.map((item) => (
+              {visibleGenerations.map((item) => (
                 <Pressable
                   key={item.id}
                   accessibilityRole="button"
@@ -352,9 +643,9 @@ export function MediaStudioScreen({
                   </Text>
                   <View style={styles.genBottom}>
                     <Text style={styles.genSummary} numberOfLines={1}>
-                      {item.summary}
+                      {item.error || item.summary}
                     </Text>
-                    <Text style={styles.genCost}>¥{item.cost.toFixed(2)}</Text>
+                    <Text style={styles.genCost}>{item.url ? '查看' : ''}</Text>
                   </View>
                 </Pressable>
               ))}
@@ -364,8 +655,10 @@ export function MediaStudioScreen({
 
         <View style={[styles.footer, { paddingBottom: 8 + insets.bottom }]}>
           <View style={styles.footerMeta}>
-            <Text style={styles.footerCost}>¥{config.cost.toFixed(2)}</Text>
-            <Text style={styles.footerHint}>模拟计费</Text>
+            <Text style={styles.footerCost} numberOfLines={1}>
+              {model || '暂无模型'}
+            </Text>
+            <Text style={styles.footerHint}>{priceLabelOf(pricing, model, group)}</Text>
           </View>
           <Pressable
             accessibilityRole="button"
@@ -378,7 +671,7 @@ export function MediaStudioScreen({
               pressed ? pressedDim : null,
             ]}
           >
-            <Text style={styles.submitText}>{busy ? '正在提交…' : config.action}</Text>
+            <Text style={styles.submitText}>{busy ? '生成中…' : config.action}</Text>
           </Pressable>
         </View>
       </KeyboardAvoidingView>
@@ -390,9 +683,21 @@ export function MediaStudioScreen({
               <Row
                 key={option}
                 title={option}
-                value={currentValues[picker.key] === option ? '✓' : undefined}
+                value={
+                  picker.key === '模型'
+                    ? model === option
+                      ? '✓'
+                      : undefined
+                    : currentValues[picker.key] === option
+                      ? '✓'
+                      : undefined
+                }
                 onPress={() => {
-                  setParam(picker.key, option);
+                  if (picker.key === '模型') {
+                    setSelectedModels((current) => ({ ...current, [kind]: option }));
+                  } else {
+                    setParam(picker.key, option);
+                  }
                   setPicker(null);
                 }}
               />
@@ -416,11 +721,22 @@ export function MediaStudioScreen({
               <Row title="模型" value={selected.model} />
               <Row title="参数" value={selected.summary} />
               <Row title="提交时间" value={selected.createdAt} />
-              <Row title="费用" value={`¥${selected.cost.toFixed(2)}`} />
+              {selected.error ? <Row title="错误" value={selected.error} /> : null}
             </Group>
-            <Text style={styles.detailNote}>
-              演示模式不会生成真实媒体文件。接入真实接口后，可在此预览、下载或重新生成。
-            </Text>
+            {selected.url ? (
+              <Group>
+                {selected.kind === 'voice' ? (
+                  <Row title="播放语音" chevron onPress={() => playAudio(selected.url!)} />
+                ) : selected.kind === 'music' ? (
+                  <Row title="播放音乐" chevron onPress={() => playAudio(selected.url!)} />
+                ) : (
+                  <>
+                    <Row title="打开结果" chevron onPress={() => openUrl(selected.url!)} />
+                    <Row title="复制链接" onPress={() => copyUrl(selected.url!)} />
+                  </>
+                )}
+              </Group>
+            ) : null}
           </>
         ) : null}
       </Sheet>
@@ -549,7 +865,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   genCost: {
-    color: palette.secondaryLabel,
+    color: palette.blue,
     fontSize: 12,
     fontVariant: ['tabular-nums'],
   },
@@ -567,7 +883,7 @@ const styles = StyleSheet.create({
   },
   footerCost: {
     color: palette.label,
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '600',
   },
   footerHint: {
@@ -592,6 +908,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   detailHeading: {
+    alignItems: 'flex-start',
     gap: 8,
     paddingHorizontal: 4,
   },

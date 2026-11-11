@@ -1,5 +1,5 @@
 import { SymbolView } from 'expo-symbols';
-import { useRef, useState, type ComponentRef } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -20,27 +20,21 @@ import { useKeyboardInsets } from '../useKeyboardInsets';
 
 const ios = Platform.OS === 'ios';
 
-import { Badge, GlassPillButton, Group, Row, Sheet, Subpage, palette } from '../ui';
+import { GlassPillButton, Group, Sheet, Subpage, palette } from '../ui';
+import { streamChat } from '../api/client';
 
 type ChatMessage = { id: number; role: 'user' | 'assistant'; text: string };
 
-const experienceModels = [
-  { name: 'GLM-4-Flash_免费', tag: '免费', note: '每日免费额度，适合日常问答。' },
-  { name: 'deepseek-flash_官方', tag: '低延迟', note: '响应快，支持缓存读取计费。' },
-  { name: 'claude-sonnet-4.5', tag: '长文本', note: '适合写作、审阅与长文档分析。' },
-  { name: 'gpt-6.1-terra', tag: '旗舰', note: '复杂推理与多步骤任务。' },
-];
-
 const suggestions = ['用三句话介绍阡陌数智', '帮我写一条模型上架公告', '把这段文字改写得更简洁'];
 
-function buildReply(prompt: string, model: string) {
-  return `这是「${model}」的模拟回复。\n\n你刚才问的是：“${prompt}”。\n\n移动端模型体验页已具备模型切换、连续对话、停止生成和清空会话的完整交互。真实接入时，这里会替换为流式接口返回的内容，并显示首字延迟与 token 用量。\n\n当前结果由本地演示逻辑生成，不代表真实模型输出。`;
-}
-
-export function ModelExperienceScreen({ onBack }: { onBack: () => void }) {
+export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; models: string[] }) {
   const insets = useSafeAreaInsets();
   const { inset: keyboardInset } = useKeyboardInsets();
-  const [model, setModel] = useState(experienceModels[0].name);
+  const [model, setModel] = useState(models[0] ?? '');
+
+  useEffect(() => {
+    setModel((current) => (models.includes(current) ? current : models[0] ?? ''));
+  }, [models]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -48,19 +42,13 @@ export function ModelExperienceScreen({ onBack }: { onBack: () => void }) {
   const [clearedNotice, setClearedNotice] = useState(false);
   const sequence = useRef(0);
   const generation = useRef(0);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
-
-  const stopTimer = () => {
-    if (timer.current) {
-      clearInterval(timer.current);
-      timer.current = null;
-    }
-  };
 
   const stop = () => {
     generation.current += 1;
-    stopTimer();
+    abortRef.current?.abort();
+    abortRef.current = null;
     setBusy(false);
   };
 
@@ -82,24 +70,38 @@ export function ModelExperienceScreen({ onBack }: { onBack: () => void }) {
     setClearedNotice(false);
     setBusy(true);
 
-    const reply = buildReply(prompt, model);
-    let index = 0;
-    stopTimer();
-    timer.current = setInterval(() => {
-      if (generation.current !== generationId) {
-        return;
-      }
-      index = Math.min(reply.length, index + 3);
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === assistantId ? { ...message, text: reply.slice(0, index) } : message,
-        ),
-      );
-      if (index >= reply.length) {
-        stopTimer();
+    const history = messages.map((message) => ({ role: message.role, content: message.text }));
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let accumulated = '';
+    streamChat(
+      { model, messages: [...history, { role: 'user', content: prompt }] },
+      {
+        onDelta: (delta) => {
+          if (generation.current !== generationId) return;
+          accumulated += delta;
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantId ? { ...message, text: accumulated } : message,
+            ),
+          );
+        },
+        onDone: () => {
+          if (generation.current !== generationId) return;
+          setBusy(false);
+        },
+      },
+      controller.signal,
+    )
+      .then(() => {
+        if (generation.current === generationId) setBusy(false);
+      })
+      .catch((error) => {
+        if (generation.current !== generationId) return;
         setBusy(false);
-      }
-    }, 45);
+        if (error instanceof Error && error.name === 'AbortError') return;
+        Alert.alert('发送失败', error instanceof Error ? error.message : '请稍后重试');
+      });
   };
 
   const clear = () => {
@@ -243,23 +245,21 @@ export function ModelExperienceScreen({ onBack }: { onBack: () => void }) {
 
       <Sheet visible={modelSheet} title="选择模型" onClose={() => setModelSheet(false)}>
         <Group header="可用模型">
-          {experienceModels.map((item) => (
+          {models.map((item) => (
             <Pressable
-              key={item.name}
+              key={item}
               accessibilityRole="button"
               onPress={() => {
-                setModel(item.name);
+                setModel(item);
                 setModelSheet(false);
                 stop();
               }}
               style={({ pressed }) => [styles.modelRow, pressed ? styles.modelRowPressed : null]}
             >
               <View style={styles.modelRowMain}>
-                <Text style={styles.modelRowName}>{item.name}</Text>
-                <Text style={styles.modelRowNote}>{item.note}</Text>
+                <Text style={styles.modelRowName}>{item}</Text>
               </View>
-              <Badge text={item.tag} tone={item.tag === '免费' ? 'success' : 'neutral'} />
-              <Text style={styles.checkmark}>{item.name === model ? '✓' : ''}</Text>
+              <Text style={styles.checkmark}>{item === model ? '✓' : ''}</Text>
             </Pressable>
           ))}
         </Group>

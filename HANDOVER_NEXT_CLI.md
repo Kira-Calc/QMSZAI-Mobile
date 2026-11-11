@@ -1,256 +1,163 @@
-# QMSZAI Mobile — 下一 CLI 接手
+# QMSZAI Mobile：CLI 接手文档
+
+更新日期：2026-11-11。以本文和实际代码为准。本轮已由「全部本地模拟数据」改为按《APP 测试环境 API 接口文档》接真实接口；旧交接里“未接真实业务接口”的描述已失效，键盘避让与阴影方案仍以本文为准。
+
+## 项目与授权
+
+- **补齐（2026-11-11 iOS 修复，最重要）**：iOS 之前登录后必然 401（界面停在登录页并提示「登录状态已失效，请重新登录」）。根因：iOS 的 NSURLSession 会接管 `Cookie` 请求头，手工 `setRequestHeader('Cookie', …)` 在真实域名的 HTTPS 请求上被原生 Cookie jar 覆盖/丢弃，服务端收不到会话。现在 `src/api/client.ts` 的 `authHeaders()` 在 iOS 只下发 `New-Api-User`，`session` Cookie 交给原生 jar（登录响应的 Set-Cookie 自动入 jar，重启仍有效）；安卓保持手工 Cookie。**不要再在 iOS 上手工设置 Cookie 头**。验证方式：Metro 日志里 `POST /api/user/login` 200 之后 `GET /api/user/self` 必须是 200。
+- **iOS 自动化（本机环境）**：Xcode 27 缺 `Simulator.app`，`xcrun simctl` 只能截图不能点击；GitHub 不可达（Maestro/idb 装不上）。已用 npm 装 `appium@3.9.0` + `xctest/xcuitest@12.22.8`：`appium --port 4723` 后对 UDID `C0A7ECCE-6CA4-40E4-B955-0ECB870F9B6D`（iPhone 18 Pro, iOS 27, Expo Go 58.0.4）建 session（`appium:bundleId=host.exp.Exponent`），即可用 WebDriver tap/输入/取 UI 树/截图；坐标直接用 UI 树里的坐标。坑：iOS 登录后会弹系统「保存密码?」挡住整屏，点「以后」才能继续；输入框用 `element clear` + 逐字符 `POST /keys` 比 `setValue` 稳。
+- **iOS 回归状态（2026-11-11 17:20）**：已在 iOS 真机模拟器逐页核对通过：聊天首页、概览、模型目录、令牌管理、账户中心、个人设置；聊天真实流式对话成功；AI 创作语音（speech-01-hd）生成「已完成」并可播放（缓存 `tts-*.mp3`）。待核对：模型广场价格详情、模型体验流式、模型融合、用量日志、钱包子页。本轮同时修了 AI 创作详情页/生成记录四处观感（徽标不拉满整行、去掉 `summary` 的「· 已完成」后缀、删「生成参数」重复计费 footer、空状态去说明小字，`EmptyState.message` 变可选），账户资料卡名称/余额加 `numberOfLines={1}`。测试令牌 #55 与测试会话/生成记录尚未清理；安卓待复核。
+- 仓库：`/Users/wenze/Documents/GitHub/QMSZAI-Mobile`。
+- 当前 HEAD：`c1f4f6a`（`11.11.10.20`）；前一提交 `59ac34e`。
+- 用户自行提交、推送。不要自动 commit/push，不覆盖其他 CLI 改动。
+- Expo SDK 58 / React Native 0.88 / React 19 / TypeScript 6。
+- 服务端：测试环境 `https://test.qmszai.cn`（`src/api/client.ts` 的 `API_BASE_URL`）。接口唯一依据：`/Users/wenze/Downloads/APP测试环境API接口文档.md`。
+- 先读 `/Users/wenze/project.md` 的入口与本项目章节，再核对适用 AGENTS.md、CLAUDE.md、git status 和 diff。
+- 范围：登录用户的全部非支付、非管理员功能。管理员端、支付交易、「古今图书」不做。
 
-2026-11-11 iOS 回落动画调整：键盘高度相同的 will/did 通知去重，移除与 willChangeFrame 重叠的 willHide 更新；零时长事件不启动布局动画。聊天页 iOS 底部间距固定为 max(底栏留白, 键盘重叠高度-安全区)，避免临近收起时落到零后再跳回 76。typecheck、diff 检查通过；Device Hub 原生键盘下拉收起实测，最终位置正常、底栏恢复。截图不能确认逐帧流畅度，待用户确认动画观感。未提交推送。
+## 本轮改动（真实接口接入）
+
+开发前状态是纯 mock。下面是现在的实际结构。
 
-2026-11-11 iOS 聊天键盘避让修复：重载后确认原 KAV padding 路径仍遮挡。聊天改为 useKeyboardInsets(true) 按屏幕键盘重叠高度设置底部间距，并减去外层已占用的安全区；监听 iOS willChangeFrame/willHide 与 didShow/didHide，以系统时序安排布局动画，初始化读取 Keyboard.metrics。其他调用方默认仍返回 iOS inset 0，Android 高度算法不变。Device Hub 原生软键盘实测通过：展开时输入条在键盘上方、Q 换行 Q 两行输入完整可见、渐变模糊显示、删除测试文字并下拉收起后恢复输入区与底栏。未强制 state；typecheck 与 diff 检查通过。未提交推送。
+### 接口层
 
-2026-11-11 iOS 原生键盘实测：通过 Device Hub UI 聚焦聊天输入框，调整 Device > Keyboard 与工具栏 Capture Keyboard（最终 off）后成功显示系统英文软键盘，点 Q 输入与 delete 删除均有效，测试字符已清除。但输入条未上移、被键盘覆盖，底栏亦在键盘下方；因此 iOS 键盘避让及渐变模糊验收不通过。未用强制 state，未修改业务代码。下一步排查实际运行包与 KAV/键盘事件，修复后复测。此前“iOS 已验证”的历史记录不能作为当前验收依据。
+| 文件 | 职责 |
+| --- | --- |
+| `src/api/client.ts` | 请求核心。`rawRequest` 用 XHR 读完整响应头与 `Set-Cookie`，统一解析 `{success,message,data}`；`apiRequest` 只返回 `data`；`pgRequest` 处理 `/pg/*` 的 `{error:{message}}`；`streamChat` 用 `expo/fetch` 手写 SSE 行解析；`chatOnce` 是非流式单次调用。 |
+| `src/api/endpoints.ts` | 所有接口封装：站点配置、验证码、短信、登录/注册/找回/2FA、用户资料、模型、音色、视频能力、媒体任务、签到、邀请码、会话、消息、日志、任务、数据统计、令牌。 |
+| `src/api/types.ts` | DTO 类型。 |
+| `src/api/format.ts` | 额度→货币、时间、相对时间格式化。 |
+| `src/auth/AuthProvider.tsx` | 登录态、2FA pending、站点配置、`quotaPerUnit`、会话恢复与退出。 |
+
+关键约定：
 
-2026-11-11 改用渐变模糊：按用户要求放弃阴影。增加 expo-blur 与 masked-view，使用 BlurTargetView 采样列表、BlurView intensity 45 + SVG 透明度蒙版，上伸 40dp、总高 48dp，保留键盘后淡入。修正 masked-view 旧类型兼容。typecheck、diff 检查、双端 export 通过；安卓键盘展开截图已核对，iOS 键盘态未实测。未提交推送。
+- `/api/*` 业务失败可能仍是 HTTP 200，必须看 `success`；`/pg/*` 错误是 `{error:{message}}`，且 `error` 可能为 `null`。
+- 鉴权同时需要 `Cookie: session=...` 与 `New-Api-User: <userId>`；2FA pending 阶段只有 Cookie、`userId=0`，此时不发送 `New-Api-User`。
+- Cookie 与 `userId` 存 `expo-secure-store`；登录响应必须能读到 `Set-Cookie`，否则提示「登录会话保存失败，请重试」。
+- 超时默认 30s；`/pg/images/sync` 单独放到 180s。
+- `localizeMessage` 把服务端英文错误转中文，例如 `Username or password is incorrect, or user has been banned` → 「账号或密码错误」（实测）。
+- `GET /api/user/logout` 是 GET。`PUT /api/user/self` 即使在只改密码时也必须回传当前 `username`。
 
-2026-11-11 输入框阴影衔接调整：针对悬空灰带反馈，把渐变峰值移入输入框后方（相对输入区顶部 24dp），总高度 80dp、上伸 32dp，峰值透明度降至 6%。安卓键盘截图已查看；typecheck 与 diff 检查通过。iOS 共用代码，键盘态尚未实测。未提交推送。
+### 登录与账号
 
-2026-11-11 阴影断层修正：用户截图暴露渐变底端直接截断。改为上方 32dp + 输入区内部 16dp 的连续透明渐变，峰值降至 8%，底端回落至透明。安卓键盘展开截图已核对，原水平硬切消失；typecheck、diff 检查通过。iOS 共用实现，原生键盘交互仍未验证。
+`src/screens/LoginScreen.tsx`：
 
-## 2026-11-11：输入区向上阴影与 README 改写
+- 同屏 `Mode = login | register | reset` 切换；2FA 是独立 step。
+- 图形验证码是底部 `Modal`：服务端返回 `chars` 坐标与 `target_chars` 顺序，客户端渲染并按顺序点选，再提交 `clicks`；舞台宽高用服务端 `width/height` 的 `aspectRatio`。
+- 注册/找回都先过图形验证码，再加短信验证码；站点 `sms_verification=true`。
+- 登录 `require_2fa` → 2FA 页；`need_set_password` → 切到找回模式并预填手机号。
+- 站点配置来自 `/api/public/status`；登录后用 `/api/status` 的 `quota_per_unit`（缺省 500000）换算额度。
 
-聊天输入区阴影改为 32dp 深色透明渐变，从底部 12% 向上递减至 0；移除页面底色遮罩和阴影平移，保留键盘落位后淡入，动画切换时取消旧动画。两端共用，现有键盘避让和底部留白未改。README 精简为项目介绍、截图、功能、运行和限制。
+### 数据映射
 
-验证：typecheck、git diff --check、iOS/Android export 通过，README 本地链接均存在。尚未完成模拟器视觉和真实键盘交互验收；下一步检查建议卡、末条消息、快速开合键盘及多行输入。未提交、未推送。此前交接中的 40dp 底色遮罩方案已被替换。
+- `src/services/useConsoleData.ts`：并发拉取 `playground-models`、`pricing`、日志、任务、`data/self`、令牌、公告，失败项保持空数组不阻塞其他模块。
+- `src/services/liveConsole.ts`：DTO→UI 映射与计费。
+  - 按次计费（`quota_type=1`）用 `model_price × group_ratio`；按 token 用 `model_ratio × 2 × group_ratio`（每 1M）。
+  - 额度按 `quota_per_unit` 折成 ¥；令牌额度表单按元输入，提交时乘回 `quota_per_unit`。
+  - 令牌 `unlimited_quota` 时不显示百分比，展示「不限额度」。
+- `src/services/mediaModels.ts`：媒体模型分类、价格标签、任务状态/进度/错误与媒体 URL 提取（递归找第一个 http(s) 媒体链接）。
+- `src/data/mockConsole.ts` 只剩 `usageRangeOptions`；`src/services/consoleAdapter.ts` 已删除。
 
+### 页面接入
 
-更新时间：2026-11-11。本文件是最新简明入口；详细历史见 HANDOVER.md。先核对实际文件，可能有其他 CLI 同时工作，勿覆盖其改动。
+- `ChatWorkspace`：真实会话列表、消息按需加载、流式对话、停止、删除会话；模型由 props 注入，模型列表晚到时补默认模型。
+- `PersonalScreen`：资料、额度、签到、改名、改密、退出。
+- `WalletScreen`：余额、消耗、邀请码、复制。
+- `ModelMarketplaceScreen`：真实模型，四个筛选项（全部/对话/图像视频/音频）。
+- `ModelExperienceScreen`：真实流式对话，模型列表更新时校正选中项。
+- `MediaStudioScreen`：真实媒体生成。
+  - 图片 `POST /pg/images/sync`（同步出图，取 `data[0].url`）。
+  - 视频 `POST /pg/video/generations` + `/pg/video/fetch`。
+  - 音乐 `POST /pg/music/submit` + `/pg/music/fetch`。
+  - 语音 `POST /pg/audio/submit` + `/pg/audio/fetch`。
+  - 参数来自 `/api/video/model-capabilities` 与 `/api/user/model/voices`；轮询 4s、最多 75 次；结果可打开/复制链接。
+- `FusionScreen`：真实多模型并行 `chatOnce` + 总结模型汇总，保留各模型原始回答与失败原因。
+- 人脸工具因文档无对应接口，已移除入口、聊天「+」入口与 `FaceToolsScreen.tsx`。
 
-- **最新交接**：聊天输入条上方的「渐变阴影」被用户判定不合格，已停止继续调整并输出独立交接文档 `~/Downloads/QMSZAI-Mobile-HANDOVER-2026-11-11.md`（含现状代码位置、根因、三套重做方案、验收清单、环境与坐标），问题截图 `~/Downloads/qmszai-shadow-issue-2026-11-11.png`。安卓扁平化与双端键盘避让已完成，保持现状即可。
+## 仍需用真实账号校正的点
 
-## 本轮增量（2026-11-10，第二十四轮：安卓蓝色主题 + 概览页对齐 iOS）
+1. 登录成功链路未端到端实测（缺测试账号），包括 XHR 能否稳定读到 `Set-Cookie`。
+2. `/api/token/` 系列文档未收录，现按 new-api 标准实现（`GET/POST /api/token/`、`PUT/DELETE /api/token/:id`），返回结构需校正。
+3. `/api/data/self` 返回结构按标准假设实现，需核对字段。
+4. 短信链路只验证到图形验证码面板与手机号校验，未向真实手机号发码。
+5. `/pg/*` 各渠道返回结构差异大，任务状态与结果 URL 提取是兜底逻辑，需真实任务核对。
+6. `GET /api/video/model-capabilities` 不经过 `{success,message,data}` 包装（字段为 `code`），已单独处理，仍需实测。
 
-- `src/material.ts` 主色改正统蓝：`primary #1A73E8`、`primaryContainer #D3E3FD`、`onPrimaryContainer #041E49`、`secondaryContainer #DCE7F6`、`onSecondaryContainer #101C2B`，默认 ripple `rgba(26,115,232,0.12)`。
-- `App.tsx` 概览页拆成 `ios ? 原 JSX : 新安卓 JSX`：安卓按 iOS 层级排 `Segmented`（24h/7d/30d）→ `heroCard` 白色数据卡（请求次数/成功率/8 高进度条/已使用·总额度）→ 四行统计 `Group` → 「快捷访问」「AI 功能」「用量与消息」三个 `Group`；弃用深色 hero + 2×2 tonal 磁贴。新增 `heroCard*`、`overviewGroup`、`overviewStatValue` 样式。
-- 修 `iosStyles` 整键覆盖泄漏：补齐 `pill`/`pillText`/`modelVendor`/`chevron`/`tag`/`emptyTitle`/`billingGrid`/`miniStat`/`miniValue` 的 iOS 原值；模型状态徽标 iOS 走 `borderColor` 描边、安卓走 tonal 底色。
-- `statusColor` 改平台三元（iOS 原值 / 安卓 `palette`）；账户头像底色改 `m3.primary`（iOS 仍 `#007AFF`）。
-- 模拟任务完成时保留原耗时，不再写成「已完成」导致重复。
-- 验证：typecheck、双端 `expo export` 通过；安卓 16 张截图重拍覆盖 `~/Desktop/qmszai-android/`；iOS 概览/模型目录/令牌/模型详情 pageSheet 无回归。
-- 同日补充：iOS 卡片圆角回归。`cardSurface` 的 iOS 分支改为 `{ borderRadius: 12, borderCurve: 'continuous' }`（安卓仍 28 + elevation），并把 10 个子页被 M3 改掉的 iOS 圆角/高度/内边距/字号用 `ios ? 原值 : M3 值` 恢复；原先 10pt 的小卡片单独回 10。注意 `borderRadius: undefined` 会覆盖展开值，安卓需显式写 28。iOS 逐页截图与安卓模型体验/AI 创作复核通过。
-- 同日补充二：安卓按压态方块。`android_ripple` 的蒙版恒为矩形（RN `getMask` 只给 `ColorDrawable`），圆角宿主上必然画方块，`overflow:'hidden'` 也裁不到自身背景。已新增 `pressedSurface`（白面 `m3.surfaceContainer`）/`pressedDim`（彩色面 `opacity 0.8`），圆角面（底栏项、各主按钮、chip、建议卡、签到/退出、兑换、复制邀请、底部「完成」、账户头卡、模型行）改用 `Pressable` 的 `pressed` 状态；矩形行仍用 ripple，由 `groupBody` 的圆角裁剪兜住。验证：按住底栏/令牌按钮为圆角胶囊，iOS 截图无变化。
-- 同日补充三：新增 GitHub 展示用中文 `README.md`，以及 `docs/screenshots/` 8 张双端截图（宽 700）。iOS 用 `--no-dev --minify`（8095）关掉开发浮层，移动 `DevMenuFAB` 后两次截图按差异区合成；安卓在 Dev Menu 关闭 Tools button 后直拍。现已还原 `App.tsx` 初始态、关闭 8095 Metro、还原 FAB 位置。
-- 同日补充四（2026-11-11）：安卓组件扁平化。`elevation.level1/level2` 改为空对象，`cardSurface`/`tileSurface`/`softShadow` 不再带投影；新增 `elevation.floating` 仅供底栏，`LiquidTabBar` 安卓分支改用之保留悬浮阴影。iOS 样式、聊天浮层与子页阴影未动；typecheck 通过，安卓四页截图确认无投影、底栏有阴影。
-- 同日补充五（2026-11-11）：安卓键盘遮住输入条。根因是边到边窗口不随键盘 resize，安卓的 KAV `behavior=undefined` 失效。新增 `src/useKeyboardInsets.ts`（监听 keyboardDidShow/Hide 返回键盘高度），聊天根容器按高度设 `marginBottom`，`MediaStudioScreen`/`ModelExperienceScreen` 的 KAV 同样加 `marginBottom`；iOS 继续用 KAV `padding`。安卓实测三处输入区均在键盘上方，typecheck 通过。
-- 同日补充六（2026-11-11）：聊天输入条上方渐变阴影。双端共用的 40dp `react-native-svg` 渐变叠在 `composerBar` 上方（`bottom:'100%'`、`pointerEvents="none"`），stops `#0B1D28` 0 → 0.06 → 页面底色 0.62 → 页面底色 1，末段与页面底色一致避免硬边；只在键盘弹出后延迟 90ms 淡入 220ms（附 10→0 translateY），收起 150ms 淡出。键盘展开时消息列表/欢迎页 `paddingBottom` 加到 50/62。iOS 强制 keyboardVisible 截图核对渐变衔接与卡片淡出，随后还原；typecheck 通过。
-- 未提交、未推送。
+## 用户已经确定的要求（UI，勿回退）
 
-## 上一轮增量（2026-11-10，第二十三轮：安卓 Material 3 重做）
+- 放弃输入区阴影，使用渐变背景模糊；不要恢复灰色渐变带或不透明底色遮罩。
+- 安卓只有底部导航栏整体保留阴影，普通组件、输入框、建议卡不带阴影。
+- iOS 原有圆角、尺寸、字号不随安卓改动而改变；iOS 主题色 `#007AFF`，安卓 `#1A73E8`。
+- 输入框随键盘移动；动画要快，不能落后键盘，也不能回落后再跳一下。
+- 不加说明性小字，不用整页渐变，纵向页保留系统滚动条，底部不被安全区硬切。
 
-- 删除账户页「关于演示模式」提示块（`App.tsx` 与 `baseStyles`/`iosStyles` 的 notice* 样式一并清理）。
-- 新增 `src/material.ts`：M3 色板 `m3`（surface 层级、primary/primaryContainer、error/success/warning 容器）、`shape`（4/8/12/16/28/full）、`type`（M3 字阶）、`elevation`（level1/2）、`ripple()`，以及平台感知的 `cardSurface` / `softShadow`（iOS 返回空对象，安卓给 28/16 圆角 + 1 级海拔）。
-- `ui.tsx` 安卓分支接入 `m3`：`palette` 安卓值改由 `m3` 提供；分段控件改胶囊 + 选中态白底微阴影；Group 28 圆角无描边 + elevation；Row 56 高、标题 500 字重；Badge 改 M3 tonal chip（无描边、12% 同色底）；EmptyState/Sheet/GlassPillButton 尺寸对齐 M3；行与分段加 `android_ripple`。
-- `LiquidTabBar` 安卓改 M3 底栏：`primaryContainer` 胶囊选中指示器、primary 图标与文字、surfaceContainerLowest 底 + elevation，scrim 颜色改用 `palette.groupedBackground`。
-- `App.tsx`（`baseStyles` 只作用于安卓）：标题 30/600、eyebrow 12/500 + 0.4 字距、区间切换改胶囊分段、状态块改 tonal 色块（16 圆角无描边）、快捷访问与卡片 28 圆角 + 极淡阴影、搜索框改 52 高胶囊并加左侧搜索图标、状态徽标改 tonal chip、主按钮改 M3 filled 胶囊、次按钮改 outlined、进度条用 `m3.primary`。
-- `ChatWorkspace.tsx`：工具栏/气泡/建议卡/历史列表/输入条按 M3 调整（气泡 16 圆角、输入条 52 高胶囊、发送按钮 42 圆形），并把硬编码的 iOS 蓝/灰改成 `palette`；iOS 分支保留原值。
-- `src/screens/*.tsx` 10 个子页：卡片换 `cardSurface`/`softShadow`，按钮改胶囊（52 高），抽屉/输入框/标签圆角对齐 M3，行高与内边距加大，列表行与主要按钮加 ripple；`Subpage` 安卓改 M3 top app bar（圆形返回键 + 22sp 左对齐标题），Sheet 头部「完成」改文字按钮。
-- 清理：移除「价格与分组为演示数据」「进度为演示数据…」等演示说明小字，删除无引用的 notice*/settingsList/scoreText/quickIcon 样式。
+### 渐变模糊
 
-验证：`npm run typecheck` 通过；iOS/Android `expo export` 通过；安卓 16 模拟器逐页截图（聊天、概览、模型、令牌、账户、对话历史、AI 创作、模型广场、个人设置、任务、消息、用量日志、钱包、模型体验、人脸工具、模型融合）；iOS 27 截图复核聊天/概览/账户/个人设置无回归。截图在 `~/Desktop/qmszai-android/`。
+`src/ChatWorkspace.tsx` 用 `expo-blur` 的 `BlurTargetView` 包裹内容、`BlurView` 采样背景，`masked-view` + SVG 透明度蒙版控制渐变。强度 45、light tint，上伸 40dp，总高 48dp，双端共用。键盘可见时延迟 90ms/220ms 淡入，收起 150ms 淡出，原生驱动。
 
-新增待办：iOS 端部分按钮因共用样式也变成胶囊（签到、兑换、发送等），符合 iOS 26 观感；若要严格回退，可用 `ios ? 原值 : 新值` 拆分。
+### 键盘避让
 
-## 上一轮增量（2026-11-10，第二十二轮：安卓实机验证 + 跨平台图标）
+聊天页已由 KAV 改为普通 View，调用 `useKeyboardInsets(true)`：
 
-- 本机装好安卓环境：JDK 17（华为云镜像）+ SDK（cmdline-tools/emulator/platform-36/系统镜像）+ AVD `qmszai_pixel`（Pixel 7, Android 16）。Expo Go 58.0.5 经 gh-proxy 下载安装，`adb reverse tcp:8091` 连 Metro。
-- 新增 `src/components/AppIcon.tsx`：iOS 用 `SymbolView`、Android 用 Ionicons，修掉安卓端所有 Unicode 占位图标（底栏、行图标、空状态、快捷访问等）。新增依赖 `@expo/vector-icons`。
-- 修安卓子页顶部色带：`subpageOverlay`/`subpagePane`/`ChatWorkspace.sheetRoot` 改用 `palette.groupedBackground`。
-- 修安卓 Modal 顶部灰条：`pageSheet` 改为 iOS 用 pageSheet、安卓用 `fullScreen`，并加 `statusBarTranslucent`。
-- 验证：typecheck、双端 export、安卓逐页截图、iOS 回归对比。
+- Android 用键盘事件高度；展开时底部间距为键盘高度，收起恢复 `bottomInset`（76）。不要减安卓底部安全区。
+- iOS 用 `screen.height - keyboard.screenY`；底部间距 `max(bottomInset, keyboardInset - safeAreaInsets.bottom)`。
+- 监听 didShow/didHide，iOS 另监听 willShow/willChangeFrame；相同高度去重。
+- iOS 首次上移最多 180ms easeOut，完全收起最多 140ms easeOut，其余用系统动画。
 
-## 上一轮增量（2026-11-10，第二十一轮：玻璃层兜底）
+### 其他已完成修复
 
-- 修复「历史」胶囊偶发丢失白色底：`GlassSurface` 的 `GlassView` 加 0.5 白色背景，`LiquidTabBar.barGlass` 加 0.42 白色背景，作为玻璃材质未渲染时的兜底，视觉不变。
-- 验证：typecheck、双端 export、iOS 截图对比工具栏与底栏。
+键盘展开时点「+」不再收起键盘：`ChatPopover` 改为页面内绝对定位覆盖层（`absoluteFill` + `zIndex: 30`），锚点用 `measureInPage`；键盘可见性变化自动收起；安卓返回键用 `BackHandler` 先关弹层。
 
-## 上一轮增量（2026-11-10，第二十轮：指示条改为落在屏幕边距）
+## 运行与实测
 
-- 模型目录页 `splitContent` 去掉横向 padding，搜索框包 `modelsSearchWrap`，列表内容自带 `paddingHorizontal: 20`，`ScrollView` 变为横向满幅，系统指示条不再压住右侧徽标。
-- 其余页面原本就是满幅滚动，无改动。
-- 验证：typecheck、双端 export、iOS 截图（临时自动滚动）确认指示条位置。
+```bash
+cd /Users/wenze/Documents/GitHub/QMSZAI-Mobile
+npx expo start --localhost --port 8091
+npx tsc --noEmit
+npx tsc --noEmit --noUnusedLocals
+npx expo export --platform ios --platform android
+```
 
-## 上一轮增量（2026-11-10，第十九轮：恢复系统滚动指示器）
+Android：AVD `qmszai_pixel`，通常 emulator-5554。
 
-- 删除全部 `showsVerticalScrollIndicator={false}`（17 处），纵向滚动页面/Sheet 使用平台原生滚动条（iOS 系统指示条、Android 系统滚动条）。
-- 例外：聊天「+」玻璃浮层内列表保持无指示条（菜单形态）。
-- 验证：typecheck、双端 export、iOS 截图（临时 flashScrollIndicators）确认指示条正常。
+```bash
+export ANDROID_HOME=~/Library/Android/sdk
+$ANDROID_HOME/platform-tools/adb reverse tcp:8091 tcp:8091
+$ANDROID_HOME/platform-tools/adb shell am force-stop host.exp.exponent
+$ANDROID_HOME/platform-tools/adb shell am start -a android.intent.action.VIEW -d 'exp://127.0.0.1:8091' host.exp.exponent
+$ANDROID_HOME/platform-tools/adb exec-out screencap -p > /tmp/shot.png
+```
 
-## 上一轮增量（2026-11-10，第十八轮：子页满幅 + 系统圆角）
+设备 1080×2400，截图 900×2000，坐标 ×1.2。
 
-- 删除 `Subpage` 的 `bottomFade`/渐变层，子页 `SafeAreaView` 去掉 `bottom` 边，内容铺满到屏幕底边、由设备圆角裁切。
-- 8 个滚动子页用 `useSafeAreaInsets()` 追加 `paddingBottom: 24 + insets.bottom`；AI 创作底栏与模型体验输入条补安全区内边距。
-- 验证：typecheck、双端 export、iOS 截图核对模型广场/消息/钱包/AI 创作/模型体验。
+iOS：iPhone 18 Pro，UDID `C0A7ECCE-6CA4-40E4-B955-0ECB870F9B6D`。
 
-## 上一轮增量（2026-11-10，第十七轮：子页底部边缘渐隐，已被第十八轮取代）
+```bash
+xcrun simctl openurl C0A7ECCE-6CA4-40E4-B955-0ECB870F9B6D "exp://127.0.0.1:8091"
+xcrun simctl io C0A7ECCE-6CA4-40E4-B955-0ECB870F9B6D screenshot /tmp/shot.png
+```
 
-- `Subpage` 增加 `bottomFade` 与 `subpageBody`/`subpageFade`，底部 28pt 渐变淡出，修复子页内容被安全区硬切出「切角」。
-- AI 创作、模型体验设为 `bottomFade={false}`（底部有固定栏）。
-- 验证：typecheck、双端 export、iOS 截图核对模型广场/钱包/消息/AI 创作。
+iOS 登录页右上角齿轮是 Expo Go 悬浮按钮，不是应用 UI。恢复模拟器快照后必须重载 Expo Go，不要凭旧画面判断代码。
 
-## 上一轮增量（2026-11-10，第十六轮：账户页去掉 AI 功能板块）
+## 验证结果
 
-- 账户中心移除「AI 功能」分组，`AccountView` 删掉对应的 5 个跳转 props。
-- AI 入口保留在概览页区块与聊天「+」菜单。
-- 验证：typecheck、双端 export、iOS 截图。
+已通过：
 
-## 上一轮增量（2026-11-10，第十五轮：清理说明性小字）
+- `npx tsc --noEmit`、`npx tsc --noEmit --noUnusedLocals`。
+- `npx expo export --platform ios --platform android`。
+- 安卓登录页、注册页、图形验证码面板、错误登录提示（「账号或密码错误」）截图核对正常。
+- iOS 登录页截图正常。
+- 站点配置实测：`register_enabled=true`、`sms_verification=true`、`system_name=阡陌数智`、`turnstile_check=false`；`/api/pricing` 返回 338 个模型。
 
-- 删除各页说明性小字：聊天欢迎语与输入条 disclaimer、概览卡片 summary、AI 创作/人脸工具/模型融合的标题下说明段、模型体验空状态与底部 disclaimer、模型广场页脚。
-- 移除 8 处 Group `footer`（融合 2、体验 1、个人设置 3、用量日志 1、钱包 1）；AI 创作 footer 只保留模型与预计消耗。
-- 钱包奖励说明删除划转限制段落。
-- 验证：typecheck、双端 export、iOS 截图核对 9 个页面。
+尚未确认：
 
-## 上一轮增量（2026-11-10，第十四轮：模型广场扩充 + 图标）
+- 登录成功后的全部页面（概览、聊天、AI 创作、令牌、签到等）没有真实账号实测。
+- 键盘动画逐帧同步性与快速开合回归（沿用上轮结论，本轮未改算法）。
+- 安卓子页与浮层在残留阴影清理后的逐页验收。
 
-- `marketModels` 8 → 39 个真实模型，12 家厂商，覆盖对话/免费/图像/视频。
-- `ModelLogo` 新增 xAI、ByteDance、Baidu、MiniMax 官方矢量 logo。
-- 模型广场列表加厂商 logo（26pt），详情 sheet 加 logo（34pt）；分组徽标中文化（对话/图像/视频/免费）。
-- 图像/视频行不再显示「上下文 —」；详情 sheet 分组 `default` 显示为「默认」。
-- 验证：typecheck、双端 export、iOS 截图核对全部新 logo 与分组。
+## 下一步
 
-## 上一轮增量（2026-11-10，第十三轮：补齐界面切换动画）
-
-- 主标签切换加 `opacity` + `translateY` 淡入（内容 240ms、标题 280ms）。
-- 子页右侧推入/推出（320ms / 260ms），主界面 `-30%` 视差 + 8% 暗化层；子页改覆盖层渲染，保留主界面状态。
-- 聊天会话切换消息区淡入（220ms）。
-- `ui.tsx` 增加 `animateContentChange()`，接入 6 处筛选段控件与概览时间范围；Android 开启 LayoutAnimation 实验开关。
-- 模拟日志/消息中的模型名与新模型目录对齐。
-- 验证：typecheck、双端 export、`simctl recordVideo` 抽帧确认动画实际生效。
-
-## 上一轮增量（2026-11-10，第十二轮：扩充真实模型目录）
-
-- `models` 由 4 个扩到 20 个真实模型，覆盖 OpenAI、Anthropic、Google、Alibaba、DeepSeek、Meta、Mistral AI、Moonshot AI。
-- `ModelLogo` 增加 DeepSeek / Meta / Mistral / Kimi 官方矢量路径与品牌识别，纯图标无底色。
-- 概览「可用模型」改为按模型状态动态计算（当前 18/20）。
-- `ChatPopover` 支持 `scrollable`，聊天模型浮层 20 项在玻璃卡片内滚动；定位优先下方展开并限高，避免压状态栏。
-- 菜单背板透明度 0.9 → 0.95。
-- 修复底部内容在悬浮导航栏下方被硬裁出白边（「被切掉一块」）：`LiquidTabBar` 新增底部滚动边缘渐隐（`react-native-svg` 线性渐变，安全区实底、向上过渡透明），并拆成 `dockRoot` + `dock` 两层让渐隐铺满物理底边。
-- 验证：typecheck、iOS/Android export 通过；截图核对新 logo、可滚动模型浮层、概览计数、令牌页与聊天页底部渐隐。
-
-## 上一轮增量（2026-11-10，第十一轮：右上角玻璃按钮与导航栏对齐）
-
-- 新增 `SheetHeader`：56pt 高、左右 16pt、标题绝对居中（left/right 96）、右侧玻璃「完成」胶囊；替换 `ui.tsx` 的 `Sheet`、聊天历史与 Android 模型选择的旧纯文字「完成」，App 模型详情 sheet 改用 `SheetHeader`（标题「模型详情」）。
-- `Subpage` 导航栏 52pt 高、paddingHorizontal 16、标题 left/right 96；右上动作统一 `GlassPillButton`：消息「全部已读」、人脸「重置」、模型体验「清空」、模型融合「新建」。
-- 删除模型融合助手选择 sheet 中多余的底部「完成」。
-- 还原 `App.tsx` 临时调试崩溃：`selectedModel` 初始值回到 `null`。
-- 验证：typecheck、iOS/Android export 通过；截图核对模型详情 sheet、消息页、模型体验页导航栏。
-
-## 上一轮增量（2026-11-10，第十轮：聊天输入框集成 AI 功能）
-
-- 聊天输入条左侧加 48pt 玻璃「+」按钮，点击从按钮上方弹出锚定玻璃菜单：AI 创作、模型体验、人脸工具、模型融合、模型广场；选中后经 `onOpenTool` 跳到对应子页。
-- 抽出 `ChatPopover` 复用组件（透明 Modal、玻璃卡片、弹簧、上下自动翻转、点空白关闭），模型切换浮层同步改用它。
-- `App.tsx` 子页改为覆盖层渲染，主界面保持挂载，从聊天打开工具再返回不会丢会话与草稿。
-- 修复弹出菜单偶发「背景消失」：透明 Modal 内玻璃材质可能不渲染，`ChatPopover` 内增加 `rgba(255,255,255,0.9)` 背板兜底，模型浮层同样生效。
-- 验证：typecheck、iOS/Android export 通过；截图核对 + 按钮、工具菜单、模型浮层与子页覆盖层。
-
-## 上一轮增量（2026-11-10，第九轮：去掉列表说明小字）
-
-- 概览 `QuickAction` 删除 `detail` 副标题（快捷访问/AI 功能/用量与消息），iOS 行高 52；账户中心「AI 功能」「个人设置」「钱包」条目删除 `Row` 的 `subtitle`。
-- 清理不再使用的概览 props 与计算；令牌用量、模型厂商、消息预览等数据性副标题保留。
-- 验证：`npm run typecheck`、iOS/Android `expo export` 通过；截图核对概览与账户中心。
-
-## 上一轮增量（2026-11-09，第八轮：iOS 圆角与账户中心）
-
-- 按用户反馈统一 iOS 圆角：卡片 12pt + `borderCurve: 'continuous'`、去描边；`src/ui.tsx` 的 `groupBody` 同步为 12pt continuous。
-- 账户中心重排：头像系统蓝居中白字、姓名 20pt/600、余额 17pt/600，资料卡补 disclosure chevron；「当前计划/账单状态/API 端点/移动端模式」改用共享 `Group`+`Row`，分隔线内缩 16pt。
-- 分组标题与卡片左缘对齐（`groupHeader`、`groupFooter`、`sectionTitle` 去掉 marginLeft）。
-- 概览 `heroPanel`/`gridTwo`/`actionList`、令牌卡片/按钮、模型行、空态、详情面板统一 12pt continuous；令牌页改系统蓝进度条、轻字重、灰色填充次要按钮。
-- 六个子页的 12/16pt 圆角补 `borderCurve: 'continuous'`。
-- 聊天空态去掉浅蓝圆形底，改为纯 sparkle 图标。
-- 修复模型行因 `iosStyles` 浅合并丢失 `flexDirection`、状态胶囊撑满整行的问题。
-- 验证：`npm run typecheck`、iOS/Android `expo export` 通过；截图核对账户中心、概览、令牌、模型目录、个人设置、钱包与聊天首屏。
-
-## 上一轮增量（2026-11-09，第七轮：模型 logo、锚定浮层与玻璃按钮）
-
-- 新增 `src/components/ModelLogo.tsx`：`react-native-svg` 绘制 OpenAI / Claude / Qwen / Gemini 官方矢量 logo，Gemini 为品牌渐变；按模型名匹配。
-- 聊天模型切换改为按钮锚定浮层：iOS 用 `measureInWindow` 定位 + 原生 `GlassView` 菜单卡片 + 弹簧动画，点空白关闭；每行显示纯图标 logo（无底色）、模型名、厂商和选中勾。Android 仍用 pageSheet。模型目录列表也补了 logo。
-- `src/ui.tsx` 新增 `GlassSurface` / `GlassIconButton` / `GlassPillButton`，接入子页返回、聊天工具栏三个控件、令牌弹层关闭按钮；iOS 26+ 原生 `GlassView`，低版本、「减弱透明度」和 Android 回退半透明白底。
-- 新增依赖 `react-native-svg@15.16.0`。
-- 验证：`npm run typecheck`、iOS/Android `expo export` 通过；iOS 27 模拟器截图核对工具栏玻璃按钮、模型浮层与四行 logo、模型目录 logo、AI 创作玻璃返回按钮。浮层是原生玻璃自绘菜单，不是 UIKit `UIMenu`；点按路径未脚本化验证。
-
-## 本轮增量（2026-11-09，第六轮：聊天页重写）
-
-- 底栏顺序改为「聊天、概览、模型、令牌、账户」，聊天成为默认首屏。
-- 重写 `src/ChatWorkspace.tsx`：顶部工具栏（历史带未读数、当前模型选择、新建对话）、消息气泡（用户蓝底/助手白卡+模型名）、建议问题、打字动画、停止按钮、圆角输入框与圆形发送按钮、键盘避让。
-- 对话历史改为 pageSheet：最近对话列表、新建、删除确认、选中标记、消息数/模型/相对时间；模型选择 pageSheet 列出 4 个模型，切换只影响当前对话的模拟回复。
-- 空态提供最近对话入口；消息列表底部对齐，少量消息时贴近输入条。全部仍为本地模拟数据，不持久化、不调用真实接口。
-- 验证：`npm run typecheck` 通过；iOS/Android `expo export` 通过；iOS 27 模拟器截图核对聊天首页、历史 pageSheet、模型选择 pageSheet、会话气泡与输入区/底栏位置。
-
-## 本轮增量（2026-11-09，第五轮）
-
-- 用户要求底栏使用 Apple 液体玻璃。已安装 `expo-glass-effect@58.0.5`，新增 `src/LiquidTabBar.tsx`：iOS 26+ 原生 `GlassView` 轨道、白色玻璃选中指示器、SF Symbols；指示器可左右拖动，经过标签即时切换并回弹吸附；向下滚动或向下拖动底栏收起为 60pt 圆形玻璃钮，向上滚动/拖动或轻点恢复。
-- 底栏悬浮于内容之上，内容可从玻璃下穿过；四个标签页滚动内容底部预留 96pt。`App.tsx` 已接入滚动检测与 `LayoutAnimation`，聊天空出底栏高度；iOS 26 以下/Android 半透明回退，并响应「减弱透明度」设置。
-- 验证：`npm run typecheck`、iOS/Android `expo export` 通过；iOS 27 模拟器截图核对白色玻璃指示器首尾定位、展开态、收起态、概览、账户与聊天页。模拟器工具无法脚本化拖动手势，手势路径待手测。
-
-## 本轮增量（2026-11-09，第四轮续开发）
-
-- 用 opencli 会话 `qmszai` 核实登录后的侧边栏与主要页面字段；记录已写入 `docs/FEATURE_PARITY.md`，临时页面文本未提交。
-- 新增 `ModelExperienceScreen`（模型切换/建议问题/逐字回复/停止/清空）、`MediaStudioScreen`（图片/视频/音乐/语音参数与异步任务）、`FaceToolsScreen`（检测/比对）、`FusionScreen`（多模型融合）、`PersonalScreen`（签到/绑定/偏好）、`WalletScreen`（兑换码/邀请）、`ModelMarketplaceScreen`（搜索/筛选/价格详情）。
-- 账户页与概览接入全部新入口；任务类型新增 `voice`；模拟数据新增 `marketModels`。
-- 验证：`npm run typecheck`、iOS/Android `expo export` 通过；iOS 模拟器截图核对新页面。8091 Metro 可用；未逐项点按全部流程。
-- 仍未接真实接口；`App.tsx` 还包含概览/模型/令牌/账户旧页面，深色模式、Android 视觉、订阅流水与古书法系统待做。免费用量/博客/订阅/消息已核实当前账号无权访问；古今图书按用户要求不做。
-
-## 开始前
-
-读取 `/Users/wenze/AGENTS.md`、`/Users/wenze/project.md` 的 Codex 接手入口和 QMSZAI Mobile 章节，再读本文件与 `docs/FEATURE_PARITY.md`。仅恢复本项目。中文交流。项目路径 `/Users/wenze/Documents/GitHub/QMSZAI-Mobile`。
-
-## 用户已经确认的需求
-
-- 网站 https://qmszai.cn/ 的普通用户全部功能，不包含管理员功能，暂不做支付。
-- 旧界面“AI 味太重”，iOS 必须参照 Apple 系统组件及 HIG；Android 独立考虑，不能简单照搬 iOS。
-- 可用 Expo Go。没有网站源码、管理权限或已确认业务认证契约，继续用模拟数据开发。
-- 不是只做四五个展示页面；按实际站点功能逐项实现完整流程，不用按钮/外链/静态页面冒充完成。
-
-## 最新实际代码
-
-- Expo ~58.0.23、React 19.3.0、RN 0.88.1、TS ~6.0.3；新增 `react-native-svg@15.16.0`。
-- App.tsx：底栏顺序为聊天、概览、模型、令牌、账户，聊天为默认页。已按 iOS 调整系统蓝、浅灰分组背景、分组列表、大标题和字体层级，移除原大黑卡、彩色指标方块、装饰环。iOS 卡片统一 12pt + `borderCurve: 'continuous'` 且不带描边；账户资料卡与四行设置列表已改为共享 `Group`/`Row`，分隔线内缩 16pt，分组标题与卡片左缘对齐。
-- 原生分段控件：@react-native-segmented-control/segmented-control；图标：expo-symbols；安全区域：react-native-safe-area-context。
-- 模型详情为独立 pageSheet，有完成按钮和滚动内容，默认不打开。底栏为 `src/LiquidTabBar.tsx` 自定义布局 + `expo-glass-effect` 原生玻璃材质（iOS 26+），悬浮于内容之上并可收起为圆形玻璃钮，不是 UIKit 原生 TabBar。
-- **新增 src/LiquidTabBar.tsx（2026-11-09 第五轮）**：悬浮玻璃轨道、白色玻璃指示器（横向拖动切换并回弹）、SF Symbols、滚动/纵向拖动收起与展开、iOS 26 以下/Android 回退和减弱透明度适配；`expo-glass-effect` 已加入依赖。
-- src/types.ts：共享类型；src/data/mockConsole.ts：模拟数据；src/services/consoleAdapter.ts：业务适配边界。
-- **src/ChatWorkspace.tsx（第六轮重写，第七轮模型浮层）**：历史/模型/新建工具栏、历史 pageSheet、iOS 按钮锚定模型浮层与 Android pageSheet、消息气泡、建议问题、打字动画、停止、键盘避让；只保留内存状态，未请求真实模型，没有持久化。
-- **新增 src/components/ModelLogo.tsx（第七轮）**：react-native-svg 绘制 OpenAI/Claude/Qwen/Gemini 官方矢量 logo，Gemini 渐变，聊天模型浮层与模型目录共用，纯图标无底色。
-- **src/ui.tsx 玻璃组件（第七轮）**：`GlassSurface` / `GlassIconButton` / `GlassPillButton`，iOS 26+ 原生 `GlassView`，低版本与减弱透明度回退；已用于子页返回、聊天工具栏、令牌弹层关闭。
-- **新增 src/ui.tsx 与三个 screen（2026-11-09 第三轮）**：日志、任务、消息页面；令牌编辑/删除；概览「用量与消息」入口。
-- **新增六个 screen（2026-11-09 第四轮）**：`ModelExperienceScreen`、`MediaStudioScreen`、`FaceToolsScreen`、`PersonalScreen`、`WalletScreen`、`ModelMarketplaceScreen`；账户页与概览已接入。均为模拟数据。
-- 令牌已有模拟创建/启停/详情；编辑与删除已补。
-- docs/FEATURE_PARITY.md：网站公开路由与逐项完成度。管理员与支付已排除。
-
-## 验证事实
-
-2026-11-09 第八轮：`npm run typecheck` 通过；iOS、Android `expo export` 均通过；iOS 27 模拟器截图核对账户中心、概览、令牌、模型目录、个人设置、钱包与聊天首屏的圆角、分组对齐与布局。
-2026-11-09 第五轮：`npm run typecheck` 通过；iOS、Android `expo export` 均通过；iOS 27 模拟器截图核对概览与聊天页的液体玻璃底栏、选中胶囊、收起态、安全区与输入条位置。滚动/拖动手势因模拟器无脚本点击工具未实测。
-2026-11-09 第四轮：`npm run typecheck` 通过；iOS、Android `expo export` 均通过；iOS 模拟器截图核对概览、AI 功能入口、模型体验、AI 创作、人脸工具、个人设置、钱包、模型广场与账户页。
-交互点击（参数 Sheet、提交生成、签到、兑换、模型切换与流式回复）尚未逐项手动操作验证，只确认了布局与静态状态。
-8091 仍能提供 iOS bundle 并用于本轮验证；8090/8095 已停止。iPhone 18 Pro 模拟器装 Expo Go 58.0.4，无需降级 SDK。
-项目仍不是 Git 仓库；未提交、未推送。先查端口与所属进程再复用 Metro，勿杀其他任务。
-
-## 站点证据与待核实项
-
-已通过 opencli（会话 `qmszai`）核实登录状态下的侧边栏与页面：数据看板、令牌、使用日志、任务、文本聊天、图片/视频/音乐/语音、人脸检测/比对、个人设置、钱包、模型广场。字段与限制见 FEATURE_PARITY.md。
-已核实当前账号无权访问：免费用量、博客、订阅、消息。仍待核实：古书法系统自定义页、订阅/余额流水；任务页当前查询无结果，新建入口未确认。古今图书按用户要求完全不做。
-官方文档入口：https://qmszai.apifox.cn/9427112m0 。业务接口的方法、认证、字段与权限仍未逐页核实；不得猜测权限或假装接入成功。
-
-## 建议接下来执行
-
-1. 在模拟器逐项操作新页面：AI 创作参数 Sheet 与提交、任务联动、模型体验流式/停止/清空、人脸示例选择与结果、签到、兑换码校验、模型广场搜索、聊天发送/删除/模型浮层选择；复核键盘避让与底部安全区。
-2. 按 FEATURE_PARITY 补订阅/余额流水与古书法系统自定义页；免费用量/博客/订阅/消息已确认无权访问，古今图书不做；接口文档可用时再替换 adapter，先维持 mock/real 边界。
-3. 继续拆分 App.tsx 剩余四个页面（概览/模型/令牌/账户），补深色模式、动态字体、无障碍与 Android 独立视觉验收；账户资料卡可进一步改为系统 inset grouped list 的 `listStyle` 语义，逐步替换自定义 Sheet 为系统表单。
-4. 每次改动后运行 typecheck、双平台 export 并在模拟器目检；不要把编译成功当作真机兼容。
-5. 同步项目内交接和 project.md；若 CLI 无全局档案写权限，记录待同步摘要，不覆盖其他 CLI 修改。
-
-## API 配置独立事项（不要阻塞 Mobile 开发）
-
-原 codex-qmszai 走阡陌数智 Responses/gpt-5.5，曾遇到加密上下文、429 和分组无可用渠道。
-独立 codex-deepseek 使用本地 LiteLLM 把 Responses 转 Chat Completions：普通短请求成功，完整 Codex 请求被上游 HTTP 500 拒绝，尚不可宣称可用。测试已停，自动重试已禁用，原全局配置未改。
-最新已查 DeepSeek 官方指南 https://api-docs.deepseek.com/quick_start/agent_integrations/codex/ ：官方 API 原生支持 Responses，base_url 为 https://api.deepseek.com/，需官方 API Key 和模型目录。不能拿阡陌数智密钥直接请求 DeepSeek 官方。用户尚未答复新密钥来源，也尚未配置官方直连。
-开发密钥禁止输出、提交、进入移动 App 或 EXPO_PUBLIC。本任务无需读取任何密钥。用官方 Codex CLI 接手可直接从项目目录启动普通 codex；不要因开发任务擅自切换 provider。
-
-## 可直接粘贴的提示
-
-继续 QMSZAI Mobile。先读取 HANDOVER_NEXT_CLI.md、docs/FEATURE_PARITY.md 和本机项目入口。保留其他 CLI 新增的 ChatWorkspace。目标是 iOS 参照苹果系统组件、覆盖官网普通用户全部非支付功能，不包含管理员；继续模拟数据。先验证现有聊天与 Sheet，再按功能矩阵推进实现。不要读取开发 API 密钥，不要将 API 配置故障当成 Mobile 开发前置条件。完成后同步交接和 project.md。
+1. 拿到测试账号后，先 curl 验证：`POST /api/user/login`（`Set-Cookie` + `data.id`）、`GET /api/user/self`、`/api/user/playground-models`、`/api/chat/conversations`、`/api/token/`、`/api/data/self`。
+2. App 内跑通：登录 → 概览 → 聊天流式 → AI 创作四类 → 令牌增删改 → 签到，按真实返回修正映射与错误文案。
+3. 回归双端 UI（登录后页面、键盘避让、输入区模糊、安卓无阴影）。
+4. 修改后更新本入口与 `/Users/wenze/project.md`；保持未提交、未推送，交由用户处理。

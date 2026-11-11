@@ -5,7 +5,9 @@ import { useEffect, useRef, useState, type ComponentType, type ReactElement, typ
 import {
   Alert,
   Animated,
+  BackHandler,
   Easing,
+  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -21,7 +23,15 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { ModelLogo } from './components/ModelLogo';
-import { models } from './data/mockConsole';
+import {
+  appendMessage,
+  createConversation as createConversationRequest,
+  deleteConversation as deleteConversationRequest,
+  fetchConversationMessages,
+  fetchConversations,
+} from './api/endpoints';
+import { streamChat } from './api/client';
+import type { ChatConversation } from './api/types';
 import type { Model } from './types';
 import { GlassIconButton, GlassSurface, SheetHeader, palette } from './ui';
 import { AppIcon } from './components/AppIcon';
@@ -50,6 +60,7 @@ type Conversation = {
   messages: ChatMessage[];
   modelId: string;
   updatedAt: number;
+  loaded?: boolean;
 };
 
 const suggestions = [
@@ -58,48 +69,37 @@ const suggestions = [
   '把这段话润色得更专业',
 ];
 
-const seedConversations: Conversation[] = [
-  {
-    id: 1,
-    title: '缓存穿透与布隆过滤器',
-    modelId: 'm3',
-    updatedAt: Date.now() - 1000 * 60 * 42,
-    messages: [
-      {
-        id: 1,
-        role: 'user',
-        text: '用一个具体例子解释缓存穿透，以及布隆过滤器如何缓解。',
-      },
-      {
-        id: 2,
-        role: 'assistant',
-        modelId: 'm3',
-        text: '假设商品详情接口按 ID 查缓存：当请求不存在的 ID 时，缓存永远不会命中，压力会全部落到数据库。布隆过滤器在缓存前记录所有合法 ID，可以快速判断某个 ID 一定不存在，从而直接返回空结果。\n\n这是本地模拟回复，未调用真实模型。',
-      },
-    ],
-  },
-  {
-    id: 2,
-    title: '润色产品介绍',
-    modelId: 'm2',
-    updatedAt: Date.now() - 1000 * 60 * 60 * 20,
-    messages: [
-      {
-        id: 1,
-        role: 'user',
-        text: '帮我润色这句产品介绍：我们提供一个统一的大模型接入层。',
-      },
-      {
-        id: 2,
-        role: 'assistant',
-        modelId: 'm2',
-        text: '可以改为：「通过统一的大模型接入层，团队可以用一套接口管理多家模型，降低集成与切换成本。」\n\n这是本地模拟回复，未调用真实模型。',
-      },
-    ],
-  },
-];
+const seedConversations: Conversation[] = [];
 
-export type ChatToolKey = 'media' | 'experience' | 'face' | 'fusion' | 'pricing';
+const fallbackModel: Model = {
+  id: '',
+  name: '选择模型',
+  vendor: '',
+  context: '—',
+  latency: '—',
+  price: '—',
+  status: 'stable',
+  tags: [],
+  note: '',
+  route: '—',
+  inputRate: '—',
+  outputRate: '—',
+  updatedAt: '—',
+};
+
+function toConversation(item: ChatConversation): Conversation {
+  const updatedAt = Date.parse(item.UpdatedAt);
+  return {
+    id: item.ID,
+    title: item.Title?.trim() || `对话 ${item.ID}`,
+    modelId: item.Model || '',
+    updatedAt: Number.isNaN(updatedAt) ? 0 : updatedAt,
+    messages: [],
+    loaded: false,
+  };
+}
+
+export type ChatToolKey = 'media' | 'experience' | 'fusion' | 'pricing';
 
 const chatTools: {
   key: ChatToolKey;
@@ -109,7 +109,6 @@ const chatTools: {
 }[] = [
   { key: 'media', icon: 'sparkles', fallback: '✦', label: 'AI 创作' },
   { key: 'experience', icon: 'text.bubble', fallback: '◌', label: '模型体验' },
-  { key: 'face', icon: 'person.crop.square', fallback: '◎', label: '人脸工具' },
   { key: 'fusion', icon: 'arrow.triangle.merge', fallback: '◈', label: '模型融合' },
   { key: 'pricing', icon: 'square.grid.2x2', fallback: '▦', label: '模型广场' },
 ];
@@ -117,13 +116,15 @@ const chatTools: {
 export function ChatWorkspace({
   bottomInset = 0,
   onOpenTool,
+  models,
 }: {
   bottomInset?: number;
   onOpenTool?: (tool: ChatToolKey) => void;
+  models: Model[];
 }) {
   const [conversations, setConversations] = useState<Conversation[]>(seedConversations);
   const [selected, setSelected] = useState<number | null>(null);
-  const [selectedModelId, setSelectedModelId] = useState('m1');
+  const [selectedModelId, setSelectedModelId] = useState(models[0]?.id ?? '');
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [historyVisible, setHistoryVisible] = useState(false);
@@ -150,23 +151,55 @@ export function ChatWorkspace({
     return () => animation.stop();
   }, [composerFade, keyboardVisible]);
 
+  // 键盘开合都会改变输入条位置，弹层锚点随之失效，直接关闭，避免菜单停在旧位置。
+  // 安卓模型选择器是底部弹窗，本身会收起键盘，不能跟着关。
+  useEffect(() => {
+    setToolsVisible(false);
+    if (Platform.OS === 'ios') setModelPickerVisible(false);
+  }, [keyboardVisible]);
+
   const generation = useRef(0);
-  const conversationSequence = useRef(3);
-  const messageSequence = useRef(3);
+  const abortRef = useRef<AbortController | null>(null);
   const threadAnim = useRef(new Animated.Value(1)).current;
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  const rootRef = useRef<ComponentRef<typeof View>>(null);
   const modelButton = useRef<ComponentRef<typeof View>>(null);
   const toolsButton = useRef<ComponentRef<typeof View>>(null);
+  // 弹层不再走 Modal：Modal 会抢走焦点，键盘随之收起，输入条下移后锚点也失效。
+  // 改为在当前页面内绝对定位，坐标按页面自身换算，键盘保持原样。
+  const [popoverBounds, setPopoverBounds] = useState({ width: 0, height: 0 });
 
   const current = conversations.find((item) => item.id === selected);
   const currentModelId = current?.modelId ?? selectedModelId;
-  const currentModel = models.find((model) => model.id === currentModelId) ?? models[0];
+  const currentModel = models.find((model) => model.id === currentModelId) ?? models[0] ?? fallbackModel;
   const sortedConversations = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
 
   const stop = () => {
     generation.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
     setBusy(false);
   };
+
+  // 模型列表晚于聊天页到达时，补一个默认模型。
+  useEffect(() => {
+    if (!models.length) return;
+    setSelectedModelId((current) => (models.some((model) => model.id === current) ? current : models[0].id));
+  }, [models]);
+
+  // 首次进入拉取会话列表；会话消息按需加载。
+  useEffect(() => {
+    let active = true;
+    fetchConversations(50, 0)
+      .then((page) => {
+        if (!active) return;
+        setConversations((page.items ?? []).map(toConversation));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // 切换/新建会话时，消息区淡入并轻微上移，避免内容硬切。
   const playThreadTransition = () => {
@@ -183,10 +216,25 @@ export function ChatWorkspace({
     stop();
     const conversation = conversations.find((item) => item.id === id);
     setSelected(id);
-    if (conversation) setSelectedModelId(conversation.modelId);
+    if (conversation?.modelId) setSelectedModelId(conversation.modelId);
     setDraft('');
     setHistoryVisible(false);
     playThreadTransition();
+    if (conversation && !conversation.loaded) {
+      fetchConversationMessages(id, 100, 0)
+        .then((page) => {
+          const messages: ChatMessage[] = (page.items ?? []).map((item) => ({
+            id: item.ID,
+            role: item.Role === 'assistant' ? 'assistant' : 'user',
+            text: item.Content ?? '',
+            modelId: item.Model || conversation.modelId,
+          }));
+          setConversations((items) =>
+            items.map((entry) => (entry.id === id ? { ...entry, messages, loaded: true } : entry)),
+          );
+        })
+        .catch(() => undefined);
+    }
   };
 
   const startNewConversation = () => {
@@ -209,20 +257,35 @@ export function ChatWorkspace({
     setModelPickerVisible(false);
   };
 
+  // 把某个元素的位置换算成聊天页内部坐标，同时记录页面尺寸，供弹层做边界判断。
+  const measureInPage = (
+    target: ComponentRef<typeof View> | null,
+    onMeasured: (anchor: { x: number; y: number; width: number; height: number }) => void,
+  ) => {
+    const root = rootRef.current;
+    if (!target || !root) return;
+    target.measureInWindow((x, y, width, height) => {
+      root.measureInWindow((rootX, rootY, rootWidth, rootHeight) => {
+        setPopoverBounds({ width: rootWidth, height: rootHeight });
+        onMeasured({ x: x - rootX, y: y - rootY, width, height });
+      });
+    });
+  };
+
   const openModelPicker = () => {
     if (Platform.OS !== 'ios') {
       setModelPickerVisible(true);
       return;
     }
-    modelButton.current?.measureInWindow((x, y, width, height) => {
-      setModelAnchor({ x, y, width, height });
+    measureInPage(modelButton.current, (anchor) => {
+      setModelAnchor(anchor);
       setModelPickerVisible(true);
     });
   };
 
   const openTools = () => {
-    toolsButton.current?.measureInWindow((x, y, width, height) => {
-      setToolsAnchor({ x, y, width, height });
+    measureInPage(toolsButton.current, (anchor) => {
+      setToolsAnchor(anchor);
       setToolsVisible(true);
     });
   };
@@ -233,10 +296,18 @@ export function ChatWorkspace({
       {
         text: '删除',
         style: 'destructive',
-        onPress: () => {
+        onPress: async () => {
           if (selected === id) stop();
           setConversations((items) => items.filter((conversation) => conversation.id !== id));
           if (selected === id) setSelected(null);
+          try {
+            await deleteConversationRequest(id);
+          } catch {
+            // 服务端删除失败时重新拉取，保持列表与后端一致
+            fetchConversations(50, 0)
+              .then((page) => setConversations((page.items ?? []).map(toConversation)))
+              .catch(() => undefined);
+          }
         },
       },
     ]);
@@ -244,75 +315,142 @@ export function ChatWorkspace({
 
   const send = async (preset?: string) => {
     const prompt = (preset ?? draft).trim();
-    if (!prompt || busy) return;
+    if (!prompt || busy || !currentModel) return;
+    if (!currentModel.id) {
+      Alert.alert('请先选择模型');
+      return;
+    }
 
     const model = currentModel;
-    const conversationId = selected ?? ++conversationSequence.current;
-    const userMessage: ChatMessage = { id: ++messageSequence.current, role: 'user', text: prompt };
-    const assistantId = ++messageSequence.current;
+    let conversationId = selected;
     const request = ++generation.current;
     const now = Date.now();
+    const userMessage: ChatMessage = { id: Date.now(), role: 'user', text: prompt };
+    const assistantId = userMessage.id + 1;
 
-    setSelected(conversationId);
     setDraft('');
     setBusy(true);
-    setConversations((items) => {
-      const exists = items.some((conversation) => conversation.id === conversationId);
-      if (!exists) {
-        return [
-          {
-            id: conversationId,
-            title: prompt.length > 22 ? `${prompt.slice(0, 22)}…` : prompt,
-            modelId: model.id,
-            updatedAt: now,
-            messages: [userMessage],
-          },
-          ...items,
-        ];
-      }
-      return items.map((conversation) =>
-        conversation.id === conversationId
-          ? {
-              ...conversation,
-              modelId: model.id,
-              updatedAt: now,
-              messages: [...conversation.messages, userMessage],
-            }
-          : conversation,
-      );
-    });
 
-    const reply = `这是 ${model.name} 的模拟回复，未调用真实接口。\n\n你发送了：${prompt}\n\n接入业务 API 后会返回真实结果。`;
-    for (let offset = 0; offset < reply.length; offset += 4) {
-      await new Promise((resolve) => setTimeout(resolve, 28));
-      if (generation.current !== request) return;
-      const text = reply.slice(0, offset + 4);
-      setConversations((items) =>
-        items.map((conversation) => {
-          if (conversation.id !== conversationId) return conversation;
-          const hasReply = conversation.messages.some((message) => message.id === assistantId);
-          return {
-            ...conversation,
-            updatedAt: Date.now(),
-            messages: hasReply
-              ? conversation.messages.map((message) =>
-                  message.id === assistantId ? { ...message, text } : message,
-                )
-              : [
-                  ...conversation.messages,
-                  { id: assistantId, role: 'assistant', modelId: model.id, text },
-                ],
-          };
-        }),
+    try {
+      if (conversationId === null) {
+        const created = await createConversationRequest(
+          prompt.length > 22 ? `${prompt.slice(0, 22)}…` : prompt,
+          model.id,
+        );
+        conversationId = created.ID;
+        const newConversation: Conversation = {
+          id: created.ID,
+          title: created.Title || prompt.slice(0, 22),
+          modelId: model.id,
+          updatedAt: now,
+          messages: [userMessage],
+          loaded: true,
+        };
+        setConversations((items) => [newConversation, ...items]);
+        setSelected(created.ID);
+      } else {
+        const target = conversationId;
+        setConversations((items) =>
+          items.map((conversation) =>
+            conversation.id === target
+              ? {
+                  ...conversation,
+                  modelId: model.id,
+                  updatedAt: now,
+                  messages: [...conversation.messages, userMessage],
+                }
+              : conversation,
+          ),
+        );
+      }
+
+      const activeId = conversationId;
+      appendMessage(activeId, 'user', prompt).catch(() => undefined);
+
+      const history = (conversations.find((item) => item.id === activeId)?.messages ?? [])
+        .filter((message) => message.text.trim())
+        .map((message) => ({ role: message.role, content: message.text }));
+      const payloadMessages = [...history, { role: 'user' as const, content: prompt }];
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+      let accumulated = '';
+
+      const updateAssistant = (text: string) => {
+        setConversations((items) =>
+          items.map((conversation) => {
+            if (conversation.id !== activeId) return conversation;
+            const hasReply = conversation.messages.some((message) => message.id === assistantId);
+            return {
+              ...conversation,
+              updatedAt: Date.now(),
+              messages: hasReply
+                ? conversation.messages.map((message) =>
+                    message.id === assistantId ? { ...message, text } : message,
+                  )
+                : [
+                    ...conversation.messages,
+                    { id: assistantId, role: 'assistant' as const, modelId: model.id, text },
+                  ],
+            };
+          }),
+        );
+      };
+
+      await streamChat(
+        { model: model.id, messages: payloadMessages },
+        {
+          onDelta: (delta) => {
+            if (generation.current !== request) return;
+            accumulated += delta;
+            updateAssistant(accumulated);
+          },
+          onDone: () => {
+            if (generation.current !== request) return;
+          },
+        },
+        controller.signal,
       );
+
+      if (generation.current !== request) return;
+      if (accumulated.trim()) {
+        appendMessage(activeId, 'assistant', accumulated, { model: model.id }).catch(() => undefined);
+      }
+      setBusy(false);
+    } catch (error) {
+      if (generation.current !== request) return;
+      if (error instanceof Error && error.name === 'AbortError') {
+        setBusy(false);
+        return;
+      }
+      setBusy(false);
+      Alert.alert('发送失败', error instanceof Error ? error.message : '请稍后重试');
+      if (conversationId !== null) {
+        const target = conversationId;
+        setConversations((items) =>
+          items.map((conversation) =>
+            conversation.id === target
+              ? {
+                  ...conversation,
+                  messages: conversation.messages.filter(
+                    (message) => message.id !== userMessage.id && message.id !== assistantId,
+                  ),
+                }
+              : conversation,
+          ),
+        );
+      }
+    } finally {
+      if (abortRef.current) abortRef.current = null;
     }
-    setBusy(false);
   };
 
   const canSend = draft.trim().length > 0 && !busy;
 
   return (
     <View
+      ref={rootRef}
+      collapsable={false}
       style={[
         styles.root,
         { marginBottom: ios
@@ -444,7 +582,9 @@ export function ChatWorkspace({
                         {conversation.title}
                       </Text>
                       <Text numberOfLines={1} style={styles.recentPreview}>
-                        {conversation.messages[conversation.messages.length - 1]?.text ?? '暂无消息'}
+                        {conversation.messages[conversation.messages.length - 1]?.text ??
+                          conversation.modelId ??
+                          '暂无消息'}
                       </Text>
                     </View>
                     <Text style={styles.recentTime}>{relativeTime(conversation.updatedAt)}</Text>
@@ -565,7 +705,7 @@ export function ChatWorkspace({
               <View style={styles.historyEmpty}>
                 <Icon name="bubble.left.and.bubble.right" fallback="◌" size={32} color="#C7C7CC" />
                 <Text style={styles.historyEmptyTitle}>还没有对话</Text>
-                <Text style={styles.historyEmptyCopy}>新建对话后，记录会保留在本次运行中。</Text>
+                <Text style={styles.historyEmptyCopy}>对话记录会保存在账号中。</Text>
               </View>
             ) : (
               <>
@@ -597,7 +737,9 @@ export function ChatWorkspace({
                             ) : null}
                           </View>
                           <Text numberOfLines={1} style={styles.historyPreview}>
-                            {conversation.messages[conversation.messages.length - 1]?.text ?? '暂无消息'}
+                            {conversation.messages[conversation.messages.length - 1]?.text ??
+                          conversation.modelId ??
+                          '暂无消息'}
                           </Text>
                           <Text style={styles.historyMeta}>
                             {conversation.messages.length} 条消息 · {model?.name ?? '未知模型'} ·{' '}
@@ -629,6 +771,7 @@ export function ChatWorkspace({
           anchor={modelAnchor}
           onClose={() => setModelPickerVisible(false)}
           estimatedHeight={models.length * 60 + 16}
+          bounds={popoverBounds}
           scrollable
         >
           {models.map((model, index) => {
@@ -701,9 +844,6 @@ export function ChatWorkspace({
                   );
                 })}
               </View>
-              <Text style={styles.sheetNote}>
-                切换模型只影响当前对话的模拟回复；接入业务接口前不会产生真实调用或费用。
-              </Text>
             </ScrollView>
           </SafeAreaView>
         </Modal>
@@ -715,6 +855,7 @@ export function ChatWorkspace({
         onClose={() => setToolsVisible(false)}
         estimatedHeight={chatTools.length * 52 + 12}
         width={232}
+        bounds={popoverBounds}
       >
         {chatTools.map((tool, index) => (
           <Pressable
@@ -723,6 +864,8 @@ export function ChatWorkspace({
             accessibilityLabel={tool.label}
             onPress={() => {
               setToolsVisible(false);
+              // 弹层不再用 Modal，跳转到子页时需主动收起键盘，避免键盘跟到新页面。
+              Keyboard.dismiss();
               onOpenTool?.(tool.key);
             }}
             style={({ pressed }) => [
@@ -746,6 +889,7 @@ function ChatPopover({
   onClose,
   estimatedHeight,
   width: preferredWidth = 320,
+  bounds,
   scrollable = false,
   children,
 }: {
@@ -754,18 +898,22 @@ function ChatPopover({
   onClose: () => void;
   estimatedHeight: number;
   width?: number;
+  bounds?: { width: number; height: number };
   scrollable?: boolean;
   children: ReactNode;
 }) {
   const anim = useRef(new Animated.Value(0)).current;
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const width = Math.min(preferredWidth, windowWidth - 24);
+  // 页面内坐标，尺寸取聊天页自身（键盘弹出时高度不含键盘），保证弹层始终在可见区域内。
+  const pageWidth = bounds?.width || windowWidth;
+  const pageHeight = bounds?.height || windowHeight;
+  const width = Math.min(preferredWidth, pageWidth - 24);
   const left = Math.max(
     12,
-    Math.min(windowWidth - width - 12, anchor.x + anchor.width / 2 - width / 2),
+    Math.min(pageWidth - width - 12, anchor.x + anchor.width / 2 - width / 2),
   );
   const below = anchor.y + anchor.height + 8;
-  const spaceBelow = windowHeight - below - 32;
+  const spaceBelow = pageHeight - below - 32;
   const spaceAbove = anchor.y - 24;
   const minUsable = 220;
 
@@ -779,13 +927,13 @@ function ChatPopover({
       maxHeight = Math.min(estimatedHeight, spaceAbove);
       top = anchor.y - maxHeight - 8;
     } else {
-      maxHeight = Math.min(estimatedHeight, windowHeight - 160);
-      top = Math.max(16, Math.round((windowHeight - maxHeight) / 2));
+      maxHeight = Math.min(estimatedHeight, pageHeight - 160);
+      top = Math.max(16, Math.round((pageHeight - maxHeight) / 2));
     }
   } else {
     maxHeight = estimatedHeight;
     top =
-      below + maxHeight > windowHeight - 24
+      below + maxHeight > pageHeight - 16
         ? Math.max(16, anchor.y - maxHeight - 8)
         : below;
   }
@@ -802,56 +950,64 @@ function ChatPopover({
     }).start();
   }, [visible, anim]);
 
+  // 不再用 Modal，安卓返回键需要自己接管，否则会直接退出页面。
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'android') return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [visible, onClose]);
+
   if (!visible) return null;
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <View style={styles.popoverRoot}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="关闭菜单"
-          onPress={onClose}
-          style={StyleSheet.absoluteFill}
-        />
-        <Animated.View
-          style={[
-            styles.popover,
-            styles.popoverShadow,
-            {
-              top,
-              left,
-              width,
-              opacity: anim,
-              transform: [
-                {
-                  scale: anim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.92, 1],
-                  }),
-                },
-              ],
-            },
-          ]}
-        >
-          <GlassSurface radius={20} style={styles.popoverCard}>
-            <View style={styles.popoverBacking}>
-              {scrollable ? (
-                <ScrollView
-                  style={{ maxHeight }}
-                  contentContainerStyle={styles.popoverScrollContent}
-                  showsVerticalScrollIndicator={false}
-                  bounces={false}
-                >
-                  {children}
-                </ScrollView>
-              ) : (
-                children
-              )}
-            </View>
-          </GlassSurface>
-        </Animated.View>
-      </View>
-    </Modal>
+    <View pointerEvents="box-none" style={styles.popoverRoot}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="关闭菜单"
+        onPress={onClose}
+        style={StyleSheet.absoluteFill}
+      />
+      <Animated.View
+        style={[
+          styles.popover,
+          styles.popoverShadow,
+          {
+            top,
+            left,
+            width,
+            opacity: anim,
+            transform: [
+              {
+                scale: anim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.92, 1],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <GlassSurface radius={20} style={styles.popoverCard}>
+          <View style={styles.popoverBacking}>
+            {scrollable ? (
+              <ScrollView
+                style={{ maxHeight }}
+                contentContainerStyle={styles.popoverScrollContent}
+                showsVerticalScrollIndicator={false}
+                bounces={false}
+              >
+                {children}
+              </ScrollView>
+            ) : (
+              children
+            )}
+          </View>
+        </GlassSurface>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -870,7 +1026,7 @@ function MessageBubble({ message, model }: { message: ChatMessage; model?: Model
 
   return (
     <View style={styles.assistantRow}>
-      <Text style={styles.assistantMeta}>{model?.name ?? '演示助手'}</Text>
+      <Text style={styles.assistantMeta}>{model?.name ?? '助手'}</Text>
       <View style={styles.assistantBubble}>
         <Text selectable style={styles.assistantText}>
           {message.text}
@@ -1144,11 +1300,11 @@ const styles = StyleSheet.create({
   },
   stopButton: { backgroundColor: palette.label },
   sendButtonDisabled: { backgroundColor: ios ? '#C7C7CC' : m3.surfaceContainerHighest },
-  popoverRoot: { flex: 1 },
+  popoverRoot: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 30 },
   popover: { position: 'absolute' },
   popoverShadow: {
     shadowColor: '#000000',
-    shadowOpacity: 0.18,
+    shadowOpacity: ios ? 0.18 : 0,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 12 },
   },

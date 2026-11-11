@@ -374,14 +374,14 @@ export function EmptyState({
   icon = 'tray',
 }: {
   title: string;
-  message: string;
+  message?: string;
   icon?: ComponentProps<typeof SymbolView>['name'];
 }) {
   return (
     <View style={styles.empty}>
       <AppIcon name={icon} size={40} color={palette.tertiaryLabel} />
       <Text style={styles.emptyTitle}>{title}</Text>
-      <Text style={styles.emptyMessage}>{message}</Text>
+      {message ? <Text style={styles.emptyMessage}>{message}</Text> : null}
     </View>
   );
 }

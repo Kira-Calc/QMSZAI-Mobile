@@ -171,9 +171,6 @@ export function UsageLogsScreen({
               <Row title="费用" value={selected.cost > 0 ? `¥${selected.cost.toFixed(3)}` : '未计费'} />
               <Row title="请求 ID" value={selected.requestId} />
             </Group>
-            <Text style={styles.sheetNote}>
-              当前为模拟记录。接入真实业务后，这里应支持复制请求 ID 与按状态重试。
-            </Text>
           </>
         ) : null}
       </Sheet>

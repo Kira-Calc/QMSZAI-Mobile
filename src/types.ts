@@ -22,12 +22,15 @@ export type Model = {
 export type Token = {
   id: string;
   name: string;
-  owner: string;
   scope: string;
   usage: number;
   quota: number;
   lastUsed: string;
   status: TokenStatus;
+  unlimited?: boolean;
+  remainQuota?: number;
+  expiredTime?: number;
+  group?: string;
 };
 
 export type OverviewMetrics = {
@@ -100,8 +103,9 @@ export type MediaGeneration = {
   model: string;
   status: 'running' | 'succeeded' | 'failed';
   createdAt: string;
-  cost: number;
   summary: string;
+  url?: string;
+  error?: string;
 };
 
 export type MarketModel = {
@@ -109,7 +113,7 @@ export type MarketModel = {
   name: string;
   vendor: string;
   group: string;
-  category: 'chat' | 'image' | 'video' | 'free';
+  category: 'chat' | 'image' | 'video' | 'audio' | 'free';
   context: string;
   inputPrice: number;
   outputPrice: number;
@@ -118,27 +122,8 @@ export type MarketModel = {
   note: string;
 };
 
-export type RedeemRecord = {
-  id: string;
-  code: string;
-  amount: number;
-  time: string;
-  status: 'success' | 'failed';
-};
-
-export type DashboardSnapshot = {
-  models: Model[];
-  tokens: Token[];
-  metricsByRange: Record<UsageRange, OverviewMetrics>;
-  account: AccountSummary;
-  logs: UsageLog[];
-  tasks: TaskRecord[];
-  messages: MessageRecord[];
-};
-
 export type NewTokenDraft = {
   name: string;
-  owner: string;
-  scope: string;
+  group: string;
   quota: number;
 };

@@ -1,4 +1,16 @@
-最新独立交接入口：`HANDOVER_NEXT_CLI.md`（2026-11-10，已含安卓蓝色主题、概览页对齐 iOS、Material 3 底栏与全部子页）。
+最新独立交接入口：`HANDOVER_NEXT_CLI.md`（2026-11-11，已按真实接口实现重写）。
+
+> 最新接手入口：`HANDOVER_NEXT_CLI.md`（2026-11-11 真实接口版）。下方为历史记录，阴影方案、无法操作 iOS 键盘、“全部本地模拟数据”等旧结论已失效。当前缺口是测试账号下的登录成功链路与 `/api/token/`、`/api/data/self` 字段校正。
+
+2026-11-11 真实接口接入：按《APP 测试环境 API 接口文档》把 App 从纯 mock 改为真实调用测试环境 `https://test.qmszai.cn`。新增 `src/api/{client,endpoints,types,format}.ts`：XHR 读完整响应头与 `Set-Cookie`，统一 `{success,message,data}` 判定，`Cookie: session` + `New-Api-User` 鉴权，30s 超时，错误中文化；`expo/fetch` + 手写 SSE 行解析实现流式对话，`chatOnce` 供多模型融合。新增 `src/auth/AuthProvider.tsx` 与 `src/screens/LoginScreen.tsx`：登录/注册/找回同屏切换、2FA 独立 step、底部图形点选验证码（按 `target_chars` 顺序点选）、站点配置与 `quota_per_unit`。`ChatWorkspace` 接真实会话列表、消息按需加载、流式对话与删除；`useConsoleData` 并发拉取模型/价格/日志/任务/`data/self`/令牌/公告；个人中心、钱包、模型广场、模型体验改真实数据；AI 创作接 `/pg/images/sync`、`/pg/video/generations|fetch`、`/pg/music/submit|fetch`、`/pg/audio/submit|fetch`，参数来自 `/api/video/model-capabilities` 与 `/api/user/model/voices`；模型融合改为真实多模型并行 + 总结模型；人脸工具因文档无接口已移除（含首页与聊天入口、`FaceToolsScreen.tsx`）。删除 mock adapter，`src/data/mockConsole.ts` 只保留 `usageRangeOptions`。`npx tsc --noEmit`、`npx tsc --noEmit --noUnusedLocals`、双端 `expo export` 通过；安卓登录/注册/验证码/错误提示与 iOS 登录页截图正常。仍未拿到测试账号，登录成功后的页面、`/api/token/` 系列与 `/api/data/self` 结构待实测校正；短信链路未向真实手机号发码。未提交、未推送。
+
+2026-11-11 聊天弹层不再走 Modal（修复：键盘弹出时点「+」键盘被收起、菜单落在错误位置）：`ChatPopover` 改为聊天页内的绝对定位覆盖层（`zIndex: 30`），打开时不再抢焦点，双端键盘都保持展开。锚点改为 `measureInPage`——工具按钮与页面 root 各做一次 `measureInWindow`，取差值得到页面内坐标，同时记录页面尺寸供弹层做边界判断，键盘展开时仍按可见区域计算。键盘开合会改变输入条位置，因此键盘可见性变化时自动收起弹层；安卓返回键用 `BackHandler` 接管，先关弹层；点工具项跳转子页时 `Keyboard.dismiss()`，避免键盘跟到新页面。iOS 用 Device Hub 真实软键盘实测：输入框聚焦、键盘展开时弹层出现在输入条上方且键盘不收起；安卓实测欢迎页与会话页、返回键、跳转子页均正常。typecheck 通过，未提交、未推送。
+
+2026-11-11 安卓旧运行状态排查：用户反馈恢复模拟器后阴影和键盘避让回退。确认 Metro 8091 工作目录为当前 QMSZAI-Mobile，磁盘 level1/level2 为空但运行画面仍有旧卡片阴影；force-stop Expo Go、adb reverse 8091 后重新打开项目，旧阴影消失，键盘展开时输入条正确位于键盘上方，渐变模糊显示。键盘算法未再修改。另外关闭安卓 subpageShadow、popoverShadow、底栏选中项投影，仅保留底栏整体阴影，iOS 值不变。typecheck、diff 检查通过。当前 HEAD 为用户已提交的 c1f4f6a，本轮未提交推送。以后恢复模拟器快照后应重载 Expo Go 并核对运行版本。
+
+2026-11-11 iOS 输入框上移提速：增加 keyboardWillShow 提前处理展开目标，仍对相同高度通知去重；首段上移动画最多 180ms、easeOut，以减少 JS 布局相对系统键盘的追赶感。后续高度变化仍沿用系统时序，收起最多 140ms 不变。typecheck 与 diff 检查通过；尚未逐帧验证与键盘完全同步，待用户确认观感。未提交推送。
+
+2026-11-11 iOS 回落提速：按用户反馈，将手动避让的键盘收起布局动画设为最多 140ms、easeOut，展开仍使用系统键盘动画；保留高度去重和底栏落点限制。typecheck 与 diff 检查通过，本轮未录屏验证时长，待用户确认速度。未提交推送。
 
 2026-11-11 iOS 回落动画调整：键盘高度相同的 will/did 通知去重，移除与 willChangeFrame 重叠的 willHide 更新；零时长事件不启动布局动画。聊天页 iOS 底部间距固定为 max(底栏留白, 键盘重叠高度-安全区)，避免临近收起时落到零后再跳回 76。typecheck、diff 检查通过；Device Hub 原生键盘下拉收起实测，最终位置正常、底栏恢复。截图不能确认逐帧流畅度，待用户确认动画观感。未提交推送。
 

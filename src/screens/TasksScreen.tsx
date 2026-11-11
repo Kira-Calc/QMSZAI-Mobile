@@ -59,8 +59,8 @@ export function TasksScreen({
 }: {
   tasks: TaskRecord[];
   onBack: () => void;
-  onCancel: (id: string) => void;
-  onRetry: (id: string) => void;
+  onCancel?: (id: string) => void;
+  onRetry?: (id: string) => void;
 }) {
   const insets = useSafeAreaInsets();
   const [filterIndex, setFilterIndex] = useState(0);
@@ -76,6 +76,7 @@ export function TasksScreen({
   const current = selected ? tasks.find((task) => task.id === selected.id) ?? selected : null;
 
   const confirmCancel = (task: TaskRecord) => {
+    if (!onCancel) return;
     Alert.alert('取消任务？', '已生成的部分结果会被丢弃，此操作无法撤销。', [
       { text: '保留', style: 'cancel' },
       {
@@ -90,7 +91,7 @@ export function TasksScreen({
   };
 
   const retry = (task: TaskRecord) => {
-    onRetry(task.id);
+    onRetry?.(task.id);
     setSelected(null);
   };
 
@@ -177,12 +178,14 @@ export function TasksScreen({
               <Row title="耗时" value={current.elapsed} />
               <Row title="费用" value={current.cost > 0 ? `¥${current.cost.toFixed(2)}` : '—'} />
             </Group>
-            <Group header="说明">
-              <View style={styles.note}>
-                <Text style={styles.noteText}>{current.note}</Text>
-              </View>
-            </Group>
-            {current.state === 'running' || current.state === 'queued' ? (
+            {current.note ? (
+              <Group header="说明">
+                <View style={styles.note}>
+                  <Text style={styles.noteText}>{current.note}</Text>
+                </View>
+              </Group>
+            ) : null}
+            {onCancel && (current.state === 'running' || current.state === 'queued') ? (
               <Pressable
                 accessibilityRole="button"
                 onPress={() => confirmCancel(current)}
@@ -190,13 +193,11 @@ export function TasksScreen({
               >
                 <Text style={styles.destructiveText}>取消任务</Text>
               </Pressable>
-            ) : (
+            ) : onRetry && (current.state === 'failed' || current.state === 'cancelled') ? (
               <Pressable accessibilityRole="button" onPress={() => retry(current)} style={styles.action}>
-                <Text style={[styles.actionText, { color: palette.blue }]}>
-                  {current.state === 'succeeded' ? '重新生成' : '重试任务'}
-                </Text>
+                <Text style={[styles.actionText, { color: palette.blue }]}>重试任务</Text>
               </Pressable>
-            )}
+            ) : null}
           </>
         ) : null}
       </Sheet>

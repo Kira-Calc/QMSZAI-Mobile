@@ -20,25 +20,37 @@ import {
 } from '../ui';
 import { ModelLogo } from '../components/ModelLogo';
 import { ripple } from '../material';
-import { marketModels } from '../data/mockConsole';
 import type { MarketModel } from '../types';
 
-const filters = ['全部', '对话', '免费', '图像/视频'] as const;
+const filters = ['全部', '对话', '图像/视频', '音频'] as const;
 
 function matches(model: MarketModel, filterIndex: number) {
   if (filterIndex === 1) {
     return model.category === 'chat';
   }
   if (filterIndex === 2) {
-    return model.category === 'free';
+    return model.category === 'image' || model.category === 'video';
   }
   if (filterIndex === 3) {
-    return model.category === 'image' || model.category === 'video';
+    return model.category === 'audio';
   }
   return true;
 }
 
-export function ModelMarketplaceScreen({ onBack }: { onBack: () => void }) {
+function priceText(value: number) {
+  if (!value) return '¥0';
+  if (value >= 1) return `¥${value.toFixed(2)}`;
+  return `¥${value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`;
+}
+
+export function ModelMarketplaceScreen({
+  onBack,
+  models,
+}: {
+  onBack: () => void;
+  models: MarketModel[];
+}) {
+  const source = models;
   const insets = useSafeAreaInsets();
   const [filterIndex, setFilterIndex] = useState(0);
   const [query, setQuery] = useState('');
@@ -46,7 +58,7 @@ export function ModelMarketplaceScreen({ onBack }: { onBack: () => void }) {
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
-    return marketModels.filter((model) => {
+    return source.filter((model) => {
       if (!matches(model, filterIndex)) {
         return false;
       }
@@ -58,12 +70,13 @@ export function ModelMarketplaceScreen({ onBack }: { onBack: () => void }) {
         .toLowerCase()
         .includes(keyword);
     });
-  }, [filterIndex, query]);
+  }, [filterIndex, query, source]);
 
   const badgeLabel = (model: MarketModel) => {
     if (model.category === 'free') return '免费';
     if (model.category === 'image') return '图像';
     if (model.category === 'video') return '视频';
+    if (model.category === 'audio') return '音频';
     return model.group === 'default' ? '对话' : model.group;
   };
 
@@ -71,10 +84,12 @@ export function ModelMarketplaceScreen({ onBack }: { onBack: () => void }) {
     if (model.category === 'free') {
       return '免费';
     }
-    if (model.category === 'image' || model.category === 'video') {
-      return `¥${model.inputPrice.toFixed(2)} / 次`;
+    if (model.category === 'image' || model.category === 'video' || model.category === 'audio') {
+      return model.outputPrice > 0
+        ? `${priceText(model.inputPrice)} / ${priceText(model.outputPrice)} 每 1M`
+        : `${priceText(model.inputPrice)} / 次`;
     }
-    return `¥${model.inputPrice} / ¥${model.outputPrice} 每 1M`;
+    return `${priceText(model.inputPrice)} / ${priceText(model.outputPrice)} 每 1M`;
   };
 
   return (

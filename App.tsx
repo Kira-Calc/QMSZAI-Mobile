@@ -5,6 +5,7 @@ import { ChatWorkspace } from './src/ChatWorkspace';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useCallback, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   Easing,
@@ -22,12 +23,16 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
+import { formatQuota, formatQuotaSmart } from './src/api/format';
 import { usageRangeOptions } from './src/data/mockConsole';
 import { ModelLogo } from './src/components/ModelLogo';
 import { LiquidTabBar } from './src/LiquidTabBar';
-import { mockConsoleAdapter } from './src/services/consoleAdapter';
+import { AuthProvider, useAuth } from './src/auth/AuthProvider';
+import { createToken, deleteToken as removeToken, setTokenStatus, updateToken } from './src/api/endpoints';
+import { LoginScreen } from './src/screens/LoginScreen';
+import { useConsoleData } from './src/services/useConsoleData';
 import {
   GlassIconButton,
   Group,
@@ -37,7 +42,6 @@ import {
   animateContentChange,
   palette,
 } from './src/ui';
-import { FaceToolsScreen } from './src/screens/FaceToolsScreen';
 import { FusionScreen } from './src/screens/FusionScreen';
 import { MediaStudioScreen } from './src/screens/MediaStudioScreen';
 import { MessagesScreen } from './src/screens/MessagesScreen';
@@ -49,14 +53,11 @@ import { UsageLogsScreen } from './src/screens/UsageLogsScreen';
 import { WalletScreen } from './src/screens/WalletScreen';
 import type {
   AccountSummary,
-  MessageRecord,
   Model,
   ModelStatus,
   NewTokenDraft,
   OverviewMetrics,
   TabKey,
-  TaskKind,
-  TaskRecord,
   Token,
   TokenStatus,
   UsageRange,
@@ -68,7 +69,6 @@ type SubpageKey =
   | 'messages'
   | 'media'
   | 'experience'
-  | 'face'
   | 'fusion'
   | 'pricing'
   | 'personal'
@@ -100,15 +100,41 @@ const statusColor: Record<ModelStatus | TokenStatus, string> = {
 };
 
 export default function App() {
-  const initialSnapshot = useMemo(() => mockConsoleAdapter.getInitialSnapshot(), []);
+  return (
+    <SafeAreaProvider>
+      <AuthProvider>
+        <Root />
+      </AuthProvider>
+    </SafeAreaProvider>
+  );
+}
+
+function Root() {
+  const { status } = useAuth();
+  if (status === 'restoring') return <BootScreen />;
+  if (status === 'signedOut') return <LoginScreen />;
+  return <AppShell />;
+}
+
+function BootScreen() {
+  return (
+    <View style={styles.bootScreen}>
+      <StatusBar style="dark" />
+      <ActivityIndicator color={palette.blue} />
+    </View>
+  );
+}
+
+function AppShell() {
+  const { user, quotaPerUnit } = useAuth();
+  const consoleData = useConsoleData();
   const [activeTab, setActiveTab] = useState<TabKey>('chat');
   const [query, setQuery] = useState('');
   const [usageRange, setUsageRange] = useState<UsageRange>('24h');
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
-  const [tokens, setTokens] = useState<Token[]>(initialSnapshot.tokens);
-  const [tasks, setTasks] = useState<TaskRecord[]>(initialSnapshot.tasks);
-  const [messages, setMessages] = useState<MessageRecord[]>(initialSnapshot.messages);
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
+  const [readMessageIds, setReadMessageIds] = useState<string[]>([]);
+  const [deletedMessageIds, setDeletedMessageIds] = useState<string[]>([]);
   const [editingToken, setEditingToken] = useState<Token | null>(null);
   const [tokenFormVisible, setTokenFormVisible] = useState(false);
   const [tokenFormSession, setTokenFormSession] = useState(0);
@@ -212,20 +238,38 @@ export default function App() {
   const filteredModels = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) {
-      return initialSnapshot.models;
+      return consoleData.models;
     }
-    return initialSnapshot.models.filter((model) => {
+    return consoleData.models.filter((model) => {
       return [model.name, model.vendor, model.context, model.route, ...model.tags]
         .join(' ')
         .toLowerCase()
         .includes(q);
     });
-  }, [initialSnapshot.models, query]);
+  }, [consoleData.models, query]);
 
-  const activeTokens = tokens.filter((token) => token.status === 'active').length;
-  const metrics = initialSnapshot.metricsByRange[usageRange];
-  const availableModels = `${initialSnapshot.models.filter((model) => model.status !== 'limited').length}/${initialSnapshot.models.length}`;
-  const usagePercent = Math.round((metrics.totalUsage / metrics.totalQuota) * 100);
+  const activeTokens = consoleData.tokens.filter((token) => token.status === 'active').length;
+  const metrics = consoleData.metricsByRange[usageRange];
+  const availableModels = `${consoleData.models.length}`;
+  // 进度条表示区间消耗占「已消耗 + 账户余额」的比例。
+  const usagePercent = Math.max(
+    0,
+    Math.min(100, Math.round((metrics.totalUsage / Math.max(metrics.totalUsage + (user?.quota ?? 0), 1)) * 100)),
+  );
+  const spentLabel = formatQuotaSmart(metrics.totalUsage, quotaPerUnit);
+
+  const messages = useMemo(
+    () =>
+      consoleData.messages
+        .filter((message) => !deletedMessageIds.includes(message.id))
+        .map((message) => ({
+          ...message,
+          read: message.read || readMessageIds.includes(message.id),
+        })),
+    [consoleData.messages, deletedMessageIds, readMessageIds],
+  );
+
+  const tasks = consoleData.tasks;
 
   const sceneStyle = {
     opacity: tabTransition,
@@ -273,15 +317,16 @@ export default function App() {
     ],
   };
 
-  const toggleToken = (id: string) => {
-    setTokens((current) =>
-      current.map((token) => {
-        if (token.id !== id || token.status === 'expired') {
-          return token;
-        }
-        return { ...token, status: token.status === 'active' ? 'paused' : 'active' };
-      }),
-    );
+  const toggleToken = async (id: string) => {
+    const current = consoleData.tokens.find((token) => token.id === id);
+    if (!current || current.status === 'expired') return;
+    const nextStatus = current.status === 'active' ? 2 : 1;
+    try {
+      await setTokenStatus(Number(id), nextStatus);
+      await consoleData.refreshTokens();
+    } catch (error) {
+      Alert.alert('操作失败', error instanceof Error ? error.message : '请稍后重试');
+    }
   };
 
   const openCreateToken = () => {
@@ -297,29 +342,32 @@ export default function App() {
     setTokenFormVisible(true);
   };
 
-  const submitToken = (draft: NewTokenDraft) => {
-    if (editingToken) {
-      setTokens((current) =>
-        current.map((token) =>
-          token.id === editingToken.id
-            ? {
-                ...token,
-                name: draft.name,
-                owner: draft.owner,
-                scope: draft.scope,
-                quota: draft.quota,
-              }
-            : token,
-        ),
-      );
-    } else {
-      setTokens((current) => [
-        mockConsoleAdapter.createToken(draft, Date.now()),
-        ...current,
-      ]);
-    }
+  const submitToken = async (draft: NewTokenDraft) => {
     setTokenFormVisible(false);
-    setEditingToken(null);
+    const remainQuota = Math.max(0, Math.round(draft.quota * quotaPerUnit));
+    try {
+      if (editingToken) {
+        await updateToken(Number(editingToken.id), {
+          name: draft.name,
+          remain_quota: remainQuota,
+          expired_time: editingToken.expiredTime ?? -1,
+          unlimited_quota: draft.quota <= 0,
+          group: draft.group || editingToken.group || '',
+        });
+      } else {
+        await createToken({
+          name: draft.name,
+          remain_quota: remainQuota,
+          unlimited_quota: draft.quota <= 0,
+          expired_time: -1,
+          group: draft.group || undefined,
+        });
+      }
+      setEditingToken(null);
+      await consoleData.refreshTokens();
+    } catch (error) {
+      Alert.alert('保存失败', error instanceof Error ? error.message : '请稍后重试');
+    }
   };
 
   const deleteToken = (token: Token) => {
@@ -328,96 +376,29 @@ export default function App() {
       {
         text: '删除',
         style: 'destructive',
-        onPress: () => {
-          setTokens((current) => current.filter((item) => item.id !== token.id));
+        onPress: async () => {
           setSelectedToken(null);
+          try {
+            await removeToken(Number(token.id));
+            await consoleData.refreshTokens();
+          } catch (error) {
+            Alert.alert('删除失败', error instanceof Error ? error.message : '请稍后重试');
+          }
         },
       },
     ]);
   };
 
-  const cancelTask = (id: string) => {
-    setTasks((current) =>
-      current.map((task): TaskRecord =>
-        task.id === id
-          ? { ...task, state: 'cancelled', elapsed: '已取消', note: '任务已取消，未产生费用。' }
-          : task,
-      ),
-    );
-  };
-
-  const retryTask = (id: string) => {
-    setTasks((current) =>
-      current.map((task): TaskRecord =>
-        task.id === id
-          ? {
-              ...task,
-              state: 'running',
-              progress: 4,
-              submittedAt: '刚刚',
-              elapsed: '重新开始',
-              cost: 0,
-              note: '已重新排队，等待上游调度。',
-            }
-          : task,
-      ),
-    );
-  };
-
   const readMessage = (id: string) => {
-    setMessages((current) =>
-      current.map((message) => (message.id === id ? { ...message, read: true } : message)),
-    );
+    setReadMessageIds((current) => (current.includes(id) ? current : [...current, id]));
   };
 
   const readAllMessages = () => {
-    setMessages((current) => current.map((message) => ({ ...message, read: true })));
+    setReadMessageIds(messages.map((message) => message.id));
   };
 
   const deleteMessage = (id: string) => {
-    setMessages((current) => current.filter((message) => message.id !== id));
-  };
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTasks((current) => {
-        let changed = false;
-        const next = current.map((task): TaskRecord => {
-          if (task.state !== 'running') {
-            return task;
-          }
-          changed = true;
-          const progress = Math.min(100, task.progress + 4);
-          return progress >= 100
-            ? {
-                ...task,
-                progress: 100,
-                state: 'succeeded',
-                note: '模拟任务已完成，结果仅保留在本次运行中。',
-              }
-            : { ...task, progress };
-        });
-        return changed ? next : current;
-      });
-    }, 1600);
-    return () => clearInterval(timer);
-  }, []);
-
-  const createMediaTask = (input: { title: string; kind: TaskKind; cost: number }) => {
-    setTasks((current) => [
-      {
-        id: `task-${Date.now()}`,
-        title: input.title,
-        kind: input.kind,
-        state: 'running',
-        progress: 6,
-        submittedAt: '刚刚',
-        elapsed: '刚开始',
-        cost: input.cost,
-        note: '由 AI 创作页提交，模拟生成中。',
-      },
-      ...current,
-    ]);
+    setDeletedMessageIds((current) => (current.includes(id) ? current : [...current, id]));
   };
 
   const currentTitle =
@@ -434,15 +415,10 @@ export default function App() {
       <SafeAreaView style={styles.subpagePane} edges={['top', 'left', 'right']}>
         <StatusBar style="dark" />
         {subpageRendered === 'logs' ? (
-          <UsageLogsScreen logs={initialSnapshot.logs} onBack={() => setSubpage(null)} />
+          <UsageLogsScreen logs={consoleData.logs} onBack={() => setSubpage(null)} />
         ) : null}
         {subpageRendered === 'tasks' ? (
-          <TasksScreen
-            tasks={tasks}
-            onBack={() => setSubpage(null)}
-            onCancel={cancelTask}
-            onRetry={retryTask}
-          />
+          <TasksScreen tasks={tasks} onBack={() => setSubpage(null)} />
         ) : null}
         {subpageRendered === 'messages' ? (
           <MessagesScreen
@@ -456,16 +432,28 @@ export default function App() {
         {subpageRendered === 'media' ? (
           <MediaStudioScreen
             onBack={() => setSubpage(null)}
-            onCreateTask={createMediaTask}
+            models={consoleData.models}
+            pricing={consoleData.pricing}
+            group={user?.group}
           />
         ) : null}
         {subpageRendered === 'experience' ? (
-          <ModelExperienceScreen onBack={() => setSubpage(null)} />
+          <ModelExperienceScreen
+            onBack={() => setSubpage(null)}
+            models={consoleData.models.map((model) => model.id)}
+          />
         ) : null}
-        {subpageRendered === 'face' ? <FaceToolsScreen onBack={() => setSubpage(null)} /> : null}
-        {subpageRendered === 'fusion' ? <FusionScreen onBack={() => setSubpage(null)} /> : null}
+        {subpageRendered === 'fusion' ? (
+          <FusionScreen
+            onBack={() => setSubpage(null)}
+            models={consoleData.models.map((model) => model.id)}
+          />
+        ) : null}
         {subpageRendered === 'pricing' ? (
-          <ModelMarketplaceScreen onBack={() => setSubpage(null)} />
+          <ModelMarketplaceScreen
+            onBack={() => setSubpage(null)}
+            models={consoleData.marketModels}
+          />
         ) : null}
         {subpageRendered === 'personal' ? <PersonalScreen onBack={() => setSubpage(null)} /> : null}
         {subpageRendered === 'wallet' ? <WalletScreen onBack={() => setSubpage(null)} /> : null}
@@ -481,18 +469,18 @@ export default function App() {
         <View style={styles.appShell}>
         <View style={styles.header}>
           <View>
-            <Text style={styles.eyebrow}>阡陌数智 · 演示</Text>
+            <Text style={styles.eyebrow}>阡陌数智 · {user?.group ?? 'default'}</Text>
             <Animated.Text style={[styles.title, titleStyle]}>{activeTab === 'chat' ? '聊天' : currentTitle}</Animated.Text>
           </View>
           <View style={styles.liveBadge}>
             <View style={styles.liveDot} />
-            <Text style={styles.liveText}>模拟数据</Text>
+            <Text style={styles.liveText}>在线</Text>
           </View>
         </View>
 
         <Animated.View style={[styles.content, sceneStyle]}>
           <View style={{ flex: 1, display: activeTab === 'chat' ? 'flex' : 'none' }}>
-            <ChatWorkspace bottomInset={76} onOpenTool={setSubpage} />
+            <ChatWorkspace bottomInset={76} onOpenTool={setSubpage} models={consoleData.models} />
           </View>
           {activeTab === 'overview' ? (
             <Overview
@@ -500,6 +488,8 @@ export default function App() {
               metrics={metrics}
               availableModels={availableModels}
               usagePercent={usagePercent}
+              spent={spentLabel}
+              balance={consoleData.account?.balance ?? '¥0.00'}
               usageRange={usageRange}
               onRangeChange={setUsageRange}
               onScroll={handleTabScroll}
@@ -510,7 +500,6 @@ export default function App() {
               onOpenMessages={() => setSubpage('messages')}
               onOpenMedia={() => setSubpage('media')}
               onOpenExperience={() => setSubpage('experience')}
-              onOpenFace={() => setSubpage('face')}
               onOpenFusion={() => setSubpage('fusion')}
               onOpenPricing={() => setSubpage('pricing')}
             />
@@ -529,7 +518,7 @@ export default function App() {
 
           {activeTab === 'tokens' ? (
             <TokensView
-              tokens={tokens}
+              tokens={consoleData.tokens}
               onOpen={setSelectedToken}
               onToggle={toggleToken}
               onCreate={openCreateToken}
@@ -539,7 +528,7 @@ export default function App() {
 
           {activeTab === 'account' ? (
             <AccountView
-              account={initialSnapshot.account}
+              account={consoleData.account}
               onOpenPersonal={() => setSubpage('personal')}
               onOpenWallet={() => setSubpage('wallet')}
               onScroll={handleTabScroll}
@@ -550,6 +539,7 @@ export default function App() {
 
         <TokenModal
           token={selectedToken}
+          quotaPerUnit={quotaPerUnit}
           onClose={() => setSelectedToken(null)}
           onEdit={openEditToken}
           onDelete={deleteToken}
@@ -558,6 +548,7 @@ export default function App() {
           key={`${editingToken?.id ?? 'new'}-${tokenFormSession}`}
           visible={tokenFormVisible}
           initial={editingToken}
+          quotaPerUnit={quotaPerUnit}
           onCancel={() => {
             setTokenFormVisible(false);
             setEditingToken(null);
@@ -583,6 +574,8 @@ function Overview({
   metrics,
   availableModels,
   usagePercent,
+  spent,
+  balance,
   usageRange,
   onRangeChange,
   onScroll,
@@ -593,7 +586,6 @@ function Overview({
   onOpenMessages,
   onOpenMedia,
   onOpenExperience,
-  onOpenFace,
   onOpenFusion,
   onOpenPricing,
 }: {
@@ -601,6 +593,8 @@ function Overview({
   metrics: OverviewMetrics;
   availableModels: string;
   usagePercent: number;
+  spent: string;
+  balance: string;
   usageRange: UsageRange;
   onRangeChange: (range: UsageRange) => void;
   onScroll: TabScrollHandler;
@@ -611,7 +605,6 @@ function Overview({
   onOpenMessages: () => void;
   onOpenMedia: () => void;
   onOpenExperience: () => void;
-  onOpenFace: () => void;
   onOpenFusion: () => void;
   onOpenPricing: () => void;
 }) {
@@ -644,8 +637,8 @@ function Overview({
             <View style={[styles.progressFill, { width: `${usagePercent}%` }]} />
           </View>
           <View style={styles.metricRow}>
-            <Text style={styles.mutedText}>{metrics.totalUsage.toLocaleString()} 已使用</Text>
-            <Text style={styles.mutedText}>{metrics.totalQuota.toLocaleString()} 总额度</Text>
+            <Text style={styles.mutedText}>{spent} 已使用</Text>
+            <Text style={styles.mutedText}>{balance} 余额</Text>
           </View>
         </View>
 
@@ -689,12 +682,6 @@ function Overview({
             icon="◇"
             title="模型体验"
             onPress={onOpenExperience}
-          />
-          <QuickAction
-            symbol="person.crop.square"
-            icon="◎"
-            title="人脸工具"
-            onPress={onOpenFace}
           />
           <QuickAction
             symbol="arrow.triangle.merge"
@@ -760,8 +747,8 @@ function Overview({
               <View style={[styles.heroCardFill, { width: `${usagePercent}%` }]} />
             </View>
             <View style={styles.heroCardMetaRow}>
-              <Text style={styles.heroCardMeta}>{metrics.totalUsage.toLocaleString()} 已使用</Text>
-              <Text style={styles.heroCardMeta}>{metrics.totalQuota.toLocaleString()} 总额度</Text>
+              <Text style={styles.heroCardMeta}>{spent} 已使用</Text>
+              <Text style={styles.heroCardMeta}>{balance} 余额</Text>
             </View>
           </View>
 
@@ -786,7 +773,6 @@ function Overview({
           <Group header="AI 功能" style={styles.overviewGroup}>
             <Row title="AI 创作" icon="sparkles" chevron onPress={onOpenMedia} />
             <Row title="模型体验" icon="text.bubble" chevron onPress={onOpenExperience} />
-            <Row title="人脸工具" icon="person.crop.square" chevron onPress={onOpenFace} />
             <Row title="模型融合" icon="arrow.triangle.merge" chevron onPress={onOpenFusion} />
             <Row title="模型广场" icon="square.grid.2x2" chevron onPress={onOpenPricing} />
           </Group>
@@ -947,12 +933,12 @@ function TokensView({
         style={({ pressed }) => [styles.primaryButton, pressed ? pressedDim : null]}
       >
         <Text style={styles.primaryButtonIcon}>＋</Text>
-        <Text style={styles.primaryButtonText}>新建模拟令牌</Text>
+        <Text style={styles.primaryButtonText}>新建令牌</Text>
       </Pressable>
       {tokens.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyTitle}>暂无令牌</Text>
-          <Text style={styles.modelVendor}>创建一个模拟令牌后，可以验证移动端详情、暂停和限额交互。</Text>
+          <Text style={styles.modelVendor}>还没有创建任何令牌</Text>
         </View>
       ) : null}
       {tokens.map((token) => {
@@ -963,7 +949,7 @@ function TokensView({
               <View style={styles.tokenHeader}>
                 <View>
                   <Text style={styles.tokenTitle}>{token.name}</Text>
-                  <Text style={styles.modelVendor}>{token.owner}</Text>
+                  <Text style={styles.modelVendor}>令牌 #{token.id}</Text>
                 </View>
                 <Text style={[styles.statusText, { color: statusColor[token.status] }]}>
                   {tokenStatusLabel[token.status]}
@@ -974,7 +960,9 @@ function TokensView({
                 <View style={[styles.progressFillCompact, { width: `${percent}%` }]} />
               </View>
               <View style={styles.metricRow}>
-                <Text style={styles.mutedText}>{percent}% 已使用</Text>
+                <Text style={styles.mutedText}>
+                  {token.unlimited ? '不限额度' : `${percent}% 已使用`}
+                </Text>
                 <Text style={styles.mutedText}>{token.lastUsed}</Text>
               </View>
             </Pressable>
@@ -1000,11 +988,15 @@ function AccountView({
   onOpenWallet,
   onScroll,
 }: {
-  account: AccountSummary;
+  account: AccountSummary | null;
   onOpenPersonal: () => void;
   onOpenWallet: () => void;
   onScroll: TabScrollHandler;
 }) {
+  const { user } = useAuth();
+  const displayName = user?.display_name || user?.username || '未登录';
+  const initial = displayName.trim().charAt(0).toUpperCase() || '·';
+  const roleLabel = user?.role === 1 ? '普通用户' : `角色 ${user?.role ?? '—'}`;
   return (
     <ScrollView
       contentContainerStyle={styles.scrollContent}
@@ -1018,13 +1010,19 @@ function AccountView({
         style={({ pressed }) => [styles.accountHeader, pressed ? styles.accountHeaderPressed : null]}
       >
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>K</Text>
+          <Text style={styles.avatarText}>{initial}</Text>
         </View>
         <View style={styles.accountHeaderMain}>
-          <Text style={styles.accountName}>kira</Text>
-          <Text style={styles.modelVendor}>普通用户 · ID 493</Text>
+          <Text style={styles.accountName} numberOfLines={1}>
+            {displayName}
+          </Text>
+          <Text style={styles.modelVendor}>
+            {roleLabel} · ID {user?.id ?? '—'}
+          </Text>
         </View>
-        <Text style={styles.accountBalance}>¥278.44</Text>
+        <Text style={styles.accountBalance} numberOfLines={1}>
+          {account?.balance ?? '—'}
+        </Text>
         {Platform.OS === 'ios' ? (
           <SymbolView name="chevron.right" tintColor="#C7C7CC" style={styles.accountChevron} />
         ) : (
@@ -1033,10 +1031,10 @@ function AccountView({
       </Pressable>
 
       <Group>
-        <Row title="当前计划" value={account.plan} />
-        <Row title="账单状态" value={account.balance} />
-        <Row title="API 端点" value={account.endpoint} />
-        <Row title="移动端模式" value={account.mode} />
+        <Row title="当前分组" value={account?.plan ?? user?.group ?? '—'} />
+        <Row title="剩余额度" value={account?.balance ?? '—'} />
+        <Row title="API 端点" value={account?.endpoint ?? 'test.qmszai.cn'} />
+        <Row title="连接状态" value={account?.mode ?? '在线'} />
       </Group>
       <Group header="账户">
         <Row title="个人设置" chevron icon="person.crop.circle" onPress={onOpenPersonal} />
@@ -1049,11 +1047,13 @@ function AccountView({
 
 function TokenModal({
   token,
+  quotaPerUnit,
   onClose,
   onEdit,
   onDelete,
 }: {
   token: Token | null;
+  quotaPerUnit: number;
   onClose: () => void;
   onEdit: (token: Token) => void;
   onDelete: (token: Token) => void;
@@ -1070,7 +1070,7 @@ function TokenModal({
           <View style={styles.detailHeader}>
             <View>
               <Text style={styles.detailTitle}>{token.name}</Text>
-              <Text style={styles.modelVendor}>{token.owner}</Text>
+              <Text style={styles.modelVendor}>{token.scope}</Text>
             </View>
             <GlassIconButton
               icon="xmark"
@@ -1082,11 +1082,14 @@ function TokenModal({
             />
           </View>
           <View style={styles.detailStats}>
-            <MiniStat label="用量" value={token.usage.toLocaleString()} />
-            <MiniStat label="限额" value={token.quota.toLocaleString()} />
+            <MiniStat label="用量" value={formatQuota(token.usage, quotaPerUnit)} />
+            <MiniStat
+              label="限额"
+              value={token.unlimited ? '不限' : formatQuota(token.remainQuota ?? token.quota, quotaPerUnit)}
+            />
             <MiniStat label="状态" value={tokenStatusLabel[token.status]} />
           </View>
-          <SettingsRow label="Scope" value={token.scope} />
+          <SettingsRow label="分组" value={token.scope} />
           <SettingsRow label="最后使用" value={token.lastUsed} />
 
           <View style={styles.modalActions}>
@@ -1114,25 +1117,27 @@ function TokenModal({
 function TokenFormModal({
   visible,
   initial,
+  quotaPerUnit,
   onCancel,
   onSubmit,
 }: {
   visible: boolean;
   initial: Token | null;
+  quotaPerUnit: number;
   onCancel: () => void;
   onSubmit: (draft: NewTokenDraft) => void;
 }) {
   const [name, setName] = useState(initial?.name ?? 'Mobile client');
-  const [owner, setOwner] = useState(initial?.owner ?? 'Wenze');
-  const [scope, setScope] = useState(initial?.scope ?? 'models:read');
-  const [quota, setQuota] = useState(String(initial?.quota ?? 10000));
+  const [group, setGroup] = useState(initial?.group ?? '');
+  const [quota, setQuota] = useState(() => {
+    if (!initial) return '10';
+    if (initial.unlimited) return '0';
+    const remain = initial.remainQuota ?? initial.quota;
+    return String(Number((remain / (quotaPerUnit || 1)).toFixed(2)));
+  });
 
-  const parsedQuota = Number.parseInt(quota, 10);
-  const canSubmit =
-    name.trim().length > 0 &&
-    owner.trim().length > 0 &&
-    scope.trim().length > 0 &&
-    parsedQuota > 0;
+  const parsedQuota = Number.parseFloat(quota);
+  const canSubmit = name.trim().length > 0 && Number.isFinite(parsedQuota) && parsedQuota >= 0;
 
   const submit = () => {
     if (!canSubmit) {
@@ -1140,8 +1145,7 @@ function TokenFormModal({
     }
     onSubmit({
       name: name.trim(),
-      owner: owner.trim(),
-      scope: scope.trim(),
+      group: group.trim(),
       quota: parsedQuota,
     });
   };
@@ -1153,9 +1157,9 @@ function TokenFormModal({
           <View style={styles.modalHandle} />
           <View style={styles.detailHeader}>
             <View>
-              <Text style={styles.detailTitle}>{initial ? '编辑令牌' : '新建模拟令牌'}</Text>
+              <Text style={styles.detailTitle}>{initial ? '编辑令牌' : '新建令牌'}</Text>
               <Text style={styles.modelVendor}>
-                {initial ? '仅更新本地演示状态' : '仅写入本地状态，不生成真实凭证'}
+                {initial ? '修改名称与限额' : '创建后可用于调用 API'}
               </Text>
             </View>
             <GlassIconButton
@@ -1170,10 +1174,9 @@ function TokenFormModal({
 
           <View style={styles.formStack}>
             <FieldInput label="名称" value={name} onChangeText={setName} />
-            <FieldInput label="负责人" value={owner} onChangeText={setOwner} />
-            <FieldInput label="权限范围" value={scope} onChangeText={setScope} />
+            <FieldInput label="分组" value={group} onChangeText={setGroup} />
             <FieldInput
-              label="月限额"
+              label="额度（元，0 为不限额）"
               value={quota}
               onChangeText={setQuota}
               keyboardType="number-pad"
@@ -1278,6 +1281,12 @@ function SettingsRow({ label, value }: { label: string; value: string }) {
 }
 
 const baseStyles = StyleSheet.create({
+  bootScreen: {
+    flex: 1,
+    backgroundColor: '#F6F7F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   safeArea: {
     flex: 1,
     backgroundColor: '#F6F7F9',
@@ -1299,7 +1308,7 @@ const baseStyles = StyleSheet.create({
   },
   subpageShadow: {
     shadowColor: '#000000',
-    shadowOpacity: 0.14,
+    shadowOpacity: ios ? 0.14 : 0,
     shadowRadius: 18,
     shadowOffset: { width: -8, height: 0 },
   },
