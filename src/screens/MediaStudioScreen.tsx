@@ -25,6 +25,7 @@ import {
   type Tone,
 } from '../ui';
 import { cardSurface, pressedDim, pressedSurface, softShadow } from '../material';
+import { useKeyboardInsets } from '../useKeyboardInsets';
 
 const ios = Platform.OS === 'ios';
 import type { MediaGeneration, MediaKind, TaskKind } from '../types';
@@ -130,6 +131,7 @@ export function MediaStudioScreen({
   onCreateTask: (input: { title: string; kind: TaskKind; cost: number }) => void;
 }) {
   const insets = useSafeAreaInsets();
+  const { inset: keyboardInset } = useKeyboardInsets();
   const [kind, setKind] = useState<MediaKind>('image');
   const [prompts, setPrompts] = useState(initialPrompts);
   const [lyrics, setLyrics] = useState('');
@@ -222,7 +224,7 @@ export function MediaStudioScreen({
   return (
     <Subpage title="AI 创作" onBack={onBack}>
       <KeyboardAvoidingView
-        style={styles.flex}
+        style={[styles.flex, { marginBottom: keyboardInset }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={60}
       >

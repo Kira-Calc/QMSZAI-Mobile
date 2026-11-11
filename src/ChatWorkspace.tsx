@@ -1,11 +1,11 @@
+import { BlurView, BlurTargetView } from 'expo-blur';
+import NativeMaskedView from '@react-native-masked-view/masked-view';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useRef, useState, type ComponentProps, type ComponentRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ComponentType, type ReactElement, type ComponentProps, type ComponentRef, type ReactNode } from 'react';
 import {
   Alert,
   Animated,
   Easing,
-  Keyboard,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -15,8 +15,10 @@ import {
   TextInput,
   useWindowDimensions,
   View,
+  type ViewProps,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { ModelLogo } from './components/ModelLogo';
 import { models } from './data/mockConsole';
@@ -24,8 +26,16 @@ import type { Model } from './types';
 import { GlassIconButton, GlassSurface, SheetHeader, palette } from './ui';
 import { AppIcon } from './components/AppIcon';
 import { elevation, m3, shape } from './material';
+import { useKeyboardInsets } from './useKeyboardInsets';
+
+// masked-view 的旧声明依赖已移除的 NativeMethods，限定为它实际支持的 props。
+const MaskedView = NativeMaskedView as unknown as ComponentType<ViewProps & {
+  maskElement: ReactElement;
+  androidRenderingMode?: 'software' | 'hardware';
+}>;
 
 const ios = Platform.OS === 'ios';
+
 
 type ChatMessage = {
   id: number;
@@ -121,7 +131,24 @@ export function ChatWorkspace({
   const [modelAnchor, setModelAnchor] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const [toolsVisible, setToolsVisible] = useState(false);
   const [toolsAnchor, setToolsAnchor] = useState({ x: 111, y: 170, width: 228, height: 36 });
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const { visible: keyboardVisible, inset: keyboardInset } = useKeyboardInsets(true);
+  const safeAreaInsets = useSafeAreaInsets();
+  // 渐变模糊只在键盘弹出、输入条上移后淡入；收起键盘时淡出，避免静态页面出现色带。
+  const blurTarget = useRef<ComponentRef<typeof View>>(null);
+  const composerFade = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.timing(composerFade, {
+      toValue: keyboardVisible ? 1 : 0,
+      duration: keyboardVisible ? 220 : 150,
+      // 等输入条随键盘上移落位后再淡入，避免两层动画同时开始显得生硬。
+      delay: keyboardVisible ? 90 : 0,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [composerFade, keyboardVisible]);
 
   const generation = useRef(0);
   const conversationSequence = useRef(3);
@@ -130,15 +157,6 @@ export function ChatWorkspace({
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const modelButton = useRef<ComponentRef<typeof View>>(null);
   const toolsButton = useRef<ComponentRef<typeof View>>(null);
-
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
-    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
 
   const current = conversations.find((item) => item.id === selected);
   const currentModelId = current?.modelId ?? selectedModelId;
@@ -294,9 +312,13 @@ export function ChatWorkspace({
   const canSend = draft.trim().length > 0 && !busy;
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.root, { marginBottom: keyboardVisible ? 0 : bottomInset }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    <View
+      style={[
+        styles.root,
+        { marginBottom: ios
+          ? Math.max(bottomInset, keyboardInset - safeAreaInsets.bottom)
+          : keyboardVisible ? keyboardInset : bottomInset },
+      ]}
     >
       <View style={styles.toolbar}>
         <Pressable
@@ -341,6 +363,7 @@ export function ChatWorkspace({
         />
       </View>
 
+      <BlurTargetView ref={blurTarget} style={styles.thread}>
       <Animated.View
         style={[
           styles.thread,
@@ -361,7 +384,7 @@ export function ChatWorkspace({
         <ScrollView
           ref={scroll}
           style={styles.messages}
-          contentContainerStyle={styles.messageList}
+          contentContainerStyle={[styles.messageList, keyboardVisible ? styles.messageListKeyboard : null]}
           keyboardDismissMode="interactive"
           onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: true })}
         >
@@ -373,7 +396,7 @@ export function ChatWorkspace({
       ) : (
         <ScrollView
           style={styles.messages}
-          contentContainerStyle={styles.welcome}
+          contentContainerStyle={[styles.welcome, keyboardVisible ? styles.welcomeKeyboard : null]}
           keyboardDismissMode="interactive"
 
         >
@@ -434,8 +457,44 @@ export function ChatWorkspace({
         </ScrollView>
       )}
       </Animated.View>
+      </BlurTargetView>
 
       <View style={styles.composerBar}>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.composerFade,
+            {
+              opacity: composerFade,
+            },
+          ]}
+        >
+          <MaskedView
+            style={StyleSheet.absoluteFill}
+            androidRenderingMode="software"
+            maskElement={
+              <Svg width="100%" height="100%">
+                <Defs>
+                  <SvgLinearGradient id="composerBlurMask" x1="0" y1="0" x2="0" y2="1">
+                    <Stop offset="0" stopColor="black" stopOpacity="0" />
+                    <Stop offset="0.25" stopColor="black" stopOpacity="0.12" />
+                    <Stop offset="0.6" stopColor="black" stopOpacity="0.65" />
+                    <Stop offset="1" stopColor="black" stopOpacity="1" />
+                  </SvgLinearGradient>
+                </Defs>
+                <Rect width="100%" height="100%" fill="url(#composerBlurMask)" />
+              </Svg>
+            }
+          >
+            <BlurView
+              style={StyleSheet.absoluteFill}
+              blurTarget={blurTarget}
+              blurMethod="dimezisBlurView"
+              intensity={45}
+              tint="light"
+            />
+          </MaskedView>
+        </Animated.View>
         <View style={styles.composerRow}>
           <View ref={toolsButton} collapsable={false} style={styles.toolsButton}>
             <GlassIconButton
@@ -677,7 +736,7 @@ export function ChatWorkspace({
           </Pressable>
         ))}
       </ChatPopover>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -936,6 +995,8 @@ const styles = StyleSheet.create({
     paddingBottom: 14,
     gap: 12,
   },
+  // 键盘展开时输入条上方有渐变，留出等量空间，滚到底时最后一条不会被压暗。
+  messageListKeyboard: { paddingBottom: 50 },
   userRow: { alignItems: 'flex-end' },
   userBubble: {
     maxWidth: '82%',
@@ -977,6 +1038,7 @@ const styles = StyleSheet.create({
   },
   typingDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: palette.tertiaryLabel },
   welcome: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24 },
+  welcomeKeyboard: { paddingBottom: 62 },
   welcomeIcon: {
     alignItems: 'flex-start',
     marginBottom: 10,
@@ -1040,6 +1102,14 @@ const styles = StyleSheet.create({
   recentPreview: { color: palette.secondaryLabel, fontSize: 13 },
   recentTime: { color: palette.secondaryLabel, fontSize: 12 },
   composerBar: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6 },
+  composerFade: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    // 模糊层从透明过渡至输入区，底端延伸到输入框背后。
+    top: -40,
+    height: 48,
+  },
   composerRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',

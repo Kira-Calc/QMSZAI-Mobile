@@ -1,6 +1,27 @@
 # QMSZAI Mobile — 下一 CLI 接手
 
-更新时间：2026-11-10。本文件是最新简明入口；详细历史见 HANDOVER.md。先核对实际文件，可能有其他 CLI 同时工作，勿覆盖其改动。
+2026-11-11 iOS 回落动画调整：键盘高度相同的 will/did 通知去重，移除与 willChangeFrame 重叠的 willHide 更新；零时长事件不启动布局动画。聊天页 iOS 底部间距固定为 max(底栏留白, 键盘重叠高度-安全区)，避免临近收起时落到零后再跳回 76。typecheck、diff 检查通过；Device Hub 原生键盘下拉收起实测，最终位置正常、底栏恢复。截图不能确认逐帧流畅度，待用户确认动画观感。未提交推送。
+
+2026-11-11 iOS 聊天键盘避让修复：重载后确认原 KAV padding 路径仍遮挡。聊天改为 useKeyboardInsets(true) 按屏幕键盘重叠高度设置底部间距，并减去外层已占用的安全区；监听 iOS willChangeFrame/willHide 与 didShow/didHide，以系统时序安排布局动画，初始化读取 Keyboard.metrics。其他调用方默认仍返回 iOS inset 0，Android 高度算法不变。Device Hub 原生软键盘实测通过：展开时输入条在键盘上方、Q 换行 Q 两行输入完整可见、渐变模糊显示、删除测试文字并下拉收起后恢复输入区与底栏。未强制 state；typecheck 与 diff 检查通过。未提交推送。
+
+2026-11-11 iOS 原生键盘实测：通过 Device Hub UI 聚焦聊天输入框，调整 Device > Keyboard 与工具栏 Capture Keyboard（最终 off）后成功显示系统英文软键盘，点 Q 输入与 delete 删除均有效，测试字符已清除。但输入条未上移、被键盘覆盖，底栏亦在键盘下方；因此 iOS 键盘避让及渐变模糊验收不通过。未用强制 state，未修改业务代码。下一步排查实际运行包与 KAV/键盘事件，修复后复测。此前“iOS 已验证”的历史记录不能作为当前验收依据。
+
+2026-11-11 改用渐变模糊：按用户要求放弃阴影。增加 expo-blur 与 masked-view，使用 BlurTargetView 采样列表、BlurView intensity 45 + SVG 透明度蒙版，上伸 40dp、总高 48dp，保留键盘后淡入。修正 masked-view 旧类型兼容。typecheck、diff 检查、双端 export 通过；安卓键盘展开截图已核对，iOS 键盘态未实测。未提交推送。
+
+2026-11-11 输入框阴影衔接调整：针对悬空灰带反馈，把渐变峰值移入输入框后方（相对输入区顶部 24dp），总高度 80dp、上伸 32dp，峰值透明度降至 6%。安卓键盘截图已查看；typecheck 与 diff 检查通过。iOS 共用代码，键盘态尚未实测。未提交推送。
+
+2026-11-11 阴影断层修正：用户截图暴露渐变底端直接截断。改为上方 32dp + 输入区内部 16dp 的连续透明渐变，峰值降至 8%，底端回落至透明。安卓键盘展开截图已核对，原水平硬切消失；typecheck、diff 检查通过。iOS 共用实现，原生键盘交互仍未验证。
+
+## 2026-11-11：输入区向上阴影与 README 改写
+
+聊天输入区阴影改为 32dp 深色透明渐变，从底部 12% 向上递减至 0；移除页面底色遮罩和阴影平移，保留键盘落位后淡入，动画切换时取消旧动画。两端共用，现有键盘避让和底部留白未改。README 精简为项目介绍、截图、功能、运行和限制。
+
+验证：typecheck、git diff --check、iOS/Android export 通过，README 本地链接均存在。尚未完成模拟器视觉和真实键盘交互验收；下一步检查建议卡、末条消息、快速开合键盘及多行输入。未提交、未推送。此前交接中的 40dp 底色遮罩方案已被替换。
+
+
+更新时间：2026-11-11。本文件是最新简明入口；详细历史见 HANDOVER.md。先核对实际文件，可能有其他 CLI 同时工作，勿覆盖其改动。
+
+- **最新交接**：聊天输入条上方的「渐变阴影」被用户判定不合格，已停止继续调整并输出独立交接文档 `~/Downloads/QMSZAI-Mobile-HANDOVER-2026-11-11.md`（含现状代码位置、根因、三套重做方案、验收清单、环境与坐标），问题截图 `~/Downloads/qmszai-shadow-issue-2026-11-11.png`。安卓扁平化与双端键盘避让已完成，保持现状即可。
 
 ## 本轮增量（2026-11-10，第二十四轮：安卓蓝色主题 + 概览页对齐 iOS）
 
@@ -13,6 +34,9 @@
 - 同日补充：iOS 卡片圆角回归。`cardSurface` 的 iOS 分支改为 `{ borderRadius: 12, borderCurve: 'continuous' }`（安卓仍 28 + elevation），并把 10 个子页被 M3 改掉的 iOS 圆角/高度/内边距/字号用 `ios ? 原值 : M3 值` 恢复；原先 10pt 的小卡片单独回 10。注意 `borderRadius: undefined` 会覆盖展开值，安卓需显式写 28。iOS 逐页截图与安卓模型体验/AI 创作复核通过。
 - 同日补充二：安卓按压态方块。`android_ripple` 的蒙版恒为矩形（RN `getMask` 只给 `ColorDrawable`），圆角宿主上必然画方块，`overflow:'hidden'` 也裁不到自身背景。已新增 `pressedSurface`（白面 `m3.surfaceContainer`）/`pressedDim`（彩色面 `opacity 0.8`），圆角面（底栏项、各主按钮、chip、建议卡、签到/退出、兑换、复制邀请、底部「完成」、账户头卡、模型行）改用 `Pressable` 的 `pressed` 状态；矩形行仍用 ripple，由 `groupBody` 的圆角裁剪兜住。验证：按住底栏/令牌按钮为圆角胶囊，iOS 截图无变化。
 - 同日补充三：新增 GitHub 展示用中文 `README.md`，以及 `docs/screenshots/` 8 张双端截图（宽 700）。iOS 用 `--no-dev --minify`（8095）关掉开发浮层，移动 `DevMenuFAB` 后两次截图按差异区合成；安卓在 Dev Menu 关闭 Tools button 后直拍。现已还原 `App.tsx` 初始态、关闭 8095 Metro、还原 FAB 位置。
+- 同日补充四（2026-11-11）：安卓组件扁平化。`elevation.level1/level2` 改为空对象，`cardSurface`/`tileSurface`/`softShadow` 不再带投影；新增 `elevation.floating` 仅供底栏，`LiquidTabBar` 安卓分支改用之保留悬浮阴影。iOS 样式、聊天浮层与子页阴影未动；typecheck 通过，安卓四页截图确认无投影、底栏有阴影。
+- 同日补充五（2026-11-11）：安卓键盘遮住输入条。根因是边到边窗口不随键盘 resize，安卓的 KAV `behavior=undefined` 失效。新增 `src/useKeyboardInsets.ts`（监听 keyboardDidShow/Hide 返回键盘高度），聊天根容器按高度设 `marginBottom`，`MediaStudioScreen`/`ModelExperienceScreen` 的 KAV 同样加 `marginBottom`；iOS 继续用 KAV `padding`。安卓实测三处输入区均在键盘上方，typecheck 通过。
+- 同日补充六（2026-11-11）：聊天输入条上方渐变阴影。双端共用的 40dp `react-native-svg` 渐变叠在 `composerBar` 上方（`bottom:'100%'`、`pointerEvents="none"`），stops `#0B1D28` 0 → 0.06 → 页面底色 0.62 → 页面底色 1，末段与页面底色一致避免硬边；只在键盘弹出后延迟 90ms 淡入 220ms（附 10→0 translateY），收起 150ms 淡出。键盘展开时消息列表/欢迎页 `paddingBottom` 加到 50/62。iOS 强制 keyboardVisible 截图核对渐变衔接与卡片淡出，随后还原；typecheck 通过。
 - 未提交、未推送。
 
 ## 上一轮增量（2026-11-10，第二十三轮：安卓 Material 3 重做）

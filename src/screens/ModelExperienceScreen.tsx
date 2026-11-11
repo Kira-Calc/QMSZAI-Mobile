@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '../components/AppIcon';
 import { cardSurface, pressedSurface, softShadow } from '../material';
+import { useKeyboardInsets } from '../useKeyboardInsets';
 
 const ios = Platform.OS === 'ios';
 
@@ -38,6 +39,7 @@ function buildReply(prompt: string, model: string) {
 
 export function ModelExperienceScreen({ onBack }: { onBack: () => void }) {
   const insets = useSafeAreaInsets();
+  const { inset: keyboardInset } = useKeyboardInsets();
   const [model, setModel] = useState(experienceModels[0].name);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
@@ -124,7 +126,7 @@ export function ModelExperienceScreen({ onBack }: { onBack: () => void }) {
       }
     >
       <KeyboardAvoidingView
-        style={styles.flex}
+        style={[styles.flex, { marginBottom: keyboardInset }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={56}
       >

@@ -57,16 +57,12 @@ export const type = {
   labelSmall: { fontSize: 11, lineHeight: 16, fontWeight: '500' as const },
 } as const;
 
-// M3 海拔：浅色主题下用极淡的阴影 + 色调表面表达层级
+// 组件海拔：安卓已统一扁平化，与 iOS 观感一致——组件不再带投影，只用表面色差分层。
+// 底部导航栏是唯一例外，用 floating 保留悬浮感。
 export const elevation = {
-  level1: {
-    shadowColor: '#0B1D28',
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-  },
-  level2: {
+  level1: {},
+  level2: {},
+  floating: {
     shadowColor: '#0B1D28',
     shadowOpacity: 0.09,
     shadowRadius: 12,
@@ -85,17 +81,16 @@ export const ripple = (color: string = 'rgba(26,115,232,0.12)') => ({
 
 const isIOS = Platform.OS === 'ios';
 
-// 卡片表面：安卓用 M3 的 28dp 大圆角 + 1 级海拔；iOS 返回空对象，沿用原有样式。
-// iOS 保留原 12pt 连续圆角（M3 改造前各页卡片就是 12）；安卓用 28dp + 1 级海拔。
+// 卡片表面：安卓用 M3 的 28dp 大圆角、不加投影；iOS 返回原 12pt 连续圆角。
 export const cardSurface = isIOS
   ? { borderRadius: 12, borderCurve: 'continuous' as const }
-  : { borderRadius: shape.xl, ...elevation.level1 };
+  : { borderRadius: shape.xl };
 
-// 紧凑磁贴：16dp 圆角 + 1 级海拔，用于栅格内的小块。
-export const tileSurface = isIOS ? {} : { borderRadius: shape.lg, ...elevation.level1 };
+// 紧凑磁贴：16dp 圆角，用于栅格内的小块。
+export const tileSurface = isIOS ? {} : { borderRadius: shape.lg };
 
-// 轻阴影：气泡、输入条等需要脱离底色但仍很克制的表面；iOS 不加。
-export const softShadow = isIOS ? {} : elevation.level1;
+// 轻阴影：气泡、输入条等表面；扁平化后安卓也不再投影，仅为保留调用点。
+export const softShadow = {};
 
 // 平铺表面：无阴影，仅用 surfaceContainer 区分层级。
 export const flatSurface = isIOS ? {} : { borderRadius: shape.xl, backgroundColor: m3.surfaceContainerLow };

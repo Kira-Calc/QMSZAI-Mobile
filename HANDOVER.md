@@ -1,5 +1,56 @@
 最新独立交接入口：`HANDOVER_NEXT_CLI.md`（2026-11-10，已含安卓蓝色主题、概览页对齐 iOS、Material 3 底栏与全部子页）。
 
+2026-11-11 iOS 回落动画调整：键盘高度相同的 will/did 通知去重，移除与 willChangeFrame 重叠的 willHide 更新；零时长事件不启动布局动画。聊天页 iOS 底部间距固定为 max(底栏留白, 键盘重叠高度-安全区)，避免临近收起时落到零后再跳回 76。typecheck、diff 检查通过；Device Hub 原生键盘下拉收起实测，最终位置正常、底栏恢复。截图不能确认逐帧流畅度，待用户确认动画观感。未提交推送。
+
+2026-11-11 iOS 聊天键盘避让修复：重载后确认原 KAV padding 路径仍遮挡。聊天改为 useKeyboardInsets(true) 按屏幕键盘重叠高度设置底部间距，并减去外层已占用的安全区；监听 iOS willChangeFrame/willHide 与 didShow/didHide，以系统时序安排布局动画，初始化读取 Keyboard.metrics。其他调用方默认仍返回 iOS inset 0，Android 高度算法不变。Device Hub 原生软键盘实测通过：展开时输入条在键盘上方、Q 换行 Q 两行输入完整可见、渐变模糊显示、删除测试文字并下拉收起后恢复输入区与底栏。未强制 state；typecheck 与 diff 检查通过。未提交推送。
+
+2026-11-11 iOS 原生键盘实测：通过 Device Hub UI 聚焦聊天输入框，调整 Device > Keyboard 与工具栏 Capture Keyboard（最终 off）后成功显示系统英文软键盘，点 Q 输入与 delete 删除均有效，测试字符已清除。但输入条未上移、被键盘覆盖，底栏亦在键盘下方；因此 iOS 键盘避让及渐变模糊验收不通过。未用强制 state，未修改业务代码。下一步排查实际运行包与 KAV/键盘事件，修复后复测。此前“iOS 已验证”的历史记录不能作为当前验收依据。
+
+2026-11-11 改用渐变模糊：按用户要求放弃阴影。增加 expo-blur 与 masked-view，使用 BlurTargetView 采样列表、BlurView intensity 45 + SVG 透明度蒙版，上伸 40dp、总高 48dp，保留键盘后淡入。修正 masked-view 旧类型兼容。typecheck、diff 检查、双端 export 通过；安卓键盘展开截图已核对，iOS 键盘态未实测。未提交推送。
+
+2026-11-11 输入框阴影衔接调整：针对悬空灰带反馈，把渐变峰值移入输入框后方（相对输入区顶部 24dp），总高度 80dp、上伸 32dp，峰值透明度降至 6%。安卓键盘截图已查看；typecheck 与 diff 检查通过。iOS 共用代码，键盘态尚未实测。未提交推送。
+
+2026-11-11 阴影断层修正：用户截图暴露渐变底端直接截断。改为上方 32dp + 输入区内部 16dp 的连续透明渐变，峰值降至 8%，底端回落至透明。安卓键盘展开截图已核对，原水平硬切消失；typecheck、diff 检查通过。iOS 共用实现，原生键盘交互仍未验证。
+
+## 2026-11-11：输入区向上阴影与 README 改写
+
+聊天输入区阴影改为 32dp 深色透明渐变，从底部 12% 向上递减至 0；移除页面底色遮罩和阴影平移，保留键盘落位后淡入，动画切换时取消旧动画。两端共用，现有键盘避让和底部留白未改。README 精简为项目介绍、截图、功能、运行和限制。
+
+验证：typecheck、git diff --check、iOS/Android export 通过，README 本地链接均存在。尚未完成模拟器视觉和真实键盘交互验收；下一步检查建议卡、末条消息、快速开合键盘及多行输入。未提交、未推送。此前交接中的 40dp 底色遮罩方案已被替换。
+
+
+## 输入条上方渐变阴影（2026-11-11，**当前不合格，待重做**）
+
+用户最终判定当前方案不可用，要求记录进度并交给其他 CLI 重做。独立交接文档在 `~/Downloads/QMSZAI-Mobile-HANDOVER-2026-11-11.md`，问题截图 `~/Downloads/qmszai-shadow-issue-2026-11-11.png`。
+
+结论：用「不透明页面底色收尾的渐变」去遮内容，本质上会把卡片从中间切平，调参数解决不了；下一轮应把输入条做成实体 surface（或与底栏合并成浮起容器）再给它短距离阴影，双端一致，且只在键盘弹出、输入条落位后淡入。以下为实现记录，供重做时参考。
+
+## 输入条上方渐变阴影实现记录（2026-11-11）
+
+- 用户反馈：聊天页输入框上方与「输入建议条 / 滚动列表」没有区分度，要求加渐变阴影；iOS 同类场景也有输入框与其他内容打架的问题，双端都要；且渐变应在键盘弹出、输入条上移后平滑出现。
+- 第一版只有安卓、颜色以 `#0B1D28` 0 → 0.12 收尾，暗色带在输入条顶边处与页面底色硬切，静态页面也一直显示，视觉上是一条灰带（用户截图指出的显示 bug）。
+- 现方案（双端）：`src/ChatWorkspace.tsx` 的 `composerBar` 上方叠 40dp `react-native-svg` 渐变（`composerFade`，`position:'absolute'`、`bottom:'100%'`、`pointerEvents="none"`）。stops 为 `#0B1D28` 0 → 0.06 → 页面底色 0.62 → 页面底色 1，末段与页面底色完全一致，因此不会出现硬边；页面底色按平台取 `#F2F2F7`（iOS）/ `#F6F7F9`（安卓）。
+- 显隐用 `Animated`：键盘可见时延迟 90ms、220ms 淡入（`Easing.out(Easing.cubic)`，同时 10 → 0 的 translateY），收起时 150ms 淡出；静态页面不再显示渐变。
+- 配套：键盘展开时消息列表 `paddingBottom` 加到 50、欢迎页加到 62（`messageListKeyboard` / `welcomeKeyboard`），滚到底时最后一条不会被渐变压暗。
+- 验证：安卓键盘态截图，消息气泡在输入条上方柔和淡出、无硬边；收起键盘后渐变消失、布局复原。iOS 因模拟器硬件键盘未能唤起软键盘，用临时强制 `keyboardVisible`/渐变不透明的方式截图确认渐变颜色与页面底色衔接、卡片淡出自然，验证后已还原；正常启动无渐变、布局不变。`npx tsc --noEmit` 通过。未提交、未推送。
+
+## 安卓键盘避让（2026-11-11）
+
+- 现象：安卓聊天页键盘弹出后，输入条被键盘盖住（截图里露出的其实是 Gboard 的建议条，不是应用输入条）。
+- 根因：Expo SDK 58 的安卓窗口是边到边（edge-to-edge），`softwareKeyboardLayoutMode` / `adjustResize` 不再随输入法缩放窗口；`KeyboardAvoidingView` 在安卓分支原本是 `behavior=undefined`，完全依赖窗口 resize，因此不生效。
+- 修法：新增 `src/useKeyboardInsets.ts`，监听 `keyboardDidShow/Hide`，安卓返回键盘高度；聊天根容器把 `marginBottom` 设为该高度（键盘隐藏时恢复 `bottomInset=76` 给底栏让位）；iOS 仍走 `KeyboardAvoidingView` 的 `padding`，`marginBottom` 在键盘显示时保持 0。
+- 同步修了同类问题的两个子页：`MediaStudioScreen`（AI 创作）、`ModelExperienceScreen`（模型体验）的 `KeyboardAvoidingView` 加 `marginBottom: keyboardInset`。
+- 实测（安卓）：聊天输入条完整位于键盘上方，收起后恢复底栏；AI 创作输入框聚焦后底部「生成图片」条可见；模型体验输入条贴键盘上沿。iOS 分支未改动，静态截图无回归；模拟器因硬件键盘连接未能唤起软键盘，iOS 键盘位移按 KAV `padding` 逻辑保持原状。
+- `npx tsc --noEmit` 通过。未提交、未推送。
+
+## 安卓扁平化（2026-11-11）
+
+- 用户要求：去掉安卓端组件阴影，与 iOS 一样扁平；底部导航栏除外。
+- `src/material.ts`：`elevation.level1` / `level2` 改为空对象，组件不再有投影；新增 `elevation.floating`（`shadowOpacity 0.09`、`radius 12`、`offset {0,4}`、`elevation 3`）专供底栏。`cardSurface`、`tileSurface` 不再拼 `level1`，`softShadow` 改为空对象（保留调用点）。
+- `src/LiquidTabBar.tsx`：`barFallback` 的安卓分支由 `elevation.level2` 改为 `elevation.floating`，底栏悬浮阴影保留；iOS 玻璃分支与选中指示器阴影未动。
+- 未动：iOS 全部样式；`popoverShadow`（聊天模型/工具浮层，双端共用）、`subpageShadow`（子页滑入，双端共用）、底栏 `selectionFallback` 阴影（双端共用）。
+- 验证：安卓聊天/概览/令牌/账户截图卡片、chip、输入条、按钮均无投影，底栏仍有悬浮阴影；`npx tsc --noEmit` 通过。未提交、未推送。
+
 ## GitHub 展示 README（2026-11-10 同日补充三）
 
 - 新增根目录 `README.md`（中文，面向 GitHub 展示）：简介、双端截图、14 项功能表、设计说明（令牌/样式分支/主色/圆角/按压态/安全区）、技术栈、快速开始、目录结构、状态与边界、文档链接、许可。
