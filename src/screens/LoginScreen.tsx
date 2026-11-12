@@ -27,6 +27,7 @@ import type { CaptchaChallenge } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
 import { cardSurface, m3, pressedDim, shape } from '../material';
 import { palette } from '../ui';
+import { themedStyles, isDark } from '../theme';
 
 const ios = Platform.OS === 'ios';
 
@@ -208,7 +209,7 @@ export function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
-      <StatusBar style="dark" />
+      <StatusBar style={isDark() ? 'light' : 'dark'} />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={ios ? 'padding' : undefined}
@@ -390,6 +391,7 @@ function Field({
       <Text style={styles.fieldLabel}>{label}</Text>
       <View style={styles.inputRow}>
         <TextInput
+          keyboardAppearance={isDark() ? 'dark' : 'light'}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
@@ -531,7 +533,7 @@ function errorMessage(error: unknown) {
   return '操作失败，请稍后重试';
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: palette.groupedBackground,
@@ -648,7 +650,7 @@ const styles = StyleSheet.create({
   },
   captchaBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.32)',
+    backgroundColor: palette.overlay,
     justifyContent: 'flex-end',
   },
   captchaCard: {
@@ -712,11 +714,11 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.6)',
+    backgroundColor: palette.captchaOverlay,
   },
   captchaActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingTop: 4,
   },
-});
+}));

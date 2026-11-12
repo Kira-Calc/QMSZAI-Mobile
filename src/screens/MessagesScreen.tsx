@@ -15,6 +15,7 @@ import {
   type Tone,
 } from '../ui';
 import { cardSurface, ripple } from '../material';
+import { themedStyles } from '../theme';
 
 const ios = Platform.OS === 'ios';
 import type { MessageCategory, MessageRecord } from '../types';
@@ -157,7 +158,7 @@ export function MessagesScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   readAll: {
     fontSize: 16,
   },
@@ -254,4 +255,4 @@ const styles = StyleSheet.create({
   deleteText: {
     fontSize: 17,
   },
-});
+}));

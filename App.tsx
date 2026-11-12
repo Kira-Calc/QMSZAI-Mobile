@@ -59,6 +59,7 @@ import {
   palette,
 } from './src/ui';
 import { alphabetOf, letterOf, sortByName } from './src/modelSort';
+import { initTheme, isDark, setScheme, themedStyles, useScheme } from './src/theme';
 import { FusionScreen } from './src/screens/FusionScreen';
 import { MediaStudioScreen } from './src/screens/MediaStudioScreen';
 import { MessagesScreen } from './src/screens/MessagesScreen';
@@ -112,16 +113,35 @@ const MaskedView = NativeMaskedView as unknown as ComponentType<ViewProps & {
   maskElement: ReactElement;
 }>;
 
+// 状态色随主题变化：读取时再取 palette，避免模块加载时把浅色固化。
 const statusColor: Record<ModelStatus | TokenStatus, string> = {
-  stable: ios ? '#157A5B' : palette.green,
-  watch: ios ? '#9A6500' : palette.orange,
-  limited: ios ? '#B3404A' : palette.red,
-  active: ios ? '#157A5B' : palette.green,
-  paused: ios ? '#9A6500' : palette.orange,
-  expired: ios ? '#B3404A' : palette.red,
+  get stable() {
+    return palette.successText;
+  },
+  get watch() {
+    return palette.warningText;
+  },
+  get limited() {
+    return palette.destructive;
+  },
+  get active() {
+    return palette.successText;
+  },
+  get paused() {
+    return palette.warningText;
+  },
+  get expired() {
+    return palette.destructive;
+  },
 };
 
 export default function App() {
+  // 订阅全局主题：切换时 App 重渲染，整棵界面同步换成新颜色。
+  useScheme();
+  useEffect(() => {
+    initTheme();
+  }, []);
+
   return (
     <SafeAreaProvider>
       <AuthProvider>
@@ -141,7 +161,7 @@ function Root() {
 function BootScreen() {
   return (
     <View style={styles.bootScreen}>
-      <StatusBar style="dark" />
+      <StatusBar style={isDark() ? 'light' : 'dark'} />
       <ActivityIndicator color={palette.blue} />
     </View>
   );
@@ -470,7 +490,7 @@ function AppShell() {
   const subpageView = subpageRendered ? (
     <Animated.View style={[styles.subpageOverlay, styles.subpageShadow, overlayStyle]}>
       <SafeAreaView style={styles.subpagePane} edges={['top', 'left', 'right']}>
-        <StatusBar style="dark" />
+        <StatusBar style={isDark() ? 'light' : 'dark'} />
         {subpageRendered === 'logs' ? (
           <UsageLogsScreen logs={consoleData.logs} onBack={() => setSubpage(null)} />
         ) : null}
@@ -522,7 +542,7 @@ function AppShell() {
     <SafeAreaProvider>
       <Animated.View style={[styles.safeArea, mainStyle]} pointerEvents={subpage ? 'none' : 'auto'}>
         <SafeAreaView style={styles.safeAreaContent} edges={['top', 'bottom', 'left', 'right']}>
-        <StatusBar style="dark" />
+        <StatusBar style={isDark() ? 'light' : 'dark'} />
         <View style={styles.appShell}>
         <View style={styles.header}>
           <Animated.Text style={[styles.title, titleStyle]}>{activeTab === 'chat' ? '聊天' : currentTitle}</Animated.Text>
@@ -885,10 +905,11 @@ function ModelsView({
           </View>
         )}
         <TextInput
+          keyboardAppearance={isDark() ? 'dark' : 'light'}
           value={query}
           onChangeText={setQuery}
           placeholder="搜索模型、厂商或标签"
-          placeholderTextColor="#7A828A"
+          placeholderTextColor={palette.placeholder}
           style={styles.searchInput}
           clearButtonMode="while-editing"
         />
@@ -975,7 +996,7 @@ function ModelsView({
             blurTarget={blurTarget}
             blurMethod="dimezisBlurView"
             intensity={40}
-            tint="light"
+            tint={isDark() ? 'dark' : 'light'}
           />
         </MaskedView>
       </Animated.View>
@@ -1115,6 +1136,7 @@ function AccountView({
   onScroll: TabScrollHandler;
 }) {
   const { user } = useAuth();
+  const scheme = useScheme();
   const displayName = user?.display_name || user?.username || '未登录';
   const initial = displayName.trim().charAt(0).toUpperCase() || '·';
   const roleLabel = user?.role === 1 ? '普通用户' : `角色 ${user?.role ?? '—'}`;
@@ -1145,9 +1167,9 @@ function AccountView({
           {account?.balance ?? '—'}
         </Text>
         {Platform.OS === 'ios' ? (
-          <SymbolView name="chevron.right" tintColor="#C7C7CC" style={styles.accountChevron} />
+          <SymbolView name="chevron.right" tintColor={palette.tertiaryLabel} style={styles.accountChevron} />
         ) : (
-          <AppIcon name="chevron.right" size={18} color="#C7C7CC" />
+          <AppIcon name="chevron.right" size={18} color={palette.tertiaryLabel} />
         )}
       </Pressable>
 
@@ -1160,6 +1182,19 @@ function AccountView({
       <Group header="账户">
         <Row title="个人设置" chevron icon="person.crop.circle" onPress={onOpenPersonal} />
         <Row title="钱包" chevron icon="creditcard" onPress={onOpenWallet} />
+      </Group>
+      <Group header="外观">
+        <Row
+          title="夜间模式"
+          accessory={
+            <Switch
+              accessibilityLabel="夜间模式"
+              value={scheme === 'dark'}
+              onValueChange={(value) => setScheme(value ? 'dark' : 'light')}
+              trackColor={{ false: ios ? palette.fill : palette.separator, true: palette.blue }}
+            />
+          }
+        />
       </Group>
 
     </ScrollView>
@@ -1199,7 +1234,7 @@ function TokenModal({
               label="关闭令牌详情"
               onPress={onClose}
               size={32}
-              tint="#6C6C70"
+              tint={palette.secondaryLabel}
             />
           </View>
           <View style={styles.detailStats}>
@@ -1226,7 +1261,7 @@ function TokenModal({
               onPress={() => onEdit(token)}
               style={styles.primaryActionButton}
             >
-              <Text style={styles.primaryButtonText}>编辑</Text>
+              <Text style={styles.primaryActionText}>编辑</Text>
             </Pressable>
           </View>
         </View>
@@ -1459,6 +1494,7 @@ function TokenFormModal({
               <View style={styles.groupSearch}>
                 <AppIcon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
                 <TextInput
+                  keyboardAppearance={isDark() ? 'dark' : 'light'}
                   accessibilityLabel={pickerMode === 'models' ? '搜索模型' : '搜索分组'}
                   value={pickerSearch}
                   onChangeText={pickerMode === 'models' ? setModelQuery : setGroupQuery}
@@ -1568,7 +1604,7 @@ function TokenFormModal({
                           ]}
                         >
                           {selected ? (
-                            <AppIcon name="checkmark" size={12} color="#FFFFFF" />
+                            <AppIcon name="checkmark" size={12} color={palette.onAccent} />
                           ) : null}
                         </View>
                         <ModelLogo name={item} size={24} />
@@ -1598,7 +1634,7 @@ function TokenFormModal({
                   label="关闭令牌编辑"
                   onPress={onCancel}
                   size={32}
-                  tint="#6C6C70"
+                  tint={palette.secondaryLabel}
                 />
               </View>
 
@@ -1629,10 +1665,11 @@ function TokenFormModal({
                   <Text style={styles.formLabel}>分组优先选择</Text>
                   {groups && groups.length === 0 ? (
                     <TextInput
+                      keyboardAppearance={isDark() ? 'dark' : 'light'}
                       value={freeGroup}
                       onChangeText={setFreeGroup}
                       placeholder="输入分组名，留空使用默认分组"
-                      placeholderTextColor="#7A828A"
+                      placeholderTextColor={palette.placeholder}
                       autoCorrect={false}
                       style={styles.formInput}
                     />
@@ -1662,7 +1699,7 @@ function TokenFormModal({
                           ))}
                         </View>
                       )}
-                      <AppIcon name="chevron.down" size={14} color="#98A0A8" />
+                      <AppIcon name="chevron.down" size={14} color={palette.placeholder} />
                     </Pressable>
                   )}
                 </View>
@@ -1718,7 +1755,7 @@ function TokenFormModal({
                       >
                         {modelLimits.length === 0 ? '留空支持所有模型' : limitSummary}
                       </Text>
-                      <AppIcon name="chevron.down" size={14} color="#98A0A8" />
+                      <AppIcon name="chevron.down" size={14} color={palette.placeholder} />
                     </Pressable>
                   )}
                 </View>
@@ -1731,11 +1768,12 @@ function TokenFormModal({
                 >
                   <Text style={styles.formLabel}>IP 白名单</Text>
                   <TextInput
+                    keyboardAppearance={isDark() ? 'dark' : 'light'}
                     accessibilityLabel="IP 白名单"
                     value={allowIps}
                     onChangeText={setAllowIps}
                     placeholder="允许的 IP，一行一个，留空不限制"
-                    placeholderTextColor="#7A828A"
+                    placeholderTextColor={palette.placeholder}
                     autoCapitalize="none"
                     autoCorrect={false}
                     multiline
@@ -1758,7 +1796,7 @@ function TokenFormModal({
                   onPress={submit}
                   style={[styles.primaryActionButton, !canSubmit ? styles.buttonDisabled : null]}
                 >
-                  <Text style={styles.primaryButtonText}>{initial ? '保存' : '创建'}</Text>
+                  <Text style={styles.primaryActionText}>{initial ? '保存' : '创建'}</Text>
                 </Pressable>
               </View>
             </>
@@ -1790,12 +1828,13 @@ function FieldInput({
     <View style={styles.fieldGroup}>
       <Text style={styles.formLabel}>{label}</Text>
       <TextInput
+        keyboardAppearance={isDark() ? 'dark' : 'light'}
         value={value}
         onChangeText={onChangeText}
         keyboardType={keyboardType}
         onFocus={onFocus}
         placeholder={placeholder}
-        placeholderTextColor="#7A828A"
+        placeholderTextColor={palette.placeholder}
         style={styles.formInput}
       />
     </View>
@@ -1825,7 +1864,7 @@ function QuickAction({
   return (
     <Pressable onPress={onPress} android_ripple={ripple()} style={styles.quickAction}>
       {Platform.OS === 'ios' ? (
-        <SymbolView name={symbol} tintColor="#007AFF" style={styles.quickSymbol} />
+        <SymbolView name={symbol} tintColor={palette.blue} style={styles.quickSymbol} />
       ) : (
         <AppIcon name={symbol} size={24} color={palette.blue} style={{ marginRight: 12 }} />
       )}
@@ -1855,16 +1894,17 @@ function SettingsRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-const baseStyles = StyleSheet.create({
+function makeBaseStyles() {
+  return StyleSheet.create({
   bootScreen: {
     flex: 1,
-    backgroundColor: '#F6F7F9',
+    backgroundColor: palette.groupedBackground,
     alignItems: 'center',
     justifyContent: 'center',
   },
   safeArea: {
     flex: 1,
-    backgroundColor: '#F6F7F9',
+    backgroundColor: palette.groupedBackground,
   },
   dimLayer: {
     backgroundColor: '#000000',
@@ -1946,7 +1986,7 @@ const baseStyles = StyleSheet.create({
   heroPanel: {
     borderRadius: shape.xl,
     padding: 20,
-    backgroundColor: '#141A1E',
+    backgroundColor: palette.heroBackground,
     ...elevation.level2,
   },
   heroTopRow: {
@@ -1955,12 +1995,12 @@ const baseStyles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   panelLabel: {
-    color: '#B9C6CF',
+    color: palette.heroLabel,
     fontSize: 13,
     fontWeight: '500',
   },
   heroMetric: {
-    color: '#FFFFFF',
+    color: palette.heroValue,
     fontSize: 44,
     fontWeight: '600',
     letterSpacing: -1,
@@ -1971,21 +2011,21 @@ const baseStyles = StyleSheet.create({
     height: 68,
     borderRadius: 34,
     borderWidth: 6,
-    borderColor: '#58C7A8',
+    borderColor: palette.heroAccent,
     alignItems: 'center',
     justifyContent: 'center',
   },
   progressTrack: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#343A42',
+    backgroundColor: palette.heroTrack,
     overflow: 'hidden',
     marginTop: 18,
   },
   progressFill: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#58C7A8',
+    backgroundColor: palette.heroAccent,
   },
   metricRow: {
     flexDirection: 'row',
@@ -1994,7 +2034,7 @@ const baseStyles = StyleSheet.create({
     marginTop: 10,
   },
   mutedText: {
-    color: '#69737D',
+    color: palette.subtleLabel,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -2011,16 +2051,16 @@ const baseStyles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   statBlock_blue: {
-    backgroundColor: '#E9F3FA',
+    backgroundColor: palette.tintBlue,
   },
   statBlock_green: {
-    backgroundColor: '#E6F4EE',
+    backgroundColor: palette.tintGreen,
   },
   statBlock_amber: {
-    backgroundColor: '#FCF2DC',
+    backgroundColor: palette.tintAmber,
   },
   statBlock_rose: {
-    backgroundColor: '#FBE9EA',
+    backgroundColor: palette.tintRose,
   },
   statLabel: {
     color: m3.onSurfaceVariant,
@@ -2286,7 +2326,7 @@ const baseStyles = StyleSheet.create({
     fontWeight: '600',
   },
   detailNote: {
-    color: '#30363D',
+    color: palette.deepLabel,
     fontSize: 14,
     lineHeight: 21,
     marginTop: 14,
@@ -2328,6 +2368,11 @@ const baseStyles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  primaryActionText: {
+    color: palette.onSolidButton,
+    fontSize: 16,
+    fontWeight: '600',
+  },
   emptyState: {
     borderRadius: shape.xl,
     backgroundColor: m3.surfaceContainerLowest,
@@ -2361,7 +2406,7 @@ const baseStyles = StyleSheet.create({
     fontWeight: '600',
   },
   scopeText: {
-    color: '#30363D',
+    color: palette.deepLabel,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '600',
@@ -2413,13 +2458,13 @@ const baseStyles = StyleSheet.create({
     gap: 2,
   },
   accountBalance: {
-    color: '#15191E',
+    color: palette.strongLabel,
     fontSize: 17,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
   accountChevron: { width: 8, height: 14 },
-  accountChevronText: { color: '#C7C7CC', fontSize: 18 },
+  accountChevronText: { color: palette.tertiaryLabel, fontSize: 18 },
   avatar: {
     width: 56,
     height: 56,
@@ -2434,7 +2479,7 @@ const baseStyles = StyleSheet.create({
     fontWeight: '900',
   },
   accountName: {
-    color: '#15191E',
+    color: palette.strongLabel,
     fontSize: 18,
     fontWeight: '800',
   },
@@ -2443,27 +2488,27 @@ const baseStyles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#D9DEE4',
+    borderBottomColor: palette.separator,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 16,
   },
   settingsLabel: {
-    color: '#4D5964',
+    color: palette.secondaryLabel,
     fontSize: 14,
     fontWeight: '700',
   },
   settingsValue: {
     flex: 1,
-    color: '#15191E',
+    color: palette.strongLabel,
     fontSize: 14,
     fontWeight: '800',
     textAlign: 'right',
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(17, 20, 24, 0.35)',
+    backgroundColor: palette.backdrop,
     justifyContent: 'flex-end',
   },
   modalSheet: {
@@ -2471,7 +2516,7 @@ const baseStyles = StyleSheet.create({
     borderTopRightRadius: 8,
     // 表单与选择页切换时面板高度会变化，裁掉过渡中溢出的行，避免内容跑到面板圆角之外。
     overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.card,
     paddingHorizontal: 20,
     paddingTop: 10,
     paddingBottom: Platform.select({ ios: 30, android: 22, default: 24 }),
@@ -2484,7 +2529,7 @@ const baseStyles = StyleSheet.create({
     gap: 7,
   },
   formLabel: {
-    color: '#4D5964',
+    color: palette.secondaryLabel,
     fontSize: 13,
     fontWeight: '800',
   },
@@ -2492,10 +2537,10 @@ const baseStyles = StyleSheet.create({
     minHeight: 46,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#D2D8DE',
-    backgroundColor: '#FFFFFF',
+    borderColor: palette.separator,
+    backgroundColor: palette.inputBackground,
     paddingHorizontal: 12,
-    color: '#15191E',
+    color: palette.strongLabel,
     fontSize: 16,
     fontWeight: '600',
   },
@@ -2503,8 +2548,8 @@ const baseStyles = StyleSheet.create({
     minHeight: 46,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#D2D8DE',
-    backgroundColor: '#FFFFFF',
+    borderColor: palette.separator,
+    backgroundColor: palette.inputBackground,
     paddingHorizontal: 10,
     paddingVertical: 8,
     flexDirection: 'row',
@@ -2512,7 +2557,7 @@ const baseStyles = StyleSheet.create({
     gap: 8,
   },
   groupFieldPressed: {
-    backgroundColor: '#F1F4F8',
+    backgroundColor: palette.pressedFill,
   },
   groupChips: {
     flex: 1,
@@ -2542,7 +2587,7 @@ const baseStyles = StyleSheet.create({
   },
   groupPlaceholder: {
     flex: 1,
-    color: '#7A828A',
+    color: palette.placeholder,
     fontSize: 15,
   },
   pickerNav: {
@@ -2557,7 +2602,7 @@ const baseStyles = StyleSheet.create({
     left: 0,
     right: 0,
     textAlign: 'center',
-    color: '#15191E',
+    color: palette.strongLabel,
     fontSize: 17,
     fontWeight: '700',
   },
@@ -2573,7 +2618,7 @@ const baseStyles = StyleSheet.create({
   },
   limitSummary: {
     flex: 1,
-    color: '#15191E',
+    color: palette.strongLabel,
     fontSize: 15,
     fontWeight: '600',
   },
@@ -2596,7 +2641,7 @@ const baseStyles = StyleSheet.create({
     flex: 1,
     minHeight: 38,
     paddingVertical: 0,
-    color: '#15191E',
+    color: palette.strongLabel,
     fontSize: 15,
   },
   groupPickerList: {
@@ -2612,7 +2657,7 @@ const baseStyles = StyleSheet.create({
     paddingBottom: 4,
   },
   groupEmpty: {
-    color: '#7A828A',
+    color: palette.placeholder,
     fontSize: 14,
     paddingVertical: 20,
     textAlign: 'center',
@@ -2626,21 +2671,21 @@ const baseStyles = StyleSheet.create({
     paddingHorizontal: 6,
     borderRadius: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E3E7EB',
+    borderBottomColor: palette.separatorSoft,
   },
   groupOptionSelected: {
     backgroundColor: m3.primaryContainer,
     borderBottomColor: 'transparent',
   },
   groupOptionPressed: {
-    backgroundColor: '#EEF3FA',
+    backgroundColor: palette.pressedFill,
   },
   groupOptionOrder: {
     width: 22,
     height: 22,
     borderRadius: 11,
     borderWidth: 1,
-    borderColor: '#C4CBD3',
+    borderColor: palette.tertiaryLabel,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2658,16 +2703,16 @@ const baseStyles = StyleSheet.create({
     gap: 2,
   },
   groupOptionName: {
-    color: '#15191E',
+    color: palette.strongLabel,
     fontSize: 15,
     fontWeight: '600',
   },
   groupOptionDesc: {
-    color: '#7A828A',
+    color: palette.placeholder,
     fontSize: 12,
   },
   groupOptionRatio: {
-    color: '#6B7480',
+    color: palette.subtleLabel,
     fontSize: 12,
     fontVariant: ['tabular-nums'],
   },
@@ -2681,21 +2726,21 @@ const baseStyles = StyleSheet.create({
     height: 46,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#CCD3DA',
+    borderColor: palette.separator,
     alignItems: 'center',
     justifyContent: 'center',
   },
   destructiveOutline: {
-    borderColor: '#B3404A',
+    borderColor: palette.destructive,
   },
   destructiveText: {
-    color: '#B3404A',
+    color: palette.destructive,
   },
   primaryActionButton: {
     flex: 1,
     height: 46,
     borderRadius: 8,
-    backgroundColor: '#15191E',
+    backgroundColor: palette.solidButton,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2704,103 +2749,106 @@ const baseStyles = StyleSheet.create({
     width: 42,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#D4DAE0',
+    backgroundColor: palette.handle,
     marginBottom: 16,
   },
   closeButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#EEF1F4',
+    backgroundColor: palette.fill,
     alignItems: 'center',
     justifyContent: 'center',
   },
   closeButtonText: {
-    color: '#30363D',
+    color: palette.deepLabel,
     fontSize: 24,
     lineHeight: 27,
     fontWeight: '500',
   },
-});
+  });
+}
 
 // iOS follows inset grouped lists and system typography; Android retains its own baseline.
-const iosStyles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F2F2F7' },
-  title: { color: '#000', fontSize: 34, fontWeight: '700', letterSpacing: 0.3 },
-  heroPanel: { backgroundColor: '#FFFFFF', borderRadius: 12, borderCurve: 'continuous', padding: 16 },
-  panelLabel: { color: '#3C3C43', fontSize: 15 },
-  heroMetric: { color: '#000', fontSize: 34, fontWeight: '600', marginTop: 4 },
-  heroCopy: { color: '#8E8E93', fontSize: 13, lineHeight: 19, marginTop: 8 },
-  progressTrack: { height: 4, borderRadius: 2, backgroundColor: '#E5E5EA', overflow: 'hidden', marginTop: 16 },
-  progressFill: { height: 4, backgroundColor: '#007AFF' },
-  gridTwo: { backgroundColor: '#FFF', borderRadius: 12, borderCurve: 'continuous', overflow: 'hidden' },
-  statBlock: { minHeight: 48, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#C6C6C8' },
+function makeIosStyles() {
+  return StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: palette.groupedBackground },
+  title: { color: palette.label, fontSize: 34, fontWeight: '700', letterSpacing: 0.3 },
+  heroPanel: { backgroundColor: palette.card, borderRadius: 12, borderCurve: 'continuous', padding: 16 },
+  panelLabel: { color: palette.deepLabel, fontSize: 15 },
+  heroMetric: { color: palette.label, fontSize: 34, fontWeight: '600', marginTop: 4 },
+  heroCopy: { color: palette.subtleLabel, fontSize: 13, lineHeight: 19, marginTop: 8 },
+  progressTrack: { height: 4, borderRadius: 2, backgroundColor: palette.fill, overflow: 'hidden', marginTop: 16 },
+  progressFill: { height: 4, backgroundColor: palette.blue },
+  gridTwo: { backgroundColor: palette.card, borderRadius: 12, borderCurve: 'continuous', overflow: 'hidden' },
+  statBlock: { minHeight: 48, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.separator },
   statBlock_blue: {}, statBlock_green: {}, statBlock_amber: {}, statBlock_rose: {},
-  statLabel: { color: '#000', fontSize: 17 },
-  statValue: { color: '#8E8E93', fontSize: 17, fontWeight: '400' },
-  sectionTitle: { color: '#6D6D72', fontSize: 13, fontWeight: '400', marginLeft: 0, marginTop: 8 },
-  actionList: { backgroundColor: '#FFF', borderRadius: 12, borderCurve: 'continuous', overflow: 'hidden' },
-  quickAction: { minHeight: 52, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(60,60,67,0.29)' },
-  quickTitle: { color: '#000', fontSize: 17, fontWeight: '400' },
-  quickIcon: { width: 34, fontSize: 23, color: '#007AFF' },
-  searchInput: { minHeight: 40, borderRadius: 10, backgroundColor: '#E5E5EA', paddingHorizontal: 12, color: '#000', fontSize: 17 },
-  modelName: { color: '#000', fontSize: 17, fontWeight: '600', marginBottom: 4 },
-  modelRowSelected: { borderColor: '#007AFF', backgroundColor: '#FFF' },
-  detailTitle: { fontSize: 22, fontWeight: '600' },
-  formLabel: { color: '#6C6C70', fontSize: 13, fontWeight: '400' },
-  formInput: { minHeight: 46, borderRadius: 10, borderWidth: 0, backgroundColor: '#F2F2F7', paddingHorizontal: 12, color: '#000', fontSize: 17, fontWeight: '400' },
-  groupField: { minHeight: 46, borderRadius: 10, borderWidth: 0, backgroundColor: '#F2F2F7', paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  groupFieldPressed: { backgroundColor: '#E5E5EA' },
+  statLabel: { color: palette.label, fontSize: 17 },
+  statValue: { color: palette.subtleLabel, fontSize: 17, fontWeight: '400' },
+  sectionTitle: { color: palette.secondaryLabel, fontSize: 13, fontWeight: '400', marginLeft: 0, marginTop: 8 },
+  actionList: { backgroundColor: palette.card, borderRadius: 12, borderCurve: 'continuous', overflow: 'hidden' },
+  quickAction: { minHeight: 52, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.separatorSoft },
+  quickTitle: { color: palette.label, fontSize: 17, fontWeight: '400' },
+  quickIcon: { width: 34, fontSize: 23, color: palette.blue },
+  searchInput: { minHeight: 40, borderRadius: 10, backgroundColor: palette.fill, paddingHorizontal: 12, color: palette.label, fontSize: 17 },
+  modelName: { color: palette.label, fontSize: 17, fontWeight: '600', marginBottom: 4 },
+  modelRowSelected: { borderColor: palette.blue, backgroundColor: palette.card },
+  detailTitle: { color: palette.label, fontSize: 22, fontWeight: '600' },
+  formLabel: { color: palette.secondaryLabel, fontSize: 13, fontWeight: '400' },
+  formInput: { minHeight: 46, borderRadius: 10, borderWidth: 0, backgroundColor: palette.inputBackground, paddingHorizontal: 12, color: palette.label, fontSize: 17, fontWeight: '400' },
+  groupField: { minHeight: 46, borderRadius: 10, borderWidth: 0, backgroundColor: palette.inputBackground, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  groupFieldPressed: { backgroundColor: palette.fill },
   groupChips: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  groupChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: 'rgba(0,122,255,0.12)' },
-  groupChipIndex: { color: '#007AFF', fontSize: 11, fontWeight: '700' },
-  groupChipText: { color: '#007AFF', fontSize: 13, fontWeight: '600', maxWidth: 160 },
-  groupPlaceholder: { flex: 1, color: '#8E8E93', fontSize: 17 },
+  groupChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: palette.tintBlue },
+  groupChipIndex: { color: palette.blue, fontSize: 11, fontWeight: '700' },
+  groupChipText: { color: palette.blue, fontSize: 13, fontWeight: '600', maxWidth: 160 },
+  groupPlaceholder: { flex: 1, color: palette.subtleLabel, fontSize: 17 },
   pickerNav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4, paddingBottom: 10 },
-  pickerTitle: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: '#000', fontSize: 17, fontWeight: '600' },
+  pickerTitle: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: palette.label, fontSize: 17, fontWeight: '600' },
   switchRow: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   switchControl: { alignSelf: 'center' },
-  limitSummary: { flex: 1, color: '#000', fontSize: 17, fontWeight: '400' },
+  limitSummary: { flex: 1, color: palette.label, fontSize: 17, fontWeight: '400' },
   formTextarea: { minHeight: 76, paddingTop: 10, paddingBottom: 10, textAlignVertical: 'top' },
-  groupSearch: { minHeight: 38, borderRadius: 10, backgroundColor: '#E5E5EA', flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10 },
-  groupSearchInput: { flex: 1, minHeight: 36, paddingVertical: 0, color: '#000', fontSize: 17 },
+  groupSearch: { minHeight: 38, borderRadius: 10, backgroundColor: palette.fill, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10 },
+  groupSearchInput: { flex: 1, minHeight: 36, paddingVertical: 0, color: palette.label, fontSize: 17 },
   groupPickerList: { marginTop: 8, maxHeight: 300 },
-  groupOption: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 10, borderCurve: 'continuous', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(60,60,67,0.22)' },
-  groupOptionSelected: { backgroundColor: 'rgba(0,122,255,0.08)', borderBottomColor: 'transparent' },
-  groupOptionPressed: { backgroundColor: '#F2F2F7' },
-  groupOptionOrder: { width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: 'rgba(60,60,67,0.3)', alignItems: 'center', justifyContent: 'center' },
-  groupOptionOrderActive: { borderColor: '#007AFF', backgroundColor: '#007AFF' },
+  groupOption: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 10, borderCurve: 'continuous', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.separatorSoft },
+  groupOptionSelected: { backgroundColor: palette.tintBlueSoft, borderBottomColor: 'transparent' },
+  groupOptionPressed: { backgroundColor: palette.fillMuted },
+  groupOptionOrder: { width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: palette.separatorSoft, alignItems: 'center', justifyContent: 'center' },
+  groupOptionOrderActive: { borderColor: palette.blue, backgroundColor: palette.blue },
   groupOptionOrderText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
-  groupOptionName: { color: '#000', fontSize: 17, fontWeight: '400' },
-  groupOptionDesc: { color: '#8E8E93', fontSize: 13 },
-  groupOptionRatio: { color: '#8E8E93', fontSize: 13, fontVariant: ['tabular-nums'] },
-  groupEmpty: { color: '#8E8E93', fontSize: 15, paddingVertical: 20, textAlign: 'center' },
-  primaryButton: { minHeight: 50, borderRadius: 12, backgroundColor: '#007AFF', paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  primaryButtonText: { color: '#FFFFFF', fontSize: 17, fontWeight: '600' },
-  primaryActionButton: { flex: 1, height: 46, borderRadius: 12, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center' },
-  secondaryActionButton: { flex: 1, height: 46, borderRadius: 12, borderWidth: 1, borderColor: '#C6C6C8', alignItems: 'center', justifyContent: 'center' },
-  modalSheet: { borderTopLeftRadius: 16, borderTopRightRadius: 16, overflow: 'hidden', backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 30 },
-  settingsLabel: { fontSize: 17, color: '#000', fontWeight: '400' },
-  settingsValue: { flex: 1, fontSize: 17, color: '#8E8E93', textAlign: 'right' },
+  groupOptionName: { color: palette.label, fontSize: 17, fontWeight: '400' },
+  groupOptionDesc: { color: palette.subtleLabel, fontSize: 13 },
+  groupOptionRatio: { color: palette.subtleLabel, fontSize: 13, fontVariant: ['tabular-nums'] },
+  groupEmpty: { color: palette.subtleLabel, fontSize: 15, paddingVertical: 20, textAlign: 'center' },
+  primaryButton: { minHeight: 50, borderRadius: 12, backgroundColor: palette.blue, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  primaryButtonText: { color: palette.onAccent, fontSize: 17, fontWeight: '600' },
+  primaryActionText: { color: palette.onAccent, fontSize: 17, fontWeight: '600' },
+  primaryActionButton: { flex: 1, height: 46, borderRadius: 12, backgroundColor: palette.blue, alignItems: 'center', justifyContent: 'center' },
+  secondaryActionButton: { flex: 1, height: 46, borderRadius: 12, borderWidth: 1, borderColor: palette.separator, alignItems: 'center', justifyContent: 'center' },
+  modalSheet: { borderTopLeftRadius: 16, borderTopRightRadius: 16, overflow: 'hidden', backgroundColor: palette.card, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 30 },
+  settingsLabel: { fontSize: 17, color: palette.label, fontWeight: '400' },
+  settingsValue: { flex: 1, fontSize: 17, color: palette.subtleLabel, textAlign: 'right' },
   accountHeader: {
     borderRadius: 12,
     borderCurve: 'continuous',
     borderWidth: 0,
     borderColor: 'transparent',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.card,
     padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
   },
-  accountHeaderPressed: { backgroundColor: '#F2F2F7' },
-  accountName: { fontSize: 20, fontWeight: '600' },
-  accountBalance: { fontSize: 17, fontWeight: '600' },
+  accountHeaderPressed: { backgroundColor: palette.fillMuted },
+  accountName: { color: palette.strongLabel, fontSize: 20, fontWeight: '600' },
+  accountBalance: { color: palette.strongLabel, fontSize: 17, fontWeight: '600' },
   avatar: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#007AFF',
+    backgroundColor: palette.blue,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2810,7 +2858,7 @@ const iosStyles = StyleSheet.create({
     borderCurve: 'continuous',
     borderWidth: 0,
     borderColor: 'transparent',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.card,
     overflow: 'hidden',
   },
   settingsRow: {
@@ -2818,7 +2866,7 @@ const iosStyles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 11,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(60,60,67,0.29)',
+    borderBottomColor: palette.separatorSoft,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -2829,7 +2877,7 @@ const iosStyles = StyleSheet.create({
     borderCurve: 'continuous',
     borderWidth: 0,
     borderColor: 'transparent',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.card,
     padding: 16,
   },
   modelRow: {
@@ -2838,7 +2886,7 @@ const iosStyles = StyleSheet.create({
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: 'transparent',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.card,
     paddingHorizontal: 16,
     paddingVertical: 12,
     flexDirection: 'row',
@@ -2846,29 +2894,29 @@ const iosStyles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12,
   },
-  tokenTitle: { fontSize: 17, fontWeight: '600' },
-  scopeText: { color: '#6C6C70', fontSize: 15, fontWeight: '400', lineHeight: 20 },
-  mutedText: { color: '#8E8E93', fontSize: 13, fontWeight: '400' },
+  tokenTitle: { color: palette.label, fontSize: 17, fontWeight: '600' },
+  scopeText: { color: palette.secondaryLabel, fontSize: 15, fontWeight: '400', lineHeight: 20 },
+  mutedText: { color: palette.subtleLabel, fontSize: 13, fontWeight: '400' },
   statusText: { fontSize: 15, fontWeight: '400' },
-  progressTrackCompact: { height: 4, borderRadius: 2, backgroundColor: '#E5E5EA' },
-  progressFillCompact: { height: 4, borderRadius: 2, backgroundColor: '#007AFF' },
+  progressTrackCompact: { height: 4, borderRadius: 2, backgroundColor: palette.fill },
+  progressFillCompact: { height: 4, borderRadius: 2, backgroundColor: palette.blue },
   secondaryButton: {
     height: 40,
     borderRadius: 10,
     borderCurve: 'continuous',
     borderWidth: 0,
-    backgroundColor: '#F2F2F7',
+    backgroundColor: palette.fillMuted,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 14,
   },
-  secondaryButtonText: { color: '#007AFF', fontSize: 15, fontWeight: '500' },
+  secondaryButtonText: { color: palette.blue, fontSize: 15, fontWeight: '500' },
   emptyState: {
     borderRadius: 12,
     borderCurve: 'continuous',
     borderWidth: 0,
     borderColor: 'transparent',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.card,
     padding: 16,
   },
   detailPanel: {
@@ -2876,7 +2924,7 @@ const iosStyles = StyleSheet.create({
     borderCurve: 'continuous',
     borderWidth: 0,
     borderColor: 'transparent',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.card,
     padding: 16,
   },
   // 以下是 iOS 专用原值：baseStyles 里的同名键已按 M3 改写，这里整体覆盖回来。
@@ -2885,30 +2933,30 @@ const iosStyles = StyleSheet.create({
     height: 30,
     borderRadius: 15,
     borderWidth: 1,
-    borderColor: '#C6C6C8',
-    backgroundColor: '#FFFFFF',
+    borderColor: palette.separator,
+    backgroundColor: palette.card,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 10,
   },
   pillText: { fontSize: 12, fontWeight: '800' },
-  modelVendor: { color: '#69737D', fontSize: 13, fontWeight: '600', lineHeight: 18 },
-  chevron: { color: '#8A929B', fontSize: 32, fontWeight: '300' },
+  modelVendor: { color: palette.subtleLabel, fontSize: 13, fontWeight: '600', lineHeight: 18 },
+  chevron: { color: palette.subtleLabel, fontSize: 32, fontWeight: '300' },
   tag: {
     borderRadius: 14,
-    backgroundColor: '#EEF1F4',
-    color: '#4D5964',
+    backgroundColor: palette.fill,
+    color: palette.secondaryLabel,
     paddingHorizontal: 10,
     paddingVertical: 6,
     fontSize: 12,
     fontWeight: '700',
   },
-  emptyTitle: { color: '#15191E', fontSize: 17, fontWeight: '800', marginBottom: 5 },
+  emptyTitle: { color: palette.strongLabel, fontSize: 17, fontWeight: '800', marginBottom: 5 },
   billingGrid: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E1E5EA',
-    backgroundColor: '#FBFCFD',
+    borderColor: palette.separator,
+    backgroundColor: palette.cardSubtle,
     overflow: 'hidden',
     marginTop: 14,
   },
@@ -2916,10 +2964,15 @@ const iosStyles = StyleSheet.create({
     flex: 1,
     minHeight: 66,
     borderRadius: 8,
-    backgroundColor: '#F6F7F9',
+    backgroundColor: palette.cardMuted,
     padding: 10,
     justifyContent: 'space-between',
   },
-  miniValue: { color: '#15191E', fontSize: 17, fontWeight: '800' },
+  miniValue: { color: palette.strongLabel, fontSize: 17, fontWeight: '800' },
+  });
+}
+
+const styles = themedStyles(() => {
+  const base = makeBaseStyles();
+  return Platform.OS === 'ios' ? { ...base, ...makeIosStyles() } : base;
 });
-const styles = Platform.OS === 'ios' ? { ...baseStyles, ...iosStyles } : baseStyles;

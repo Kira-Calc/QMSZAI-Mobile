@@ -248,3 +248,24 @@ iOS 登录页右上角齿轮是 Expo Go 悬浮按钮，不是应用 UI。恢复�
 - 验证：iOS 模型限制页（deepseek-flash_官方 / MiniMax 等图标）、搜索 `zz` 显示空态、点清除后列表恢复；安卓输入 `zzzz` 显示空态、模型限制页图标正常；`npx tsc --noEmit --noUnusedLocals` 通过。改动未提交、未推送。
 - 同轮按用户要求删除主标签页标题上方的灰色小字「阡陌数智 · 分组」：移除 `App.tsx` 头部唯一的 `styles.eyebrow` 文本及 base/iOS 两处样式定义，五个标签页（聊天/概览/模型/令牌/账户）统一生效。随后又按要求删除标题右侧的「在线」徽标（`liveBadge` / `liveDot` / `liveText`，base 与 iOS 样式一并清理），头部现在只保留标题。
 - 分组 / 模型限制选择页的选中行原来在 iOS 上是直角蓝底：`iosStyles.groupOption` 覆盖了 base 样式却没有带 `borderRadius`。已补 `borderRadius: 10` + `borderCurve: 'continuous'`，并让选中行 `borderBottomColor: 'transparent'`，避免分隔线穿过圆角底色（安卓 base 的 8pt 圆角保留，同样隐藏选中行分隔线）。双端截图确认蓝底为圆角胶囊、上下行分隔线自然。
+
+## 夜间模式（2026-11-12 新增，双端已回归）
+
+- **开关位置**：账户页「外观」分组下的「夜间模式」`Switch`（`App.tsx`）。默认浅色，不跟随系统。
+- **核心**：新增 `src/theme.ts`。
+  - `palette` / `m3` 是**读取时解析的 Proxy**（getter），所以 `styles` 里引用的 `palette.xxx` 会始终取当前配色，不需要重建样式表。
+  - `themedStyles(factory)` 返回一个稳定的对象，并登记工厂；`setScheme()` 先改模块内 `scheme`，再重跑全部工厂并写回同一对象，最后通知订阅者。
+  - `useScheme()`（`useSyncExternalStore`）在 `App()` 里订阅，切换时整棵树重渲染；`isDark()` 供非样式分支使用（`StatusBar`、`keyboardAppearance`、玻璃 `tintColor`）。
+  - `initTheme()` 在 `App` 挂载时从 AsyncStorage（key `qmszai.theme`）恢复；`setScheme()` 同步调用 `Appearance.setColorScheme`。
+- **配色**：iOS 暗色走系统语义色（`#0A84FF` 等），安卓暗色保留品牌主色 `#1A73E8`（白字对比度足够，未换浅蓝）。新增语义 token：`strongLabel`、`subtleLabel`、`deepLabel`、`inputBackground`、`pressedFill`、`tintBlue/Green/Amber/Rose`、`hero*`、`glass*`、`tabBar*`、`solidButton`/`onSolidButton`、`destructive` 等。iOS 暗色 `inputBackground = #2C2C2E`（与面板 `#1C1C1E` 区分，否则输入框看不见），安卓暗色 `inputBackground = #1B2024` + `separator` 描边。
+- **样式改造**：`App.tsx` 的 `baseStyles` / `iosStyles` 改为 `makeBaseStyles()` / `makeIosStyles()`，两者在 `styles = themedStyles(...)` 里合并；`src/ui.tsx`、`src/ChatWorkspace.tsx`、`src/LiquidTabBar.tsx`、`src/screens/*.tsx`（11 个页面）的 `StyleSheet.create` 全部换成 `themedStyles`。
+- **易踩的坑**：iOS 样式是**浅合并覆盖**，`iosStyles.foo` 一旦覆盖 base 的 `foo` 就整键替换，缺 `color` 的键在暗色下会回落到黑字（已逐个补：`detailTitle`、`accountName`、`accountBalance`、`tokenTitle` 等）。
+- **系统 UI**：`app.json` 的 `userInterfaceStyle` 改 `"automatic"`；所有 18 处 `<TextInput>` 都加 `keyboardAppearance={isDark() ? 'dark' : 'light'}`（`Appearance.setColorScheme` 不会改变系统键盘，必须显式传）；`LoginScreen` 与 `BootScreen`/子页/主壳的 `StatusBar` 改为按 `isDark()` 取 `light`/`dark`。
+- **玻璃组件**：`GlassSurface` / `LiquidTabBar` 的 `GlassView.tintColor` 暗色用强深色 tint；`SegmentedControl` 传 `appearance` 与暗色 `fontStyle`/`activeFontStyle`；安卓 `GlassSurface` fallback 暗色用 `m3.surfaceContainer` 且无阴影。
+- **其他细节**：账户页 `Switch` 的 `trackColor` 用 `{ false: ios ? palette.fill : palette.separator, true: palette.blue }`（安卓浅色下 `palette.fill` 太浅）；安卓「创建/编辑」主按钮文字用 `palette.onSolidButton`（浅色深底白字、暗色反转为浅底深字，替代原先写死的 `#15191E`）；`AppIcon` 默认色改 `palette.blue`。
+- **回归结论（iOS + 安卓，截图逐页核对）**：
+  - iOS 暗色：账户、个人设置、钱包、令牌列表、令牌新建弹层（含键盘）、分组选择页（返回/完成玻璃按钮、选中圆角行）、模型限制页、模型目录、模型详情弹层、概览、用量日志、任务、消息、聊天首页、对话历史弹层、模型选择弹层、会话气泡、AI 创作（含测试模型弹层、尺寸选择页）、模型体验（含选模型弹层）、模型融合、模型广场、登录页（临时强制渲染验证后已还原）。
+  - 安卓暗色：账户、聊天、概览、模型目录、令牌、令牌新建弹层、分组选择页、个人设置、钱包、用量日志；状态栏图标随主题变白。
+  - 持久化：双端杀进程/重启 Expo Go 后仍是上次所选主题；随后都已切回浅色，抽查账户/聊天/令牌表单与改动前一致。
+- **已知非问题**：Expo Go 悬浮齿轮（iOS）正好压住部分右上角按钮（分组页「完成」、模型体验「切换」），这是模拟器开发覆盖层，不是布局问题；绕法是点按钮左侧未被覆盖的位置。
+- `npx tsc --noEmit --noUnusedLocals` 通过。改动未提交、未推送。

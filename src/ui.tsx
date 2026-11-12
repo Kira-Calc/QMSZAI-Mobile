@@ -34,6 +34,29 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { elevation, m3, ripple, shape, type } from './material';
+import { isDark, palette, themedStyles } from './theme';
+
+export { palette } from './theme';
+
+export const toneColor = {
+  get neutral() {
+    return palette.secondaryLabel;
+  },
+  get info() {
+    return palette.blue;
+  },
+  get success() {
+    return palette.green;
+  },
+  get warning() {
+    return palette.orange;
+  },
+  get danger() {
+    return palette.red;
+  },
+};
+
+export type Tone = keyof typeof toneColor;
 
 // Upstream legacy NativeMethods constructor typing is incompatible with React 19.
 const SegmentedControl = NativeSegmentedControl as unknown as ComponentType<SegmentedControlProps>;
@@ -47,44 +70,6 @@ export function animateContentChange() {
     LayoutAnimation.create(200, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity),
   );
 }
-
-export const palette = ios
-  ? {
-      groupedBackground: '#F2F2F7',
-      card: '#FFFFFF',
-      label: '#000000',
-      secondaryLabel: '#6C6C70',
-      tertiaryLabel: '#C7C7CC',
-      separator: '#C6C6C8',
-      fill: '#E5E5EA',
-      blue: '#007AFF',
-      green: '#34C759',
-      orange: '#FF9500',
-      red: '#FF3B30',
-    }
-  : {
-      groupedBackground: m3.surface,
-      card: m3.surfaceContainerLowest,
-      label: m3.onSurface,
-      secondaryLabel: m3.onSurfaceVariant,
-      tertiaryLabel: m3.outline,
-      separator: m3.outlineVariant,
-      fill: m3.surfaceContainer,
-      blue: m3.primary,
-      green: m3.success,
-      orange: m3.warning,
-      red: m3.error,
-    };
-
-export const toneColor = {
-  neutral: palette.secondaryLabel,
-  info: palette.blue,
-  success: palette.green,
-  warning: palette.orange,
-  danger: palette.red,
-} as const;
-
-export type Tone = keyof typeof toneColor;
 
 const glassSupported =
   Platform.OS === 'ios' && isGlassEffectAPIAvailable() && isLiquidGlassAvailable();
@@ -127,9 +112,9 @@ export function GlassSurface({
     return (
       <GlassView
         glassEffectStyle="regular"
-        tintColor="rgba(255,255,255,0.55)"
+        tintColor={isDark() ? 'rgba(30,30,34,0.8)' : palette.glassTint}
         isInteractive={interactive}
-        style={[{ borderRadius: radius, backgroundColor: 'rgba(255,255,255,0.5)' }, style]}
+        style={[{ borderRadius: radius, backgroundColor: palette.glassFill }, style]}
       >
         {children}
       </GlassView>
@@ -241,6 +226,9 @@ export function Segmented({
         values={values}
         selectedIndex={selectedIndex}
         onChange={(event) => onChange(event.nativeEvent.selectedSegmentIndex)}
+        appearance={isDark() ? 'dark' : 'light'}
+        fontStyle={isDark() ? { color: palette.secondaryLabel } : undefined}
+        activeFontStyle={isDark() ? { color: palette.label } : undefined}
         style={style}
       />
     );
@@ -530,6 +518,7 @@ export function Sheet({
             <View style={styles.sheetSearchField}>
               <AppIcon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
               <TextInput
+                keyboardAppearance={isDark() ? 'dark' : 'light'}
                 accessibilityLabel="搜索模型"
                 value={searchValue}
                 onChangeText={onSearchChange}
@@ -623,7 +612,7 @@ export function ProgressBar({ percent, tone = 'info' }: { percent: number; tone?
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   androidSegmented: {
     flexDirection: 'row',
     backgroundColor: palette.fill,
@@ -871,7 +860,7 @@ const styles = StyleSheet.create({
     height: ios ? 38 : 46,
     paddingHorizontal: ios ? 11 : 14,
     borderRadius: ios ? 11 : shape.lg,
-    backgroundColor: ios ? 'rgba(118,118,128,0.12)' : palette.fill,
+    backgroundColor: palette.searchField,
   },
   sheetSearchInput: {
     flex: 1,
@@ -933,7 +922,7 @@ const styles = StyleSheet.create({
   },
   glassFallback: {
     borderWidth: ios ? StyleSheet.hairlineWidth : 0,
-    borderColor: 'rgba(60,60,67,0.16)',
+    borderColor: palette.glassBorder,
     ...(ios
       ? {
           shadowColor: '#000000',
@@ -971,4 +960,4 @@ const styles = StyleSheet.create({
     fontSize: ios ? 15 : 14,
     fontWeight: '600',
   },
-});
+}));

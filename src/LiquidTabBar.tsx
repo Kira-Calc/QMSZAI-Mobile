@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { palette } from './ui';
+import { isDark, themedStyles } from './theme';
 import type { TabKey } from './types';
 
 const ios = Platform.OS === 'ios';
@@ -233,8 +234,8 @@ export function LiquidTabBar({
   };
 
   // iOS 沿用系统蓝；安卓用 Material 3 的 primary / onSurfaceVariant
-  const activeTint = ios ? '#007AFF' : m3.primary;
-  const inactiveTint = ios ? '#5B6470' : m3.onSurfaceVariant;
+  const activeTint = palette.blue;
+  const inactiveTint = palette.secondaryLabel;
 
   const tabItems = appTabs.map((tab) => {
     const selected = activeKey === tab.key;
@@ -280,7 +281,7 @@ export function LiquidTabBar({
           {useGlass ? (
             <GlassView
               glassEffectStyle="regular"
-              tintColor="rgba(255,255,255,0.85)"
+              tintColor={isDark() ? 'rgba(58,58,60,0.85)' : palette.tabBarBorder}
               style={styles.selectionFill}
             />
           ) : (
@@ -337,7 +338,7 @@ export function LiquidTabBar({
         {useGlass ? (
           <AnimatedGlassView
             glassEffectStyle="regular"
-            tintColor="rgba(118,118,128,0.12)"
+            tintColor={isDark() ? 'rgba(22,22,24,0.82)' : palette.searchField}
             isInteractive
             style={[
               styles.bar,
@@ -375,7 +376,7 @@ export function LiquidTabBar({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   dockRoot: {
     position: 'absolute',
     left: 0,
@@ -418,18 +419,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   barGlass: {
-    backgroundColor: 'rgba(255,255,255,0.42)',
+    backgroundColor: palette.tabBarGlass,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.85)',
+    borderColor: palette.tabBarBorder,
     shadowColor: '#000000',
     shadowOpacity: 0.16,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 10 },
   },
   barFallback: {
-    backgroundColor: ios ? 'rgba(250,250,252,0.96)' : m3.surfaceContainerLowest,
+    backgroundColor: ios ? palette.tabBarSolid : m3.surfaceContainerLowest,
     borderWidth: ios ? StyleSheet.hairlineWidth : 0,
-    borderColor: 'rgba(60,60,67,0.16)',
+    borderColor: palette.glassBorder,
     ...(ios
       ? {
           shadowColor: '#000000',
@@ -454,7 +455,7 @@ const styles = StyleSheet.create({
   selectionFallback: {
     flex: 1,
     borderRadius: ios ? 26 : shape.full,
-    backgroundColor: ios ? '#FFFFFF' : m3.primaryContainer,
+    backgroundColor: ios ? palette.tabBarSelection : m3.primaryContainer,
     shadowColor: '#000000',
     shadowOpacity: ios ? 0.12 : 0,
     shadowRadius: 4,
@@ -479,23 +480,23 @@ const styles = StyleSheet.create({
   },
   // 安卓按压态：android_ripple 的遮罩恒为矩形，圆角宿主上会画出方块，改用 M3 状态层。
   itemPressedAndroid: {
-    backgroundColor: 'rgba(26,115,232,0.10)',
+    backgroundColor: palette.tintBlueSoft,
   },
   icon: {
     width: 24,
     height: 24,
   },
   iconText: {
-    color: '#5B6470',
+    color: palette.secondaryLabel,
     fontSize: 18,
     fontWeight: '700',
   },
   label: {
-    color: '#5B6470',
+    color: palette.secondaryLabel,
     fontSize: ios ? 11 : 12,
     fontWeight: ios ? '600' : '500',
   },
   textActive: {
-    color: '#007AFF',
+    color: palette.blue,
   },
-});
+}));

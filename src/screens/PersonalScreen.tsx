@@ -8,6 +8,7 @@ import { formatQuota, formatQuotaSmart } from '../api/format';
 import { useAuth } from '../auth/AuthProvider';
 import { cardSurface, m3, pressedDim } from '../material';
 import { Group, Row, Sheet, Subpage, palette } from '../ui';
+import { themedStyles, isDark } from '../theme';
 
 const ios = Platform.OS === 'ios';
 
@@ -198,6 +199,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
       <Sheet visible={sheet === 'profile'} title="显示名称" onClose={() => setSheet(null)}>
         <View style={styles.form}>
           <TextInput
+            keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={displayName}
             onChangeText={setDisplayName}
             placeholder="输入显示名称"
@@ -218,6 +220,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
       <Sheet visible={sheet === 'password'} title="修改密码" onClose={() => setSheet(null)}>
         <View style={styles.form}>
           <TextInput
+            keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={originalPassword}
             onChangeText={setOriginalPassword}
             placeholder="当前密码"
@@ -226,6 +229,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
             style={styles.input}
           />
           <TextInput
+            keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={newPassword}
             onChangeText={setNewPassword}
             placeholder="新密码（8–20 位）"
@@ -247,7 +251,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingBottom: 32,
@@ -381,4 +385,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-});
+}));

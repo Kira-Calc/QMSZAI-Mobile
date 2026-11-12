@@ -22,6 +22,7 @@ import {
 } from '../ui';
 import { ModelLogo } from '../components/ModelLogo';
 import { ripple } from '../material';
+import { themedStyles, isDark } from '../theme';
 import type { MarketModel } from '../types';
 
 const filters = ['全部', '对话', '图像/视频', '音频'] as const;
@@ -123,6 +124,7 @@ export function ModelMarketplaceScreen({
             <AppIcon name="magnifyingglass" size={16} color={palette.tertiaryLabel} />
           )}
           <TextInput
+            keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={query}
             onChangeText={setQuery}
             placeholder="搜索模型、厂商或分组"
@@ -254,7 +256,7 @@ export function ModelMarketplaceScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   listRow: { flex: 1, flexDirection: 'row' },
   listScroll: { flex: 1 },
   content: {
@@ -381,4 +383,4 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     paddingHorizontal: 4,
   },
-});
+}));

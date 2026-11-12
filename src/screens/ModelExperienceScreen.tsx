@@ -26,6 +26,7 @@ import { alphabetOf, letterOf, sortModelNames } from '../modelSort';
 const ios = Platform.OS === 'ios';
 
 import { GlassPillButton, Group, Sheet, Subpage, palette } from '../ui';
+import { themedStyles, isDark } from '../theme';
 import { streamChat } from '../api/client';
 
 type ChatMessage = { id: number; role: 'user' | 'assistant'; text: string; createdAt?: number };
@@ -220,6 +221,7 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
 
         <View style={[styles.composer, { marginBottom: Math.max(insets.bottom, 20) }]}>
           <TextInput
+            keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={draft}
             onChangeText={setDraft}
             placeholder={`向 ${model} 提问`}
@@ -354,7 +356,7 @@ function ExperienceMessage({ message }: { message: ChatMessage }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   flex: {
     flex: 1,
   },
@@ -565,4 +567,4 @@ const styles = StyleSheet.create({
     color: palette.blue,
     fontSize: 15,
   },
-});
+}));

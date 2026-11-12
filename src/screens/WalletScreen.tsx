@@ -7,6 +7,7 @@ import { formatQuota } from '../api/format';
 import { useAuth } from '../auth/AuthProvider';
 import { pressedSurface } from '../material';
 import { Group, Row, Subpage, palette } from '../ui';
+import { themedStyles } from '../theme';
 
 const ios = Platform.OS === 'ios';
 
@@ -96,7 +97,7 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingBottom: 32,
@@ -185,4 +186,4 @@ const styles = StyleSheet.create({
   disabled: {
     opacity: 0.4,
   },
-});
+}));

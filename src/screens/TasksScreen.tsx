@@ -3,6 +3,7 @@ import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from '
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { cardSurface, ripple } from '../material';
+import { themedStyles } from '../theme';
 
 const ios = Platform.OS === 'ios';
 import {
@@ -201,7 +202,7 @@ export function TasksScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingBottom: 32,
@@ -301,4 +302,4 @@ const styles = StyleSheet.create({
     color: palette.red,
     fontSize: 17,
   },
-});
+}));

@@ -3,35 +3,10 @@
 
 import { Platform } from 'react-native';
 
-export const m3 = {
-  // 表面层级：surface → surfaceContainerLowest 表示由低到高的“海拔”
-  surface: '#F7F9FA',
-  surfaceContainerLowest: '#FFFFFF',
-  surfaceContainerLow: '#F2F5F7',
-  surfaceContainer: '#ECF0F3',
-  surfaceContainerHigh: '#E5EAEE',
-  surfaceContainerHighest: '#DFE4E9',
-  onSurface: '#181C1F',
-  onSurfaceVariant: '#43494E',
-  outline: '#737A80',
-  outlineVariant: '#C3C9CE',
-  primary: '#1A73E8',
-  onPrimary: '#FFFFFF',
-  primaryContainer: '#D3E3FD',
-  onPrimaryContainer: '#041E49',
-  secondaryContainer: '#DCE7F6',
-  onSecondaryContainer: '#101C2B',
-  error: '#BA1A1A',
-  errorContainer: '#FFDAD6',
-  onErrorContainer: '#410002',
-  success: '#157A5B',
-  successContainer: '#C8F0DF',
-  onSuccessContainer: '#00281A',
-  warning: '#7A5A00',
-  warningContainer: '#FFE08C',
-  onWarningContainer: '#261A00',
-  scrim: 'rgba(0,0,0,0.32)',
-} as const;
+import { m3 } from './theme';
+
+// m3 的浅色 / 深色值定义在 theme.ts，这里只做转出，调用方无需改动导入路径。
+export { m3 };
 
 // M3 形状尺度：extra small 4 / small 8 / medium 12 / large 16 / extra large 28
 export const shape = {
@@ -93,11 +68,24 @@ export const tileSurface = isIOS ? {} : { borderRadius: shape.lg };
 export const softShadow = {};
 
 // 平铺表面：无阴影，仅用 surfaceContainer 区分层级。
-export const flatSurface = isIOS ? {} : { borderRadius: shape.xl, backgroundColor: m3.surfaceContainerLow };
+export const flatSurface = isIOS
+  ? {}
+  : {
+      borderRadius: shape.xl,
+      get backgroundColor() {
+        return m3.surfaceContainerLow;
+      },
+    };
 
 // 圆角宿主的按压反馈。
 // RN 的 android_ripple 遮罩恒为矩形（ReactDrawableHelper 只给 ColorDrawable 蒙版），
 // 在圆角卡片 / 胶囊按钮上会画出方块；而且 overflow: 'hidden' 只裁剪子视图、裁不到自身背景，
 // 所以圆角面改用 M3 状态层：白色面压深一档（pressedSurface），彩色面整体压暗（pressedDim）。
-export const pressedSurface = isIOS ? {} : { backgroundColor: m3.surfaceContainer };
+export const pressedSurface = isIOS
+  ? {}
+  : {
+      get backgroundColor() {
+        return m3.surfaceContainer;
+      },
+    };
 export const pressedDim = isIOS ? {} : { opacity: 0.8 };

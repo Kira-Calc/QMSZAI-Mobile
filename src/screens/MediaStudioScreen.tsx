@@ -29,6 +29,7 @@ import {
   type Tone,
 } from '../ui';
 import { cardSurface, pressedDim, pressedSurface, softShadow } from '../material';
+import { themedStyles, isDark } from '../theme';
 import { useKeyboardInsets } from '../useKeyboardInsets';
 
 import {
@@ -557,6 +558,7 @@ export function MediaStudioScreen({
               </Text>
             </View>
             <TextInput
+              keyboardAppearance={isDark() ? 'dark' : 'light'}
               value={prompt}
               onChangeText={setPrompt}
               placeholder={config.placeholder}
@@ -573,6 +575,7 @@ export function MediaStudioScreen({
                 <Text style={styles.counter}>{lyrics.length}/3500</Text>
               </View>
               <TextInput
+                keyboardAppearance={isDark() ? 'dark' : 'light'}
                 value={lyrics}
                 onChangeText={setLyrics}
                 placeholder={
@@ -744,7 +747,7 @@ export function MediaStudioScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   flex: {
     flex: 1,
   },
@@ -924,4 +927,4 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     paddingHorizontal: 4,
   },
-});
+}));

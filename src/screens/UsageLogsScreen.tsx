@@ -23,6 +23,7 @@ import {
   type Tone,
 } from '../ui';
 import { cardSurface, ripple } from '../material';
+import { themedStyles } from '../theme';
 
 const ios = Platform.OS === 'ios';
 import type { LogStatus, UsageLog } from '../types';
@@ -174,7 +175,7 @@ export function UsageLogsScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingBottom: 32,
@@ -265,4 +266,4 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     paddingHorizontal: 4,
   },
-});
+}));

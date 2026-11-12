@@ -38,6 +38,7 @@ import type { Model } from './types';
 import { AlphabetRail, GlassIconButton, GlassSurface, SheetHeader, palette } from './ui';
 import { AppIcon } from './components/AppIcon';
 import { elevation, m3, shape } from './material';
+import { isDark, themedStyles } from './theme';
 import { RichText, plainText } from './richText';
 import { formatMessageTime } from './messageTime';
 import { alphabetOf, letterOf, sortByName } from './modelSort';
@@ -571,6 +572,7 @@ export function ChatWorkspace({
             <GlassSurface radius={18} style={[styles.modelGlass, styles.modelGlassSearch]}>
               <Icon name="magnifyingglass" size={14} color={palette.secondaryLabel} />
               <TextInput
+                keyboardAppearance={isDark() ? 'dark' : 'light'}
                 accessibilityLabel="搜索模型"
                 value={modelQuery}
                 onChangeText={setModelQuery}
@@ -589,7 +591,7 @@ export function ChatWorkspace({
                   <Icon name="xmark" size={13} color={palette.secondaryLabel} />
                 </Pressable>
               ) : (
-                <Icon name="chevron.up.chevron.down" fallback="⌄" size={11} color="#6C6C70" />
+                <Icon name="chevron.up.chevron.down" fallback="⌄" size={11} color={palette.secondaryLabel} />
               )}
             </GlassSurface>
           </View>
@@ -606,7 +608,7 @@ export function ChatWorkspace({
               <Text numberOfLines={1} style={styles.modelButtonText}>
                 {currentModel.name}
               </Text>
-              <Icon name="chevron.up.chevron.down" fallback="⌄" size={11} color="#6C6C70" />
+              <Icon name="chevron.up.chevron.down" fallback="⌄" size={11} color={palette.secondaryLabel} />
             </GlassSurface>
           </Pressable>
         )}
@@ -677,7 +679,7 @@ export function ChatWorkspace({
                 style={({ pressed }) => [styles.suggestion, pressed ? styles.pressed : null]}
               >
                 <Text style={styles.suggestionText}>{suggestion}</Text>
-                <Icon name="arrow.up.right" fallback="↗" size={13} color={ios ? '#8E8E93' : palette.secondaryLabel} />
+                <Icon name="arrow.up.right" fallback="↗" size={13} color={palette.subtleLabel} />
               </Pressable>
             ))}
           </View>
@@ -713,7 +715,7 @@ export function ChatWorkspace({
                       </Text>
                     </View>
                     <Text style={styles.recentTime}>{relativeTime(conversation.updatedAt)}</Text>
-                    <Icon name="chevron.right" fallback="›" size={12} color="#C7C7CC" />
+                    <Icon name="chevron.right" fallback="›" size={12} color={palette.tertiaryLabel} />
                   </Pressable>
                 ))}
               </View>
@@ -767,7 +769,7 @@ export function ChatWorkspace({
               blurTarget={blurTarget}
               blurMethod="dimezisBlurView"
               intensity={45}
-              tint="light"
+              tint={isDark() ? 'dark' : 'light'}
             />
           </MaskedView>
         </Animated.View>
@@ -779,15 +781,16 @@ export function ChatWorkspace({
               label="AI 功能"
               onPress={openTools}
               size={48}
-              tint={ios ? '#1C1C1E' : palette.label}
+              tint={palette.label}
             />
           </View>
           <View style={styles.composerField}>
             <TextInput
+              keyboardAppearance={isDark() ? 'dark' : 'light'}
               ref={inputRef}
               accessibilityLabel="聊天消息"
               placeholder={`给 ${currentModel.name} 发消息`}
-              placeholderTextColor={ios ? '#8E8E93' : palette.tertiaryLabel}
+              placeholderTextColor={ios ? palette.subtleLabel : palette.tertiaryLabel}
               multiline
               maxLength={8000}
               value={draft}
@@ -840,7 +843,7 @@ export function ChatWorkspace({
 
             {sortedConversations.length === 0 ? (
               <View style={styles.historyEmpty}>
-                <Icon name="bubble.left.and.bubble.right" fallback="◌" size={32} color="#C7C7CC" />
+                <Icon name="bubble.left.and.bubble.right" fallback="◌" size={32} color={palette.tertiaryLabel} />
                 <Text style={styles.historyEmptyTitle}>还没有对话</Text>
               </View>
             ) : (
@@ -891,7 +894,7 @@ export function ChatWorkspace({
                           hitSlop={8}
                           style={({ pressed }) => [styles.deleteButton, pressed ? styles.pressed : null]}
                         >
-                          <Icon name="trash" fallback="⌫" size={17} color="#FF3B30" />
+                          <Icon name="trash" fallback="⌫" size={17} color={palette.red} />
                         </Pressable>
                       </View>
                     );
@@ -960,6 +963,7 @@ export function ChatWorkspace({
               <View style={[styles.modelSearch, styles.sheetSearchField]}>
                 <Icon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
                 <TextInput
+                  keyboardAppearance={isDark() ? 'dark' : 'light'}
                   accessibilityLabel="搜索模型"
                   value={modelQuery}
                   onChangeText={setModelQuery}
@@ -1389,7 +1393,7 @@ function relativeTime(timestamp: number) {
   return `${Math.floor(difference / (24 * 60 * 60 * 1000))} 天前`;
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   root: { flex: 1 },
   toolbar: {
     height: 52,
@@ -1488,7 +1492,7 @@ const styles = StyleSheet.create({
     ...(ios
       ? {
           borderWidth: StyleSheet.hairlineWidth,
-          borderColor: 'rgba(60,60,67,0.10)',
+          borderColor: palette.separatorSoft,
         }
       : elevation.level1),
   },
@@ -1522,7 +1526,7 @@ const styles = StyleSheet.create({
     ...(ios
       ? {
           borderWidth: StyleSheet.hairlineWidth,
-          borderColor: 'rgba(60,60,67,0.10)',
+          borderColor: palette.separatorSoft,
         }
       : elevation.level1),
   },
@@ -1543,7 +1547,7 @@ const styles = StyleSheet.create({
     ...(ios
       ? {
           borderWidth: StyleSheet.hairlineWidth,
-          borderColor: 'rgba(60,60,67,0.10)',
+          borderColor: palette.separatorSoft,
         }
       : elevation.level1),
   },
@@ -1610,7 +1614,7 @@ const styles = StyleSheet.create({
     ...(ios
       ? {
           borderWidth: StyleSheet.hairlineWidth,
-          borderColor: 'rgba(60,60,67,0.12)',
+          borderColor: palette.separatorSoft,
         }
       : elevation.level1),
   },
@@ -1624,7 +1628,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   stopButton: { backgroundColor: palette.label },
-  sendButtonDisabled: { backgroundColor: ios ? '#C7C7CC' : m3.surfaceContainerHighest },
+  sendButtonDisabled: { backgroundColor: ios ? palette.tertiaryLabel : m3.surfaceContainerHighest },
   popoverRoot: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 30 },
   popover: { position: 'absolute' },
   popoverShadow: {
@@ -1637,7 +1641,7 @@ const styles = StyleSheet.create({
   popoverScrollContent: { paddingVertical: 0 },
   popoverListRow: { flexDirection: 'row' },
   popoverBacking: {
-    backgroundColor: ios ? 'rgba(255,255,255,0.95)' : palette.card,
+    backgroundColor: ios ? palette.popoverBacking : palette.card,
     paddingVertical: 4,
   },
   popoverRow: {
@@ -1679,7 +1683,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: ios ? '#EAF2FF' : m3.primaryContainer,
+    backgroundColor: ios ? palette.tintBlueSoft : m3.primaryContainer,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1721,7 +1725,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     paddingHorizontal: 11,
     borderRadius: ios ? 11 : shape.lg,
-    backgroundColor: ios ? 'rgba(118,118,128,0.12)' : palette.fill,
+    backgroundColor: palette.searchField,
   },
   modelSearchInput: {
     flex: 1,
@@ -1772,4 +1776,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sheetNote: { color: palette.secondaryLabel, fontSize: 12, lineHeight: 18, paddingHorizontal: 4, marginTop: 4 },
-});
+}));

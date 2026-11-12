@@ -19,6 +19,7 @@ import { chatOnce } from '../api/client';
 import { ModelLogo } from '../components/ModelLogo';
 import { cardSurface, pressedDim } from '../material';
 import { Badge, GlassPillButton, Group, Row, Sheet, Subpage, palette } from '../ui';
+import { themedStyles, isDark } from '../theme';
 import { RichText } from '../richText';
 import { alphabetOf, letterOf, sortModelNames } from '../modelSort';
 
@@ -273,6 +274,7 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
 
         <View style={styles.inputCard}>
           <TextInput
+            keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={prompt}
             onChangeText={setPrompt}
             placeholder="说点什么…"
@@ -417,7 +419,7 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingBottom: 32,
@@ -563,4 +565,4 @@ const styles = StyleSheet.create({
   replyError: {
     color: palette.red,
   },
-});
+}));

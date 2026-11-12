@@ -4,6 +4,8 @@ import { Platform } from 'react-native';
 import type { ComponentProps } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 
+import { palette } from '../theme';
+
 type SymbolName = ComponentProps<typeof SymbolView>['name'];
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -43,7 +45,7 @@ const androidIcons: Record<string, IoniconName> = {
 export function AppIcon({
   name,
   size = 20,
-  color = '#007AFF',
+  color = palette.blue,
   style,
 }: {
   name: SymbolName;
