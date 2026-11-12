@@ -1,9 +1,10 @@
 import { SymbolView } from 'expo-symbols';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState, type ComponentRef } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '../components/AppIcon';
+import { alphabetOf, letterOf, sortByName } from '../modelSort';
 
 const ios = Platform.OS === 'ios';
 
@@ -15,6 +16,7 @@ import {
   Segmented,
   Sheet,
   Subpage,
+  AlphabetRail,
   animateContentChange,
   palette,
 } from '../ui';
@@ -55,10 +57,15 @@ export function ModelMarketplaceScreen({
   const [filterIndex, setFilterIndex] = useState(0);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<MarketModel | null>(null);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const groupY = useRef(0);
+  const bodyY = useRef(0);
+  const rowOffsets = useRef<number[]>([]);
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
-    return source.filter((model) => {
+    // 过滤后再按名称自然排序，避免接口返回顺序随分组或热度变化。
+    return sortByName(source.filter((model) => {
       if (!matches(model, filterIndex)) {
         return false;
       }
@@ -69,8 +76,16 @@ export function ModelMarketplaceScreen({
         .join(' ')
         .toLowerCase()
         .includes(keyword);
-    });
+    }));
   }, [filterIndex, query, source]);
+
+  const letters = useMemo(() => alphabetOf(filtered.map((model) => model.name)), [filtered]);
+
+  const offsetFor = (letter: string) => {
+    const index = filtered.findIndex((model) => letterOf(model.name) === letter);
+    if (index < 0) return undefined;
+    return groupY.current + bodyY.current + (rowOffsets.current[index] ?? 0);
+  };
 
   const badgeLabel = (model: MarketModel) => {
     if (model.category === 'free') return '免费';
@@ -94,7 +109,10 @@ export function ModelMarketplaceScreen({
 
   return (
     <Subpage title="模型广场" onBack={onBack}>
+      <View style={styles.listRow}>
       <ScrollView
+        ref={scrollRef}
+        style={styles.listScroll}
         contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}
         keyboardShouldPersistTaps="handled"
       >
@@ -133,17 +151,23 @@ export function ModelMarketplaceScreen({
         </Text>
 
         {filtered.length === 0 ? (
-          <EmptyState
-            title="没有匹配的模型"
-            message="尝试更换关键词或筛选条件。"
-            icon="magnifyingglass"
-          />
+          <EmptyState title="没有匹配的模型" icon="magnifyingglass" />
         ) : (
-          <Group>
-            {filtered.map((model) => (
+          <Group
+            onLayout={(event) => {
+              groupY.current = event.nativeEvent.layout.y;
+            }}
+            onBodyLayout={(event) => {
+              bodyY.current = event.nativeEvent.layout.y;
+            }}
+          >
+            {filtered.map((model, index) => (
               <Pressable
                 key={model.id}
                 accessibilityRole="button"
+                onLayout={(event) => {
+                  rowOffsets.current[index] = event.nativeEvent.layout.y;
+                }}
                 onPress={() => setSelected(model)}
                 android_ripple={ripple()}
                 style={({ pressed }) => [styles.modelRow, pressed ? styles.modelRowPressed : null]}
@@ -181,6 +205,15 @@ export function ModelMarketplaceScreen({
         )}
 
       </ScrollView>
+      <AlphabetRail
+        letters={letters}
+        onSelect={(letter) => {
+          const offset = offsetFor(letter);
+          if (offset === undefined) return;
+          scrollRef.current?.scrollTo({ y: Math.max(0, offset - 6), animated: true });
+        }}
+      />
+      </View>
 
       <Sheet visible={selected !== null} title="模型详情" onClose={() => setSelected(null)}>
         {selected ? (
@@ -197,7 +230,6 @@ export function ModelMarketplaceScreen({
               />
             </View>
             <Group>
-              <Row title="上下文长度" value={selected.context} />
               <Row title="分组" value={selected.group === 'default' ? '默认' : selected.group} />
               {selected.category === 'chat' ? (
                 <>
@@ -210,9 +242,11 @@ export function ModelMarketplaceScreen({
               ) : (
                 <Row title="单次价格" value={`¥${selected.inputPrice.toFixed(2)}`} />
               )}
-              <Row title="能力标签" value={selected.tags.join('、')} />
+              {selected.tags.length > 0 ? (
+                <Row title="能力标签" value={selected.tags.join('、')} />
+              ) : null}
             </Group>
-            <Text style={styles.sheetNote}>{selected.note}</Text>
+            {selected.note ? <Text style={styles.sheetNote}>{selected.note}</Text> : null}
           </>
         ) : null}
       </Sheet>
@@ -221,6 +255,8 @@ export function ModelMarketplaceScreen({
 }
 
 const styles = StyleSheet.create({
+  listRow: { flex: 1, flexDirection: 'row' },
+  listScroll: { flex: 1 },
   content: {
     paddingHorizontal: 16,
     paddingBottom: 32,

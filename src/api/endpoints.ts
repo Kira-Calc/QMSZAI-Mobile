@@ -386,12 +386,17 @@ export function fetchTokens(page = 1, pageSize = 100) {
 export function createToken(input: {
   name: string;
   remain_quota: number;
+  /** 金额（元），与 remain_quota 一起下发，和网页端一致。 */
+  remain_amount?: number;
   expired_time: number;
   unlimited_quota: boolean;
   model_limits_enabled?: boolean;
   model_limits?: string;
   allow_ips?: string;
+  /** 首个分组（服务端旧字段）。 */
   group?: string;
+  /** 分组优先级：JSON 字符串数组，与网页端 routing_group_order 一致。 */
+  routing_group_order?: string;
 }) {
   return apiRequest<null>('/api/token/', { method: 'POST', body: input, auth: true });
 }
@@ -402,9 +407,14 @@ export function updateToken(
   patch: {
     name: string;
     remain_quota: number;
+    remain_amount?: number;
     expired_time: number;
     unlimited_quota: boolean;
+    model_limits_enabled?: boolean;
+    model_limits?: string;
+    allow_ips?: string;
     group?: string;
+    routing_group_order?: string;
   },
 ) {
   return apiRequest<null>('/api/token/', {
@@ -413,12 +423,14 @@ export function updateToken(
       id,
       name: patch.name,
       remain_quota: patch.remain_quota,
+      remain_amount: patch.remain_amount ?? 0,
       expired_time: patch.expired_time,
       unlimited_quota: patch.unlimited_quota,
-      model_limits_enabled: false,
-      model_limits: '',
-      allow_ips: '',
+      model_limits_enabled: patch.model_limits_enabled ?? false,
+      model_limits: patch.model_limits ?? '',
+      allow_ips: patch.allow_ips ?? '',
       group: patch.group ?? '',
+      routing_group_order: patch.routing_group_order ?? '',
     },
     auth: true,
   });

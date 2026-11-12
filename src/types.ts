@@ -31,6 +31,12 @@ export type Token = {
   remainQuota?: number;
   expiredTime?: number;
   group?: string;
+  /** 分组优先级列表（网页端 routing_group_order），为空表示未设置。 */
+  routingGroups?: string[];
+  /** 模型限制（网页端 model_limits），空数组表示支持所有模型。 */
+  modelLimits?: string[];
+  /** IP 白名单原文（网页端 allow_ips，一行一个）。 */
+  allowIps?: string;
 };
 
 export type OverviewMetrics = {
@@ -125,5 +131,14 @@ export type MarketModel = {
 export type NewTokenDraft = {
   name: string;
   group: string;
+  /** 分组优先级（顺序即优先级），提交时序列化为 routing_group_order。 */
+  routingGroups?: string[];
+  /** 金额（元）；不限额度时忽略。 */
   quota: number;
+  /** 无限额度（网页端 unlimited_quota）。 */
+  unlimited?: boolean;
+  /** 模型限制列表（网页端 model_limits，逗号拼接提交）。 */
+  modelLimits?: string[];
+  /** IP 白名单（网页端 allow_ips，换行分隔）。 */
+  allowIps?: string;
 };

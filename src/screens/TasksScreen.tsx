@@ -115,11 +115,7 @@ export function TasksScreen({
         </View>
 
         {filtered.length === 0 ? (
-          <EmptyState
-            title="没有任务"
-            message="切换筛选条件，或在图像、视频与批次流程中提交新任务。"
-            icon="square.stack.3d.up"
-          />
+          <EmptyState title="没有任务" icon="square.stack.3d.up" />
         ) : (
           <Group header="异步任务">
             {filtered.map((task) => {

@@ -100,11 +100,7 @@ export function UsageLogsScreen({
         </View>
 
         {filtered.length === 0 ? (
-          <EmptyState
-            title="没有符合条件的日志"
-            message="切换筛选条件，或在真实业务接口接入后查看完整请求记录。"
-            icon="doc.text.magnifyingglass"
-          />
+          <EmptyState title="没有符合条件的日志" icon="doc.text.magnifyingglass" />
         ) : (
           <Group header={filterIndex === 2 ? '异常请求' : '最近请求'}>
             {visibleLogs.map((log) => {

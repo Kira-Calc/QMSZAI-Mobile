@@ -1,20 +1,24 @@
+import { BlurView, BlurTargetView } from 'expo-blur';
+import NativeMaskedView from '@react-native-masked-view/masked-view';
 import { SymbolView } from 'expo-symbols';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 import { AppIcon } from './src/components/AppIcon';
 import { cardSurface, elevation, m3, pressedDim, pressedSurface, ripple, shape, type as typeScale } from './src/material';
 import { ChatWorkspace } from './src/ChatWorkspace';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useCallback, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useState, type ComponentProps, type ComponentRef, type ComponentType, type ReactElement } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Animated,
   Easing,
-  LayoutAnimation,
+  FlatList,
   Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   UIManager,
@@ -22,6 +26,8 @@ import {
   useWindowDimensions,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type ScrollViewInstance,
+  type ViewProps,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -30,11 +36,21 @@ import { usageRangeOptions } from './src/data/mockConsole';
 import { ModelLogo } from './src/components/ModelLogo';
 import { LiquidTabBar } from './src/LiquidTabBar';
 import { AuthProvider, useAuth } from './src/auth/AuthProvider';
-import { createToken, deleteToken as removeToken, setTokenStatus, updateToken } from './src/api/endpoints';
+import {
+  createToken,
+  deleteToken as removeToken,
+  fetchUserGroups,
+  fetchUserModels,
+  setTokenStatus,
+  updateToken,
+} from './src/api/endpoints';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { useConsoleData } from './src/services/useConsoleData';
+import { useKeyboardInsets } from './src/useKeyboardInsets';
 import {
+  AlphabetRail,
   GlassIconButton,
+  GlassPillButton,
   Group,
   Row,
   Segmented,
@@ -42,6 +58,7 @@ import {
   animateContentChange,
   palette,
 } from './src/ui';
+import { alphabetOf, letterOf, sortByName } from './src/modelSort';
 import { FusionScreen } from './src/screens/FusionScreen';
 import { MediaStudioScreen } from './src/screens/MediaStudioScreen';
 import { MessagesScreen } from './src/screens/MessagesScreen';
@@ -89,6 +106,11 @@ const tokenStatusLabel: Record<TokenStatus, string> = {
 };
 
 const ios = Platform.OS === 'ios';
+
+// masked-view 的旧声明依赖已移除的 NativeMethods，限定为它实际支持的 props。
+const MaskedView = NativeMaskedView as unknown as ComponentType<ViewProps & {
+  maskElement: ReactElement;
+}>;
 
 const statusColor: Record<ModelStatus | TokenStatus, string> = {
   stable: ios ? '#157A5B' : palette.green,
@@ -179,6 +201,9 @@ function AppShell() {
   // 子页：右侧推入/推出，主界面同步做视差位移。
   useEffect(() => {
     if (subpage) {
+      // 日志/任务每次进入都拉一次，避免看到启动时的旧数据。
+      if (subpage === 'logs') consoleData.refreshLogs();
+      if (subpage === 'tasks') consoleData.refreshTasks();
       const opening = subpageRenderedRef.current === null;
       subpageRenderedRef.current = subpage;
       setSubpageRendered(subpage);
@@ -202,12 +227,11 @@ function AppShell() {
         if (finished) setSubpageRendered(null);
       });
     }
-  }, [subpage, subpageAnim]);
+  }, [subpage, subpageAnim, consoleData.refreshLogs, consoleData.refreshTasks]);
 
+  // 收起/展开的动画在 LiquidTabBar 内用 Animated 驱动（尺寸 + 内容交叉淡化），
+  // 这里只切状态，避免再叠一层 LayoutAnimation 造成重复/瞬切。
   const setTabBarMinimizedAnimated = useCallback((minimized: boolean) => {
-    LayoutAnimation.configureNext(
-      LayoutAnimation.create(240, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity),
-    );
     setTabBarMinimized(minimized);
   }, []);
 
@@ -237,10 +261,11 @@ function AppShell() {
 
   const filteredModels = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const sorted = sortByName(consoleData.models);
     if (!q) {
-      return consoleData.models;
+      return sorted;
     }
-    return consoleData.models.filter((model) => {
+    return sorted.filter((model) => {
       return [model.name, model.vendor, model.context, model.route, ...model.tags]
         .join(' ')
         .toLowerCase()
@@ -270,6 +295,22 @@ function AppShell() {
   );
 
   const tasks = consoleData.tasks;
+
+  // 聊天 / 模型体验 / 模型融合只展示可对话的模型，避免选到图像、音乐、语音等按次模型。
+  const chatModelIds = useMemo(
+    () =>
+      consoleData.marketModels
+        .filter((model) => model.category === 'chat' && !/asr|whisper|embed|rerank|moderation/i.test(model.id))
+        .map((model) => model.id),
+    [consoleData.marketModels],
+  );
+
+  // 价格表还没到时先沿用完整列表，避免聊天页短暂没有可选模型。
+  const chatModels = useMemo(() => {
+    if (!chatModelIds.length) return consoleData.models;
+    const allowed = new Set(chatModelIds);
+    return consoleData.models.filter((model) => allowed.has(model.id));
+  }, [consoleData.models, chatModelIds]);
 
   const sceneStyle = {
     opacity: tabTransition,
@@ -344,23 +385,39 @@ function AppShell() {
 
   const submitToken = async (draft: NewTokenDraft) => {
     setTokenFormVisible(false);
-    const remainQuota = Math.max(0, Math.round(draft.quota * quotaPerUnit));
+    // 与网页端一致：无限额度时金额与原生额度都写 0；否则同时下发金额与换算后的额度。
+    const unlimited = draft.unlimited ?? draft.quota <= 0;
+    const remainAmount = unlimited ? 0 : Math.max(0, draft.quota);
+    const remainQuota = unlimited ? 0 : Math.max(0, Math.round(remainAmount * quotaPerUnit));
+    // 分组优先级与网页端一致：group 取首个分组，routing_group_order 存完整有序列表。
+    const routingGroups = draft.routingGroups ?? [];
+    const routingOrder = routingGroups.length > 0 ? JSON.stringify(routingGroups) : '';
+    const modelLimits = draft.modelLimits ?? [];
+    const access = {
+      remain_amount: remainAmount,
+      unlimited_quota: unlimited,
+      model_limits_enabled: modelLimits.length > 0,
+      model_limits: modelLimits.join(','),
+      allow_ips: draft.allowIps ?? '',
+    };
     try {
       if (editingToken) {
         await updateToken(Number(editingToken.id), {
           name: draft.name,
           remain_quota: remainQuota,
+          ...access,
           expired_time: editingToken.expiredTime ?? -1,
-          unlimited_quota: draft.quota <= 0,
-          group: draft.group || editingToken.group || '',
+          group: routingGroups[0] || draft.group || editingToken.group || '',
+          routing_group_order: routingOrder,
         });
       } else {
         await createToken({
           name: draft.name,
           remain_quota: remainQuota,
-          unlimited_quota: draft.quota <= 0,
+          ...access,
           expired_time: -1,
-          group: draft.group || undefined,
+          group: routingGroups[0] || draft.group || undefined,
+          routing_group_order: routingOrder || undefined,
         });
       }
       setEditingToken(null);
@@ -440,13 +497,13 @@ function AppShell() {
         {subpageRendered === 'experience' ? (
           <ModelExperienceScreen
             onBack={() => setSubpage(null)}
-            models={consoleData.models.map((model) => model.id)}
+            models={chatModelIds}
           />
         ) : null}
         {subpageRendered === 'fusion' ? (
           <FusionScreen
             onBack={() => setSubpage(null)}
-            models={consoleData.models.map((model) => model.id)}
+            models={chatModelIds}
           />
         ) : null}
         {subpageRendered === 'pricing' ? (
@@ -468,19 +525,17 @@ function AppShell() {
         <StatusBar style="dark" />
         <View style={styles.appShell}>
         <View style={styles.header}>
-          <View>
-            <Text style={styles.eyebrow}>阡陌数智 · {user?.group ?? 'default'}</Text>
-            <Animated.Text style={[styles.title, titleStyle]}>{activeTab === 'chat' ? '聊天' : currentTitle}</Animated.Text>
-          </View>
-          <View style={styles.liveBadge}>
-            <View style={styles.liveDot} />
-            <Text style={styles.liveText}>在线</Text>
-          </View>
+          <Animated.Text style={[styles.title, titleStyle]}>{activeTab === 'chat' ? '聊天' : currentTitle}</Animated.Text>
         </View>
 
         <Animated.View style={[styles.content, sceneStyle]}>
           <View style={{ flex: 1, display: activeTab === 'chat' ? 'flex' : 'none' }}>
-            <ChatWorkspace bottomInset={76} onOpenTool={setSubpage} models={consoleData.models} />
+            <ChatWorkspace
+              bottomInset={76}
+              onOpenTool={setSubpage}
+              models={chatModels}
+              active={activeTab === 'chat'}
+            />
           </View>
           {activeTab === 'overview' ? (
             <Overview
@@ -803,6 +858,24 @@ function ModelsView({
   setSelectedModel: (model: Model | null) => void;
   onScroll: TabScrollHandler;
 }) {
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const blurTarget = useRef<ComponentRef<typeof View>>(null);
+  const rowOffsets = useRef<number[]>([]);
+  const listFade = useRef(new Animated.Value(0)).current;
+  const letters = useMemo(
+    () => alphabetOf(filteredModels.map((model) => model.name)),
+    [filteredModels],
+  );
+
+  const jumpToLetter = (letter: string) => {
+    const index = filteredModels.findIndex((model) => letterOf(model.name) === letter);
+    if (index < 0) return;
+    const offset = rowOffsets.current[index];
+    if (offset === undefined) return;
+    // modelList 有 paddingTop，减一点让字母对应的第一行完整露出。
+    scrollRef.current?.scrollTo({ y: Math.max(0, offset - 12), animated: true });
+  };
+
   return (
     <View style={styles.splitContent}>
       <View style={styles.modelsSearchWrap}>
@@ -820,17 +893,37 @@ function ModelsView({
           clearButtonMode="while-editing"
         />
       </View>
+      <View style={styles.modelsListRow}>
+      {/* 安卓的 BlurView 需要和 BlurTargetView 同级，不能放在被模糊的视图里面。 */}
+      <View style={styles.modelsListTarget}>
+      <BlurTargetView ref={blurTarget} style={styles.modelsListTarget}>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={styles.modelList}
-        onScroll={onScroll}
+        onScroll={(event) => {
+          // 列表滚到搜索框下方时淡入顶部模糊，静止时不压暗第一行。
+          const offset = event.nativeEvent.contentOffset.y;
+          listFade.setValue(Math.min(1, Math.max(0, offset / 24)));
+          onScroll(event);
+        }}
         scrollEventThrottle={16}
       >
-        {filteredModels.map((model) => {
+        {filteredModels.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>
+              {query.trim() ? '没有匹配的模型' : '暂无模型'}
+            </Text>
+          </View>
+        ) : null}
+        {filteredModels.map((model, index) => {
           const selected = selectedModel?.id === model.id;
           return (
             <Pressable
               key={model.id}
               onPress={() => setSelectedModel(model)}
+              onLayout={(event) => {
+                rowOffsets.current[index] = event.nativeEvent.layout.y;
+              }}
               style={({ pressed }) => [
                 styles.modelRow,
                 selected ? styles.modelRowSelected : null,
@@ -860,6 +953,35 @@ function ModelsView({
           );
         })}
       </ScrollView>
+      </BlurTargetView>
+      <Animated.View pointerEvents="none" style={[styles.modelsListFade, { opacity: listFade }]}>
+        <MaskedView
+          style={StyleSheet.absoluteFill}
+          maskElement={
+            <Svg width="100%" height="100%">
+              <Defs>
+                <SvgLinearGradient id="modelsFadeMask" x1="0" y1="0" x2="0" y2="1">
+                  <Stop offset="0" stopColor="black" stopOpacity="1" />
+                  <Stop offset="0.55" stopColor="black" stopOpacity="0.45" />
+                  <Stop offset="1" stopColor="black" stopOpacity="0" />
+                </SvgLinearGradient>
+              </Defs>
+              <Rect width="100%" height="100%" fill="url(#modelsFadeMask)" />
+            </Svg>
+          }
+        >
+          <BlurView
+            style={StyleSheet.absoluteFill}
+            blurTarget={blurTarget}
+            blurMethod="dimezisBlurView"
+            intensity={40}
+            tint="light"
+          />
+        </MaskedView>
+      </Animated.View>
+      </View>
+      <AlphabetRail letters={letters} onSelect={jumpToLetter} />
+      </View>
       <Modal visible={selectedModel !== null} animationType="slide" presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'} statusBarTranslucent onRequestClose={() => setSelectedModel(null)}>
         <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
           <SheetHeader title="模型详情" onClose={() => setSelectedModel(null)} />
@@ -938,7 +1060,6 @@ function TokensView({
       {tokens.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyTitle}>暂无令牌</Text>
-          <Text style={styles.modelVendor}>还没有创建任何令牌</Text>
         </View>
       ) : null}
       {tokens.map((token) => {
@@ -1127,17 +1248,165 @@ function TokenFormModal({
   onCancel: () => void;
   onSubmit: (draft: NewTokenDraft) => void;
 }) {
+  const { height: windowHeight } = useWindowDimensions();
   const [name, setName] = useState(initial?.name ?? 'Mobile client');
-  const [group, setGroup] = useState(initial?.group ?? '');
-  const [quota, setQuota] = useState(() => {
-    if (!initial) return '10';
-    if (initial.unlimited) return '0';
+  // 与网页端一致：新建默认无限额度；关闭后才需要填金额。
+  const [unlimited, setUnlimited] = useState(initial ? Boolean(initial.unlimited) : true);
+  const [amount, setAmount] = useState(() => {
+    if (!initial || initial.unlimited) return '';
     const remain = initial.remainQuota ?? initial.quota;
-    return String(Number((remain / (quotaPerUnit || 1)).toFixed(2)));
+    return String(Number((remain / (quotaPerUnit || 1)).toFixed(6)));
   });
 
-  const parsedQuota = Number.parseFloat(quota);
-  const canSubmit = name.trim().length > 0 && Number.isFinite(parsedQuota) && parsedQuota >= 0;
+  // 分组优先级：顺序即优先级，与网页端 routing_group_order 一致。
+  const [selectedGroups, setSelectedGroups] = useState<string[]>(() => {
+    if (initial?.routingGroups?.length) return initial.routingGroups;
+    return initial?.group ? [initial.group] : [];
+  });
+  // 拉不到分组列表时退回手填，避免功能直接不可用。
+  const [freeGroup, setFreeGroup] = useState(initial?.group ?? '');
+  const [groups, setGroups] = useState<TokenGroupOption[] | null>(null);
+  const [groupQuery, setGroupQuery] = useState('');
+  const [models, setModels] = useState<string[] | null>(null);
+  const [modelLimits, setModelLimits] = useState<string[]>(initial?.modelLimits ?? []);
+  const [modelQuery, setModelQuery] = useState('');
+  const [allowIps, setAllowIps] = useState(initial?.allowIps ?? '');
+  const [pickerMode, setPickerMode] = useState<'none' | 'groups' | 'models'>('none');
+
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    setGroups(null);
+    fetchUserGroups()
+      .then((map) => {
+        if (!alive) return;
+        const options = Object.entries(map).map(([groupName, info]) => ({
+          name: groupName,
+          ratio: Number(info?.ratio ?? 1),
+          desc: info?.desc ?? '',
+        }));
+        // 与网页端下拉一致：default 置顶，其余按名称（拉丁字母在中文前）排序。
+        options.sort((a, b) => {
+          if (a.name === 'default') return b.name === 'default' ? 0 : -1;
+          if (b.name === 'default') return 1;
+          const left = a.name.toLowerCase();
+          const right = b.name.toLowerCase();
+          return left < right ? -1 : left > right ? 1 : 0;
+        });
+        setGroups(options);
+      })
+      .catch(() => {
+        if (alive) setGroups([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    setModels(null);
+    fetchUserModels()
+      .then((list) => {
+        if (alive) setModels(list);
+      })
+      .catch(() => {
+        if (alive) setModels([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [visible]);
+
+  const trimmedQuery = groupQuery.trim().toLowerCase();
+  const filteredGroups = useMemo(() => {
+    if (!groups) return [];
+    if (!trimmedQuery) return groups;
+    return groups.filter((option) =>
+      `${option.name} ${option.desc}`.toLowerCase().includes(trimmedQuery),
+    );
+  }, [groups, trimmedQuery]);
+
+  const trimmedModelQuery = modelQuery.trim().toLowerCase();
+  const filteredModels = useMemo(() => {
+    if (!models) return [];
+    if (!trimmedModelQuery) return models;
+    return models.filter((item) => item.toLowerCase().includes(trimmedModelQuery));
+  }, [models, trimmedModelQuery]);
+
+  const toggleGroup = (groupName: string) => {
+    setSelectedGroups((current) =>
+      current.includes(groupName)
+        ? current.filter((item) => item !== groupName)
+        : [...current, groupName],
+    );
+  };
+
+  const toggleModelLimit = (modelId: string) => {
+    setModelLimits((current) =>
+      current.includes(modelId)
+        ? current.filter((item) => item !== modelId)
+        : [...current, modelId],
+    );
+  };
+
+  // iOS 的自定义 Modal 不会避让键盘。这里让白色面板一直铺到屏幕底部（键盘浮在面板上），
+  // 用键盘高度 + 16 撑出底部内边距：按钮不贴住键盘顶部的半透明边缘，面板本身仍是连续的。
+  const { inset: keyboardInset } = useKeyboardInsets(Platform.OS === 'ios');
+  const sheetPaddingBottom =
+    Platform.OS === 'ios'
+      ? keyboardInset > 0
+        ? keyboardInset + 16
+        : 30
+      : 22;
+  // 选择页固定高度，让列表用剩余空间伸缩；否则键盘弹起后列表会把「完成」按钮顶到键盘下面。
+  const pickerSheetHeight =
+    Platform.OS === 'ios' && pickerMode !== 'none' ? Math.max(420, windowHeight - 96) : undefined;
+  // 表单字段变多后，键盘弹起时需要一个可滚动区域，否则顶部字段会被顶出屏幕。
+  const formMaxHeight =
+    Platform.OS === 'ios' && keyboardInset > 0
+      ? Math.max(160, windowHeight - keyboardInset - 190)
+      : undefined;
+
+  // 表单变长后，键盘弹起时点击靠下的字段（如 IP 白名单）会被动作按钮挡住；
+  // 这里记录每个字段的纵向位置，聚焦时把字段滚到可视区顶部。
+  const formRef = useRef<ScrollViewInstance>(null);
+  const fieldOffsets = useRef<Record<string, number>>({});
+  const [focusedField, setFocusedField] = useState<string | null>(null);
+  const scrollFieldIntoView = (key: string) => {
+    const offset = fieldOffsets.current[key];
+    if (offset == null) return;
+    formRef.current?.scrollTo({ y: Math.max(0, offset - 12), animated: true });
+  };
+  // 键盘弹起时 ScrollView 才收缩；聚焦当下滚动不会生效，等键盘高度变化后再补一次。
+  useEffect(() => {
+    if (!focusedField || keyboardInset <= 0) return;
+    // 键盘有弹出动画：先滚一次，动画结束后再补一次，避免滚动被旧的视口高度截断。
+    const first = setTimeout(() => scrollFieldIntoView(focusedField), 60);
+    const second = setTimeout(() => scrollFieldIntoView(focusedField), 320);
+    return () => {
+      clearTimeout(first);
+      clearTimeout(second);
+    };
+  }, [focusedField, keyboardInset]);
+
+  const parsedAmount = Number.parseFloat(amount);
+  const canSubmit =
+    name.trim().length > 0 &&
+    (unlimited || (Number.isFinite(parsedAmount) && parsedAmount >= 0));
+
+  const openPicker = (mode: 'groups' | 'models') => {
+    animateContentChange();
+    setPickerMode(mode);
+  };
+
+  const closePicker = () => {
+    animateContentChange();
+    setPickerMode('none');
+    setGroupQuery('');
+    setModelQuery('');
+  };
 
   const submit = () => {
     if (!canSubmit) {
@@ -1145,73 +1414,377 @@ function TokenFormModal({
     }
     onSubmit({
       name: name.trim(),
-      group: group.trim(),
-      quota: parsedQuota,
+      group: freeGroup.trim(),
+      routingGroups: selectedGroups,
+      quota: unlimited ? 0 : parsedAmount,
+      unlimited,
+      modelLimits,
+      allowIps: allowIps.trim(),
     });
   };
+
+  const limitSummary =
+    modelLimits.length <= 1
+      ? (modelLimits[0] ?? '')
+      : `${modelLimits[0]} 等 ${modelLimits.length} 个`;
+
+  const pickerTitle = pickerMode === 'models' ? '模型限制' : '选择分组';
+  const pickerSearch = pickerMode === 'models' ? modelQuery : groupQuery;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={styles.modalBackdrop}>
-        <View style={styles.modalSheet}>
+        <View
+          style={[
+            styles.modalSheet,
+            { paddingBottom: sheetPaddingBottom },
+            pickerSheetHeight ? { height: pickerSheetHeight } : null,
+          ]}
+        >
           <View style={styles.modalHandle} />
-          <View style={styles.detailHeader}>
-            <View>
-              <Text style={styles.detailTitle}>{initial ? '编辑令牌' : '新建令牌'}</Text>
-              <Text style={styles.modelVendor}>
-                {initial ? '修改名称与限额' : '创建后可用于调用 API'}
-              </Text>
-            </View>
-            <GlassIconButton
-              icon="xmark"
-              fallback="×"
-              label="关闭令牌编辑"
-              onPress={onCancel}
-              size={32}
-              tint="#6C6C70"
-            />
-          </View>
+          {pickerMode !== 'none' ? (
+            <>
+              <View style={styles.pickerNav}>
+                <GlassPillButton
+                  icon="chevron.left"
+                  label="返回"
+                  tint={palette.blue}
+                  onPress={closePicker}
+                />
+                <Text style={styles.pickerTitle} pointerEvents="none">
+                  {pickerTitle}
+                </Text>
+                <GlassPillButton label="完成" tint={palette.blue} onPress={closePicker} />
+              </View>
+              <View style={styles.groupSearch}>
+                <AppIcon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
+                <TextInput
+                  accessibilityLabel={pickerMode === 'models' ? '搜索模型' : '搜索分组'}
+                  value={pickerSearch}
+                  onChangeText={pickerMode === 'models' ? setModelQuery : setGroupQuery}
+                  placeholder={pickerMode === 'models' ? '搜索模型' : '搜索分组'}
+                  placeholderTextColor={palette.tertiaryLabel}
+                  autoCorrect={false}
+                  style={styles.groupSearchInput}
+                />
+                {pickerSearch ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={pickerMode === 'models' ? '清除模型搜索' : '清除分组搜索'}
+                    onPress={() => (pickerMode === 'models' ? setModelQuery('') : setGroupQuery(''))}
+                    hitSlop={10}
+                  >
+                    <AppIcon name="xmark" size={14} color={palette.secondaryLabel} />
+                  </Pressable>
+                ) : null}
+              </View>
+              {pickerMode === 'groups' ? (
+                <ScrollView
+                  style={[styles.groupPickerList, pickerSheetHeight ? styles.groupPickerListFlex : null]}
+                  contentContainerStyle={styles.groupPickerListContent}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {groups === null ? (
+                    <Text style={styles.groupEmpty}>正在加载分组…</Text>
+                  ) : filteredGroups.length === 0 ? (
+                    <Text style={styles.groupEmpty}>没有匹配的分组</Text>
+                  ) : (
+                    filteredGroups.map((option) => {
+                      const order = selectedGroups.indexOf(option.name);
+                      const selected = order >= 0;
+                      return (
+                        <Pressable
+                          key={option.name}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected }}
+                          accessibilityLabel={`${option.name}${selected ? `，第 ${order + 1} 优先` : ''}`}
+                          onPress={() => toggleGroup(option.name)}
+                          style={({ pressed }) => [
+                            styles.groupOption,
+                            selected ? styles.groupOptionSelected : null,
+                            pressed ? styles.groupOptionPressed : null,
+                          ]}
+                        >
+                          <View
+                            style={[
+                              styles.groupOptionOrder,
+                              selected ? styles.groupOptionOrderActive : null,
+                            ]}
+                          >
+                            {selected ? (
+                              <Text style={styles.groupOptionOrderText}>{order + 1}</Text>
+                            ) : null}
+                          </View>
+                          <View style={styles.groupOptionMain}>
+                            <Text style={styles.groupOptionName} numberOfLines={1}>
+                              {option.name}
+                            </Text>
+                            {option.desc && option.desc !== option.name ? (
+                              <Text style={styles.groupOptionDesc} numberOfLines={1}>
+                                {option.desc}
+                              </Text>
+                            ) : null}
+                          </View>
+                          <Text style={styles.groupOptionRatio}>
+                            {`${Number(option.ratio.toFixed(5))}x 倍率`}
+                          </Text>
+                        </Pressable>
+                      );
+                    })
+                  )}
+                </ScrollView>
+              ) : (
+                <FlatList
+                  data={filteredModels}
+                  keyExtractor={(item) => item}
+                  style={[styles.groupPickerList, pickerSheetHeight ? styles.groupPickerListFlex : null]}
+                  contentContainerStyle={styles.groupPickerListContent}
+                  keyboardShouldPersistTaps="handled"
+                  initialNumToRender={14}
+                  windowSize={9}
+                  ListEmptyComponent={
+                    <Text style={styles.groupEmpty}>
+                      {models === null ? '正在加载模型…' : '没有匹配的模型'}
+                    </Text>
+                  }
+                  renderItem={({ item }) => {
+                    const selected = modelLimits.includes(item);
+                    return (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        accessibilityLabel={`${item}${selected ? '，已选择' : ''}`}
+                        onPress={() => toggleModelLimit(item)}
+                        style={({ pressed }) => [
+                          styles.groupOption,
+                          selected ? styles.groupOptionSelected : null,
+                          pressed ? styles.groupOptionPressed : null,
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.groupOptionOrder,
+                            selected ? styles.groupOptionOrderActive : null,
+                          ]}
+                        >
+                          {selected ? (
+                            <AppIcon name="checkmark" size={12} color="#FFFFFF" />
+                          ) : null}
+                        </View>
+                        <ModelLogo name={item} size={24} />
+                        <View style={styles.groupOptionMain}>
+                          <Text style={styles.groupOptionName} numberOfLines={1}>
+                            {item}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    );
+                  }}
+                />
+              )}
+            </>
+          ) : (
+            <>
+              <View style={styles.detailHeader}>
+                <View>
+                  <Text style={styles.detailTitle}>{initial ? '编辑令牌' : '新建令牌'}</Text>
+                  <Text style={styles.modelVendor}>
+                    {initial ? '修改名称与限额' : '创建后可用于调用 API'}
+                  </Text>
+                </View>
+                <GlassIconButton
+                  icon="xmark"
+                  fallback="×"
+                  label="关闭令牌编辑"
+                  onPress={onCancel}
+                  size={32}
+                  tint="#6C6C70"
+                />
+              </View>
 
-          <View style={styles.formStack}>
-            <FieldInput label="名称" value={name} onChangeText={setName} />
-            <FieldInput label="分组" value={group} onChangeText={setGroup} />
-            <FieldInput
-              label="额度（元，0 为不限额）"
-              value={quota}
-              onChangeText={setQuota}
-              keyboardType="number-pad"
-            />
-          </View>
+              <ScrollView
+                ref={formRef}
+                style={formMaxHeight ? { maxHeight: formMaxHeight } : undefined}
+                contentContainerStyle={styles.formStack}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={formMaxHeight ? true : false}
+              >
+                <View
+                  onLayout={(event) => {
+                    fieldOffsets.current.name = event.nativeEvent.layout.y;
+                  }}
+                >
+                  <FieldInput
+                    label="名称"
+                    value={name}
+                    onChangeText={setName}
+                    onFocus={() => {
+                      setFocusedField('name');
+                      scrollFieldIntoView('name');
+                    }}
+                  />
+                </View>
 
-          <View style={styles.modalActions}>
-            <Pressable accessibilityRole="button" onPress={onCancel} style={styles.secondaryActionButton}>
-              <Text style={styles.secondaryButtonText}>取消</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              disabled={!canSubmit}
-              onPress={submit}
-              style={[styles.primaryActionButton, !canSubmit ? styles.buttonDisabled : null]}
-            >
-              <Text style={styles.primaryButtonText}>{initial ? '保存' : '创建'}</Text>
-            </Pressable>
-          </View>
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.formLabel}>分组优先选择</Text>
+                  {groups && groups.length === 0 ? (
+                    <TextInput
+                      value={freeGroup}
+                      onChangeText={setFreeGroup}
+                      placeholder="输入分组名，留空使用默认分组"
+                      placeholderTextColor="#7A828A"
+                      autoCorrect={false}
+                      style={styles.formInput}
+                    />
+                  ) : (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="选择分组"
+                      onPress={() => openPicker('groups')}
+                      style={({ pressed }) => [
+                        styles.groupField,
+                        pressed ? styles.groupFieldPressed : null,
+                      ]}
+                    >
+                      {selectedGroups.length === 0 ? (
+                        <Text style={styles.groupPlaceholder}>
+                          选择分组，可多选，顺序即优先级
+                        </Text>
+                      ) : (
+                        <View style={styles.groupChips}>
+                          {selectedGroups.map((groupName, index) => (
+                            <View key={groupName} style={styles.groupChip}>
+                              <Text style={styles.groupChipIndex}>{index + 1}</Text>
+                              <Text style={styles.groupChipText} numberOfLines={1}>
+                                {groupName}
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                      <AppIcon name="chevron.down" size={14} color="#98A0A8" />
+                    </Pressable>
+                  )}
+                </View>
+
+                <View style={styles.switchRow}>
+                  <Text style={styles.formLabel}>无限额度</Text>
+                  <Switch
+                    accessibilityLabel="无限额度"
+                    value={unlimited}
+                    onValueChange={setUnlimited}
+                    // iOS 原生 Switch 默认 alignSelf: 'flex-start'，会贴住行顶，这里强制居中。
+                    style={styles.switchControl}
+                  />
+                </View>
+
+                {unlimited ? null : (
+                  <View
+                    onLayout={(event) => {
+                      fieldOffsets.current.amount = event.nativeEvent.layout.y;
+                    }}
+                  >
+                    <FieldInput
+                      label="金额（元）"
+                      value={amount}
+                      onChangeText={setAmount}
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      onFocus={() => {
+                        setFocusedField('amount');
+                        scrollFieldIntoView('amount');
+                      }}
+                    />
+                  </View>
+                )}
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.formLabel}>模型限制列表</Text>
+                  {models && models.length === 0 ? (
+                    <Text style={styles.groupPlaceholder}>模型列表不可用</Text>
+                  ) : (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="选择模型限制"
+                      onPress={() => openPicker('models')}
+                      style={({ pressed }) => [
+                        styles.groupField,
+                        pressed ? styles.groupFieldPressed : null,
+                      ]}
+                    >
+                      <Text
+                        style={modelLimits.length === 0 ? styles.groupPlaceholder : styles.limitSummary}
+                        numberOfLines={1}
+                      >
+                        {modelLimits.length === 0 ? '留空支持所有模型' : limitSummary}
+                      </Text>
+                      <AppIcon name="chevron.down" size={14} color="#98A0A8" />
+                    </Pressable>
+                  )}
+                </View>
+
+                <View
+                  style={styles.fieldGroup}
+                  onLayout={(event) => {
+                    fieldOffsets.current.allowIps = event.nativeEvent.layout.y;
+                  }}
+                >
+                  <Text style={styles.formLabel}>IP 白名单</Text>
+                  <TextInput
+                    accessibilityLabel="IP 白名单"
+                    value={allowIps}
+                    onChangeText={setAllowIps}
+                    placeholder="允许的 IP，一行一个，留空不限制"
+                    placeholderTextColor="#7A828A"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    multiline
+                    onFocus={() => {
+                      setFocusedField('allowIps');
+                      scrollFieldIntoView('allowIps');
+                    }}
+                    style={[styles.formInput, styles.formTextarea]}
+                  />
+                </View>
+              </ScrollView>
+
+              <View style={styles.modalActions}>
+                <Pressable accessibilityRole="button" onPress={onCancel} style={styles.secondaryActionButton}>
+                  <Text style={styles.secondaryButtonText}>取消</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={!canSubmit}
+                  onPress={submit}
+                  style={[styles.primaryActionButton, !canSubmit ? styles.buttonDisabled : null]}
+                >
+                  <Text style={styles.primaryButtonText}>{initial ? '保存' : '创建'}</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
         </View>
       </View>
     </Modal>
   );
 }
 
+type TokenGroupOption = { name: string; ratio: number; desc: string };
+
 function FieldInput({
   label,
   value,
   onChangeText,
   keyboardType,
+  placeholder,
+  onFocus,
 }: {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
-  keyboardType?: 'default' | 'number-pad';
+  keyboardType?: 'default' | 'number-pad' | 'decimal-pad';
+  placeholder?: string;
+  onFocus?: () => void;
 }) {
   return (
     <View style={styles.fieldGroup}>
@@ -1220,6 +1793,8 @@ function FieldInput({
         value={value}
         onChangeText={onChangeText}
         keyboardType={keyboardType}
+        onFocus={onFocus}
+        placeholder={placeholder}
         placeholderTextColor="#7A828A"
         style={styles.formInput}
       />
@@ -1327,39 +1902,11 @@ const baseStyles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'space-between',
   },
-  eyebrow: {
-    color: m3.onSurfaceVariant,
-    fontSize: 12,
-    fontWeight: '500',
-    letterSpacing: 0.4,
-    marginBottom: 4,
-  },
   title: {
     color: m3.onSurface,
     fontSize: 30,
     fontWeight: '600',
     letterSpacing: -0.3,
-  },
-  liveBadge: {
-    height: 32,
-    paddingHorizontal: 14,
-    borderRadius: shape.full,
-    backgroundColor: m3.surfaceContainerLowest,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    ...elevation.level1,
-  },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#26A269',
-  },
-  liveText: {
-    color: m3.onSurfaceVariant,
-    fontSize: 12,
-    fontWeight: '500',
   },
   content: {
     flex: 1,
@@ -1604,6 +2151,20 @@ const baseStyles = StyleSheet.create({
   },
   modelsSearchWrap: {
     paddingHorizontal: 20,
+  },
+  modelsListRow: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  modelsListTarget: {
+    flex: 1,
+  },
+  modelsListFade: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: 28,
   },
   searchIconBox: {
     position: 'absolute',
@@ -1908,6 +2469,8 @@ const baseStyles = StyleSheet.create({
   modalSheet: {
     borderTopLeftRadius: 8,
     borderTopRightRadius: 8,
+    // 表单与选择页切换时面板高度会变化，裁掉过渡中溢出的行，避免内容跑到面板圆角之外。
+    overflow: 'hidden',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 20,
     paddingTop: 10,
@@ -1935,6 +2498,178 @@ const baseStyles = StyleSheet.create({
     color: '#15191E',
     fontSize: 16,
     fontWeight: '600',
+  },
+  groupField: {
+    minHeight: 46,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D2D8DE',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  groupFieldPressed: {
+    backgroundColor: '#F1F4F8',
+  },
+  groupChips: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  groupChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: m3.primaryContainer,
+  },
+  groupChipIndex: {
+    color: m3.primary,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  groupChipText: {
+    color: m3.primary,
+    fontSize: 13,
+    fontWeight: '600',
+    maxWidth: 160,
+  },
+  groupPlaceholder: {
+    flex: 1,
+    color: '#7A828A',
+    fontSize: 15,
+  },
+  pickerNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 6,
+    paddingBottom: 10,
+  },
+  pickerTitle: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    color: '#15191E',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  switchRow: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  switchControl: {
+    alignSelf: 'center',
+  },
+  limitSummary: {
+    flex: 1,
+    color: '#15191E',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  formTextarea: {
+    minHeight: 76,
+    paddingTop: 10,
+    paddingBottom: 10,
+    textAlignVertical: 'top',
+  },
+  groupSearch: {
+    minHeight: 40,
+    borderRadius: 8,
+    backgroundColor: m3.surfaceContainerHigh,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+  },
+  groupSearchInput: {
+    flex: 1,
+    minHeight: 38,
+    paddingVertical: 0,
+    color: '#15191E',
+    fontSize: 15,
+  },
+  groupPickerList: {
+    marginTop: 10,
+    maxHeight: 300,
+  },
+  groupPickerListFlex: {
+    flex: 1,
+    maxHeight: undefined,
+    minHeight: 120,
+  },
+  groupPickerListContent: {
+    paddingBottom: 4,
+  },
+  groupEmpty: {
+    color: '#7A828A',
+    fontSize: 14,
+    paddingVertical: 20,
+    textAlign: 'center',
+  },
+  groupOption: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E3E7EB',
+  },
+  groupOptionSelected: {
+    backgroundColor: m3.primaryContainer,
+    borderBottomColor: 'transparent',
+  },
+  groupOptionPressed: {
+    backgroundColor: '#EEF3FA',
+  },
+  groupOptionOrder: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#C4CBD3',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  groupOptionOrderActive: {
+    borderColor: m3.primary,
+    backgroundColor: m3.primary,
+  },
+  groupOptionOrderText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  groupOptionMain: {
+    flex: 1,
+    gap: 2,
+  },
+  groupOptionName: {
+    color: '#15191E',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  groupOptionDesc: {
+    color: '#7A828A',
+    fontSize: 12,
+  },
+  groupOptionRatio: {
+    color: '#6B7480',
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
   },
   modalActions: {
     flexDirection: 'row',
@@ -1992,9 +2727,6 @@ const baseStyles = StyleSheet.create({
 const iosStyles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F2F2F7' },
   title: { color: '#000', fontSize: 34, fontWeight: '700', letterSpacing: 0.3 },
-  eyebrow: { color: '#8E8E93', fontSize: 13, marginBottom: 5 },
-  liveBadge: { padding: 8 }, liveDot: { width: 0, height: 0 },
-  liveText: { color: '#8E8E93', fontSize: 12 },
   heroPanel: { backgroundColor: '#FFFFFF', borderRadius: 12, borderCurve: 'continuous', padding: 16 },
   panelLabel: { color: '#3C3C43', fontSize: 15 },
   heroMetric: { color: '#000', fontSize: 34, fontWeight: '600', marginTop: 4 },
@@ -2017,11 +2749,37 @@ const iosStyles = StyleSheet.create({
   detailTitle: { fontSize: 22, fontWeight: '600' },
   formLabel: { color: '#6C6C70', fontSize: 13, fontWeight: '400' },
   formInput: { minHeight: 46, borderRadius: 10, borderWidth: 0, backgroundColor: '#F2F2F7', paddingHorizontal: 12, color: '#000', fontSize: 17, fontWeight: '400' },
+  groupField: { minHeight: 46, borderRadius: 10, borderWidth: 0, backgroundColor: '#F2F2F7', paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  groupFieldPressed: { backgroundColor: '#E5E5EA' },
+  groupChips: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  groupChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: 'rgba(0,122,255,0.12)' },
+  groupChipIndex: { color: '#007AFF', fontSize: 11, fontWeight: '700' },
+  groupChipText: { color: '#007AFF', fontSize: 13, fontWeight: '600', maxWidth: 160 },
+  groupPlaceholder: { flex: 1, color: '#8E8E93', fontSize: 17 },
+  pickerNav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4, paddingBottom: 10 },
+  pickerTitle: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: '#000', fontSize: 17, fontWeight: '600' },
+  switchRow: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
+  switchControl: { alignSelf: 'center' },
+  limitSummary: { flex: 1, color: '#000', fontSize: 17, fontWeight: '400' },
+  formTextarea: { minHeight: 76, paddingTop: 10, paddingBottom: 10, textAlignVertical: 'top' },
+  groupSearch: { minHeight: 38, borderRadius: 10, backgroundColor: '#E5E5EA', flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10 },
+  groupSearchInput: { flex: 1, minHeight: 36, paddingVertical: 0, color: '#000', fontSize: 17 },
+  groupPickerList: { marginTop: 8, maxHeight: 300 },
+  groupOption: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 10, borderCurve: 'continuous', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(60,60,67,0.22)' },
+  groupOptionSelected: { backgroundColor: 'rgba(0,122,255,0.08)', borderBottomColor: 'transparent' },
+  groupOptionPressed: { backgroundColor: '#F2F2F7' },
+  groupOptionOrder: { width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: 'rgba(60,60,67,0.3)', alignItems: 'center', justifyContent: 'center' },
+  groupOptionOrderActive: { borderColor: '#007AFF', backgroundColor: '#007AFF' },
+  groupOptionOrderText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
+  groupOptionName: { color: '#000', fontSize: 17, fontWeight: '400' },
+  groupOptionDesc: { color: '#8E8E93', fontSize: 13 },
+  groupOptionRatio: { color: '#8E8E93', fontSize: 13, fontVariant: ['tabular-nums'] },
+  groupEmpty: { color: '#8E8E93', fontSize: 15, paddingVertical: 20, textAlign: 'center' },
   primaryButton: { minHeight: 50, borderRadius: 12, backgroundColor: '#007AFF', paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   primaryButtonText: { color: '#FFFFFF', fontSize: 17, fontWeight: '600' },
   primaryActionButton: { flex: 1, height: 46, borderRadius: 12, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center' },
   secondaryActionButton: { flex: 1, height: 46, borderRadius: 12, borderWidth: 1, borderColor: '#C6C6C8', alignItems: 'center', justifyContent: 'center' },
-  modalSheet: { borderTopLeftRadius: 16, borderTopRightRadius: 16, backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 30 },
+  modalSheet: { borderTopLeftRadius: 16, borderTopRightRadius: 16, overflow: 'hidden', backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 30 },
   settingsLabel: { fontSize: 17, color: '#000', fontWeight: '400' },
   settingsValue: { flex: 1, fontSize: 17, color: '#8E8E93', textAlign: 'right' },
   accountHeader: {

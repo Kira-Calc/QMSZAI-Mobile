@@ -91,18 +91,10 @@ export function MessagesScreen({
           }}
         />
 
-        {unreadCount > 0 ? (
-          <Text style={styles.unreadSummary}>{unreadCount} 条未读</Text>
-        ) : (
-          <Text style={styles.unreadSummary}>全部消息已读</Text>
-        )}
+        {unreadCount > 0 ? <Text style={styles.unreadSummary}>{unreadCount} 条未读</Text> : null}
 
         {filtered.length === 0 ? (
-          <EmptyState
-            title="没有未读消息"
-            message="暂无新消息"
-            icon="bell"
-          />
+          <EmptyState title="没有未读消息" icon="bell" />
         ) : (
           <Group header={filterIndex === 1 ? '未读' : '全部消息'}>
             {filtered.map((message) => {

@@ -1,7 +1,8 @@
 import { BlurView, BlurTargetView } from 'expo-blur';
+import * as Clipboard from 'expo-clipboard';
 import NativeMaskedView from '@react-native-masked-view/masked-view';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useRef, useState, type ComponentType, type ReactElement, type ComponentProps, type ComponentRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactElement, type ComponentProps, type ComponentRef, type ReactNode } from 'react';
 import {
   Alert,
   Animated,
@@ -17,6 +18,7 @@ import {
   TextInput,
   useWindowDimensions,
   View,
+  type TextInputInstance,
   type ViewProps,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,9 +35,12 @@ import {
 import { streamChat } from './api/client';
 import type { ChatConversation } from './api/types';
 import type { Model } from './types';
-import { GlassIconButton, GlassSurface, SheetHeader, palette } from './ui';
+import { AlphabetRail, GlassIconButton, GlassSurface, SheetHeader, palette } from './ui';
 import { AppIcon } from './components/AppIcon';
 import { elevation, m3, shape } from './material';
+import { RichText, plainText } from './richText';
+import { formatMessageTime } from './messageTime';
+import { alphabetOf, letterOf, sortByName } from './modelSort';
 import { useKeyboardInsets } from './useKeyboardInsets';
 
 // masked-view 的旧声明依赖已移除的 NativeMethods，限定为它实际支持的 props。
@@ -52,6 +57,7 @@ type ChatMessage = {
   role: 'user' | 'assistant';
   text: string;
   modelId?: string;
+  createdAt?: number;
 };
 
 type Conversation = {
@@ -117,18 +123,29 @@ export function ChatWorkspace({
   bottomInset = 0,
   onOpenTool,
   models,
+  active = true,
 }: {
   bottomInset?: number;
   onOpenTool?: (tool: ChatToolKey) => void;
   models: Model[];
+  /** 切到其他标签页时页面仍挂载，需要收起弹层，回来时不会残留。 */
+  active?: boolean;
 }) {
   const [conversations, setConversations] = useState<Conversation[]>(seedConversations);
   const [selected, setSelected] = useState<number | null>(null);
   const [selectedModelId, setSelectedModelId] = useState(models[0]?.id ?? '');
   const [draft, setDraft] = useState('');
+  // 编辑用户消息：保留被编辑的消息 id，发送时从该条开始截断并重新生成回复。
+  const [editing, setEditing] = useState<{ id: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
+  const [modelQuery, setModelQuery] = useState('');
+  // A-Z 索引需要知道每行在滚动内容里的位置，用 onLayout 记录。
+  const popoverRowOffsets = useRef<Record<number, number>>({});
+  const modelSheetScroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  const modelSheetListY = useRef(0);
+  const modelSheetRowOffsets = useRef<Record<number, number>>({});
   const [modelAnchor, setModelAnchor] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const [toolsVisible, setToolsVisible] = useState(false);
   const [toolsAnchor, setToolsAnchor] = useState({ x: 111, y: 170, width: 228, height: 36 });
@@ -151,17 +168,27 @@ export function ChatWorkspace({
     return () => animation.stop();
   }, [composerFade, keyboardVisible]);
 
-  // 键盘开合都会改变输入条位置，弹层锚点随之失效，直接关闭，避免菜单停在旧位置。
-  // 安卓模型选择器是底部弹窗，本身会收起键盘，不能跟着关。
+  // 键盘开合都会改变输入条位置，工具菜单直接关闭，避免停在旧位置。
+  // 模型弹层里有搜索框，键盘弹出不能关掉；改成重新量一次页面尺寸让弹层跟着上移。
   useEffect(() => {
     setToolsVisible(false);
-    if (Platform.OS === 'ios') setModelPickerVisible(false);
-  }, [keyboardVisible]);
+    if (Platform.OS !== 'ios' || !modelPickerVisible) return;
+    const root = rootRef.current;
+    if (!root) return;
+    root.measureInWindow((_x, _y, width, height) => setPopoverBounds({ width, height }));
+  }, [keyboardVisible, modelPickerVisible]);
+
+  useEffect(() => {
+    if (active) return;
+    setToolsVisible(false);
+    setModelPickerVisible(false);
+  }, [active]);
 
   const generation = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const threadAnim = useRef(new Animated.Value(1)).current;
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  const inputRef = useRef<TextInputInstance>(null);
   const rootRef = useRef<ComponentRef<typeof View>>(null);
   const modelButton = useRef<ComponentRef<typeof View>>(null);
   const toolsButton = useRef<ComponentRef<typeof View>>(null);
@@ -173,6 +200,35 @@ export function ChatWorkspace({
   const currentModelId = current?.modelId ?? selectedModelId;
   const currentModel = models.find((model) => model.id === currentModelId) ?? models[0] ?? fallbackModel;
   const sortedConversations = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
+
+  // 模型选择列表统一按名称排序，搜索命中的范围是名称和厂商。
+  const pickerModels = useMemo(() => {
+    const keyword = modelQuery.trim().toLowerCase();
+    const sorted = sortByName(models);
+    if (!keyword) return sorted;
+    return sorted.filter((model) =>
+      `${model.name} ${model.vendor}`.toLowerCase().includes(keyword),
+    );
+  }, [models, modelQuery]);
+
+  const pickerLetters = useMemo(
+    () => alphabetOf(pickerModels.map((model) => model.name)),
+    [pickerModels],
+  );
+
+  const letterIndex = (letter: string) =>
+    pickerModels.findIndex((model) => letterOf(model.name) === letter);
+
+  const popoverOffsetFor = (letter: string) => {
+    const index = letterIndex(letter);
+    return index < 0 ? undefined : popoverRowOffsets.current[index];
+  };
+
+  const sheetOffsetFor = (letter: string) => {
+    const index = letterIndex(letter);
+    if (index < 0) return undefined;
+    return modelSheetListY.current + (modelSheetRowOffsets.current[index] ?? 0);
+  };
 
   const stop = () => {
     generation.current += 1;
@@ -218,6 +274,7 @@ export function ChatWorkspace({
     setSelected(id);
     if (conversation?.modelId) setSelectedModelId(conversation.modelId);
     setDraft('');
+    setEditing(null);
     setHistoryVisible(false);
     playThreadTransition();
     if (conversation && !conversation.loaded) {
@@ -228,6 +285,7 @@ export function ChatWorkspace({
             role: item.Role === 'assistant' ? 'assistant' : 'user',
             text: item.Content ?? '',
             modelId: item.Model || conversation.modelId,
+            createdAt: Number.isNaN(Date.parse(item.CreatedAt)) ? undefined : Date.parse(item.CreatedAt),
           }));
           setConversations((items) =>
             items.map((entry) => (entry.id === id ? { ...entry, messages, loaded: true } : entry)),
@@ -241,6 +299,7 @@ export function ChatWorkspace({
     stop();
     setSelected(null);
     setDraft('');
+    setEditing(null);
     setHistoryVisible(false);
     playThreadTransition();
   };
@@ -254,7 +313,7 @@ export function ChatWorkspace({
         ),
       );
     }
-    setModelPickerVisible(false);
+    closeModelPicker();
   };
 
   // 把某个元素的位置换算成聊天页内部坐标，同时记录页面尺寸，供弹层做边界判断。
@@ -272,7 +331,13 @@ export function ChatWorkspace({
     });
   };
 
+  const closeModelPicker = () => {
+    setModelPickerVisible(false);
+    setModelQuery('');
+  };
+
   const openModelPicker = () => {
+    setModelQuery('');
     if (Platform.OS !== 'ios') {
       setModelPickerVisible(true);
       return;
@@ -313,7 +378,7 @@ export function ChatWorkspace({
     ]);
   };
 
-  const send = async (preset?: string) => {
+  const send = async (preset?: string, editTargetId?: number) => {
     const prompt = (preset ?? draft).trim();
     if (!prompt || busy || !currentModel) return;
     if (!currentModel.id) {
@@ -325,10 +390,23 @@ export function ChatWorkspace({
     let conversationId = selected;
     const request = ++generation.current;
     const now = Date.now();
-    const userMessage: ChatMessage = { id: Date.now(), role: 'user', text: prompt };
+    const userMessage: ChatMessage = { id: Date.now(), role: 'user', text: prompt, createdAt: now };
     const assistantId = userMessage.id + 1;
 
+    // 编辑用户消息时，从被编辑的那一条开始截断，后面所有回复都重新生成。
+    const existingMessages =
+      conversationId === null
+        ? []
+        : conversations.find((item) => item.id === conversationId)?.messages ?? [];
+    const editIndex =
+      editTargetId === undefined
+        ? -1
+        : existingMessages.findIndex((message) => message.id === editTargetId);
+    const truncatedMessages = editIndex >= 0 ? existingMessages.slice(0, editIndex) : existingMessages;
+    const historyMessages = editTargetId !== undefined ? truncatedMessages : existingMessages;
+
     setDraft('');
+    setEditing(null);
     setBusy(true);
 
     try {
@@ -357,7 +435,7 @@ export function ChatWorkspace({
                   ...conversation,
                   modelId: model.id,
                   updatedAt: now,
-                  messages: [...conversation.messages, userMessage],
+                  messages: [...truncatedMessages, userMessage],
                 }
               : conversation,
           ),
@@ -367,7 +445,7 @@ export function ChatWorkspace({
       const activeId = conversationId;
       appendMessage(activeId, 'user', prompt).catch(() => undefined);
 
-      const history = (conversations.find((item) => item.id === activeId)?.messages ?? [])
+      const history = historyMessages
         .filter((message) => message.text.trim())
         .map((message) => ({ role: message.role, content: message.text }));
       const payloadMessages = [...history, { role: 'user' as const, content: prompt }];
@@ -390,7 +468,13 @@ export function ChatWorkspace({
                   )
                 : [
                     ...conversation.messages,
-                    { id: assistantId, role: 'assistant' as const, modelId: model.id, text },
+                    {
+                      id: assistantId,
+                      role: 'assistant' as const,
+                      modelId: model.id,
+                      text,
+                      createdAt: Date.now(),
+                    },
                   ],
             };
           }),
@@ -429,20 +513,25 @@ export function ChatWorkspace({
         const target = conversationId;
         setConversations((items) =>
           items.map((conversation) =>
-            conversation.id === target
-              ? {
-                  ...conversation,
-                  messages: conversation.messages.filter(
-                    (message) => message.id !== userMessage.id && message.id !== assistantId,
-                  ),
-                }
-              : conversation,
+            conversation.id === target ? { ...conversation, messages: existingMessages } : conversation,
           ),
         );
       }
     } finally {
       if (abortRef.current) abortRef.current = null;
     }
+  };
+
+  const startEdit = (message: ChatMessage) => {
+    if (busy) return;
+    setEditing({ id: message.id });
+    setDraft(message.text);
+    setTimeout(() => inputRef.current?.focus(), 80);
+  };
+
+  const cancelEdit = () => {
+    setEditing(null);
+    setDraft('');
   };
 
   const canSend = draft.trim().length > 0 && !busy;
@@ -476,21 +565,51 @@ export function ChatWorkspace({
           </GlassSurface>
         </Pressable>
 
-        <Pressable
-          ref={modelButton}
-          accessibilityRole="button"
-          accessibilityLabel={`当前模型 ${currentModel.name}，点击切换`}
-          onPress={openModelPicker}
-          style={({ pressed }) => [styles.modelButton, pressed ? styles.pressed : null]}
-        >
-          <GlassSurface radius={18} interactive style={styles.modelGlass}>
-            <ModelLogo name={currentModel.name} size={22} />
-            <Text numberOfLines={1} style={styles.modelButtonText}>
-              {currentModel.name}
-            </Text>
-            <Icon name="chevron.up.chevron.down" fallback="⌄" size={11} color="#6C6C70" />
-          </GlassSurface>
-        </Pressable>
+        {Platform.OS === 'ios' && modelPickerVisible ? (
+          // 模型列表弹出时，顶部这个选择框直接变成搜索框。
+          <View style={styles.modelButton}>
+            <GlassSurface radius={18} style={[styles.modelGlass, styles.modelGlassSearch]}>
+              <Icon name="magnifyingglass" size={14} color={palette.secondaryLabel} />
+              <TextInput
+                accessibilityLabel="搜索模型"
+                value={modelQuery}
+                onChangeText={setModelQuery}
+                placeholder="搜索模型或厂商"
+                placeholderTextColor={palette.tertiaryLabel}
+                autoCorrect={false}
+                style={styles.modelSearchChipInput}
+              />
+              {modelQuery.length > 0 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="清除搜索"
+                  onPress={() => setModelQuery('')}
+                  hitSlop={10}
+                >
+                  <Icon name="xmark" size={13} color={palette.secondaryLabel} />
+                </Pressable>
+              ) : (
+                <Icon name="chevron.up.chevron.down" fallback="⌄" size={11} color="#6C6C70" />
+              )}
+            </GlassSurface>
+          </View>
+        ) : (
+          <Pressable
+            ref={modelButton}
+            accessibilityRole="button"
+            accessibilityLabel={`当前模型 ${currentModel.name}，点击切换`}
+            onPress={openModelPicker}
+            style={({ pressed }) => [styles.modelButton, pressed ? styles.pressed : null]}
+          >
+            <GlassSurface radius={18} interactive style={styles.modelGlass}>
+              <ModelLogo name={currentModel.name} size={22} />
+              <Text numberOfLines={1} style={styles.modelButtonText}>
+                {currentModel.name}
+              </Text>
+              <Icon name="chevron.up.chevron.down" fallback="⌄" size={11} color="#6C6C70" />
+            </GlassSurface>
+          </Pressable>
+        )}
 
         <GlassIconButton
           icon="square.and.pencil"
@@ -527,7 +646,13 @@ export function ChatWorkspace({
           onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: true })}
         >
           {current.messages.map((message) => (
-            <MessageBubble key={message.id} message={message} model={models.find((item) => item.id === message.modelId)} />
+            <MessageBubble
+              key={message.id}
+              message={message}
+              model={models.find((item) => item.id === message.modelId)}
+              onEdit={startEdit}
+              editDisabled={busy}
+            />
           ))}
           {busy ? <TypingBubble model={currentModel} /> : null}
         </ScrollView>
@@ -600,6 +725,17 @@ export function ChatWorkspace({
       </BlurTargetView>
 
       <View style={styles.composerBar}>
+        {editing ? (
+          <View style={styles.editingBar}>
+            <Icon name="square.and.pencil" size={13} color={ios ? palette.secondaryLabel : m3.onPrimaryContainer} />
+            <Text numberOfLines={1} style={styles.editingText}>
+              正在编辑消息，发送后将重新生成回复
+            </Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="取消编辑" onPress={cancelEdit} hitSlop={8}>
+              <Text style={styles.editingCancel}>取消</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <Animated.View
           pointerEvents="none"
           style={[
@@ -648,6 +784,7 @@ export function ChatWorkspace({
           </View>
           <View style={styles.composerField}>
             <TextInput
+              ref={inputRef}
               accessibilityLabel="聊天消息"
               placeholder={`给 ${currentModel.name} 发消息`}
               placeholderTextColor={ios ? '#8E8E93' : palette.tertiaryLabel}
@@ -661,7 +798,7 @@ export function ChatWorkspace({
               accessibilityRole="button"
               accessibilityLabel={busy ? '停止生成' : '发送'}
               disabled={!busy && !canSend}
-              onPress={busy ? stop : () => send()}
+              onPress={busy ? stop : () => send(undefined, editing?.id)}
               style={({ pressed }) => [
                 styles.sendButton,
                 busy ? styles.stopButton : canSend ? null : styles.sendButtonDisabled,
@@ -705,7 +842,6 @@ export function ChatWorkspace({
               <View style={styles.historyEmpty}>
                 <Icon name="bubble.left.and.bubble.right" fallback="◌" size={32} color="#C7C7CC" />
                 <Text style={styles.historyEmptyTitle}>还没有对话</Text>
-                <Text style={styles.historyEmptyCopy}>对话记录会保存在账号中。</Text>
               </View>
             ) : (
               <>
@@ -737,9 +873,11 @@ export function ChatWorkspace({
                             ) : null}
                           </View>
                           <Text numberOfLines={1} style={styles.historyPreview}>
-                            {conversation.messages[conversation.messages.length - 1]?.text ??
-                          conversation.modelId ??
-                          '暂无消息'}
+                            {plainText(
+                              conversation.messages[conversation.messages.length - 1]?.text ??
+                                conversation.modelId ??
+                                '暂无消息',
+                            )}
                           </Text>
                           <Text style={styles.historyMeta}>
                             {conversation.messages.length} 条消息 · {model?.name ?? '未知模型'} ·{' '}
@@ -769,12 +907,19 @@ export function ChatWorkspace({
         <ChatPopover
           visible={modelPickerVisible}
           anchor={modelAnchor}
-          onClose={() => setModelPickerVisible(false)}
-          estimatedHeight={models.length * 60 + 16}
+          onClose={closeModelPicker}
+          estimatedHeight={pickerModels.length ? pickerModels.length * 60 + 16 : 88}
           bounds={popoverBounds}
           scrollable
+          indexLetters={pickerLetters}
+          indexOffsetFor={popoverOffsetFor}
         >
-          {models.map((model, index) => {
+          {pickerModels.length === 0 ? (
+            <View style={styles.modelEmpty}>
+              <Text style={styles.modelEmptyText}>没有匹配的模型</Text>
+            </View>
+          ) : null}
+          {pickerModels.map((model, index) => {
             const isSelected = model.id === currentModelId;
             return (
               <Pressable
@@ -782,9 +927,12 @@ export function ChatWorkspace({
                 accessibilityRole="button"
                 accessibilityState={{ selected: isSelected }}
                 onPress={() => chooseModel(model)}
+                onLayout={(event) => {
+                  popoverRowOffsets.current[index] = event.nativeEvent.layout.y;
+                }}
                 style={({ pressed }) => [
                   styles.popoverRow,
-                  index < models.length - 1 ? styles.popoverRowBorder : null,
+                  index < pickerModels.length - 1 ? styles.popoverRowBorder : null,
                   pressed ? styles.popoverRowPressed : null,
                 ]}
               >
@@ -805,46 +953,100 @@ export function ChatWorkspace({
           visible={modelPickerVisible}
           animationType="slide"
           presentationStyle="fullScreen"
-          onRequestClose={() => setModelPickerVisible(false)}
+          onRequestClose={closeModelPicker}
         >
           <SafeAreaView style={styles.sheetRoot} edges={['top', 'bottom', 'left', 'right']}>
-            <SheetHeader title="选择模型" onClose={() => setModelPickerVisible(false)} />
-
-            <ScrollView contentContainerStyle={styles.sheetContent}>
-              <View style={styles.modelList}>
-                {models.map((model, index) => {
-                  const isSelected = model.id === currentModelId;
-                  return (
-                    <Pressable
-                      key={model.id}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: isSelected }}
-                      onPress={() => chooseModel(model)}
-                      style={({ pressed }) => [
-                        styles.modelRow,
-                        index < models.length - 1 ? styles.historyRowBorder : null,
-                        pressed ? styles.pressed : null,
-                      ]}
-                    >
-                      <ModelLogo name={model.name} size={30} />
-                      <View style={styles.modelMain}>
-                        <Text style={styles.modelName}>{model.name}</Text>
-                        <Text style={styles.modelVendor}>{model.vendor}</Text>
-                        <View style={styles.modelChips}>
-                          <Text style={styles.modelChip}>{model.context} 上下文</Text>
-                          <Text style={styles.modelChip}>{model.latency} 延迟</Text>
-                        </View>
-                      </View>
-                      {isSelected ? (
-                        <View style={styles.checkCircle}>
-                          <Icon name="checkmark" fallback="✓" size={14} color="#FFFFFF" />
-                        </View>
-                      ) : null}
-                    </Pressable>
-                  );
-                })}
+            <View style={styles.sheetSearchHeader}>
+              <View style={[styles.modelSearch, styles.sheetSearchField]}>
+                <Icon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
+                <TextInput
+                  accessibilityLabel="搜索模型"
+                  value={modelQuery}
+                  onChangeText={setModelQuery}
+                  placeholder="搜索模型或厂商"
+                  placeholderTextColor={palette.tertiaryLabel}
+                  autoCorrect={false}
+                  style={styles.modelSearchInput}
+                />
+                {modelQuery.length > 0 ? (
+                  <Pressable accessibilityRole="button" accessibilityLabel="清除搜索" onPress={() => setModelQuery('')} hitSlop={10}>
+                    <Icon name="xmark" size={15} color={palette.secondaryLabel} />
+                  </Pressable>
+                ) : null}
               </View>
+              <Pressable accessibilityRole="button" accessibilityLabel="完成" onPress={closeModelPicker} hitSlop={8}>
+                <Text style={styles.sheetSearchDone}>完成</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.sheetListRow}>
+            <ScrollView
+              ref={modelSheetScroll}
+              style={styles.sheetScroll}
+              contentContainerStyle={styles.sheetContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {pickerModels.length === 0 ? (
+                <Text style={styles.modelEmptyText}>没有匹配的模型</Text>
+              ) : (
+                <View
+                  style={styles.modelList}
+                  onLayout={(event) => {
+                    modelSheetListY.current = event.nativeEvent.layout.y;
+                  }}
+                >
+                  {pickerModels.map((model, index) => {
+                    const isSelected = model.id === currentModelId;
+                    return (
+                      <Pressable
+                        key={model.id}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                        onPress={() => chooseModel(model)}
+                        onLayout={(event) => {
+                          modelSheetRowOffsets.current[index] = event.nativeEvent.layout.y;
+                        }}
+                        style={({ pressed }) => [
+                          styles.modelRow,
+                          index < pickerModels.length - 1 ? styles.historyRowBorder : null,
+                          pressed ? styles.pressed : null,
+                        ]}
+                      >
+                        <ModelLogo name={model.name} size={30} />
+                        <View style={styles.modelMain}>
+                          <Text style={styles.modelName}>{model.name}</Text>
+                          <Text style={styles.modelVendor}>{model.vendor}</Text>
+                        </View>
+                        {isSelected ? (
+                          <View style={styles.checkCircle}>
+                            <Icon name="checkmark" fallback="✓" size={14} color="#FFFFFF" />
+                          </View>
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
             </ScrollView>
+            <AlphabetRail
+              letters={pickerLetters}
+              onSelect={(letter) => {
+                const offset = sheetOffsetFor(letter);
+                if (offset === undefined) return;
+                modelSheetScroll.current?.scrollTo({ y: Math.max(0, offset - 6), animated: true });
+              }}
+            />
+            {/* 底部渐隐：滚动时列表在底边淡出，避免被切成直角硬边。 */}
+            <Svg pointerEvents="none" style={styles.sheetFade} width="100%" height={32}>
+              <Defs>
+                <SvgLinearGradient id="sheetPickerFade" x1="0" y1="0" x2="0" y2="1">
+                  <Stop offset="0" stopColor={palette.groupedBackground} stopOpacity="0" />
+                  <Stop offset="1" stopColor={palette.groupedBackground} stopOpacity="1" />
+                </SvgLinearGradient>
+              </Defs>
+              <Rect width="100%" height="100%" fill="url(#sheetPickerFade)" />
+            </Svg>
+            </View>
           </SafeAreaView>
         </Modal>
       )}
@@ -856,6 +1058,7 @@ export function ChatWorkspace({
         estimatedHeight={chatTools.length * 52 + 12}
         width={232}
         bounds={popoverBounds}
+        overlayTop={0}
       >
         {chatTools.map((tool, index) => (
           <Pressable
@@ -890,7 +1093,10 @@ function ChatPopover({
   estimatedHeight,
   width: preferredWidth = 320,
   bounds,
+  overlayTop,
   scrollable = false,
+  indexLetters,
+  indexOffsetFor,
   children,
 }: {
   visible: boolean;
@@ -899,10 +1105,15 @@ function ChatPopover({
   estimatedHeight: number;
   width?: number;
   bounds?: { width: number; height: number };
+  /** 遮罩顶部；默认从锚点底部开始（模型选择需要让上方搜索框可点），AI 功能菜单传 0。 */
+  overlayTop?: number;
   scrollable?: boolean;
+  indexLetters?: string[];
+  indexOffsetFor?: (letter: string) => number | undefined;
   children: ReactNode;
 }) {
   const anim = useRef(new Animated.Value(0)).current;
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   // 页面内坐标，尺寸取聊天页自身（键盘弹出时高度不含键盘），保证弹层始终在可见区域内。
   const pageWidth = bounds?.width || windowWidth;
@@ -964,11 +1175,12 @@ function ChatPopover({
 
   return (
     <View pointerEvents="box-none" style={styles.popoverRoot}>
+      {/* 默认遮罩从选择框下方开始，弹层打开时顶部搜索框仍然可以直接点按输入。 */}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="关闭菜单"
         onPress={onClose}
-        style={StyleSheet.absoluteFill}
+        style={[StyleSheet.absoluteFill, { top: overlayTop ?? anchor.y + anchor.height }]}
       />
       <Animated.View
         style={[
@@ -993,14 +1205,26 @@ function ChatPopover({
         <GlassSurface radius={20} style={styles.popoverCard}>
           <View style={styles.popoverBacking}>
             {scrollable ? (
-              <ScrollView
-                style={{ maxHeight }}
-                contentContainerStyle={styles.popoverScrollContent}
-                showsVerticalScrollIndicator={false}
-                bounces={false}
-              >
-                {children}
-              </ScrollView>
+              <View style={styles.popoverListRow}>
+                <ScrollView
+                  ref={scrollRef}
+                  style={{ maxHeight }}
+                  contentContainerStyle={styles.popoverScrollContent}
+                  showsVerticalScrollIndicator={false}
+                  bounces={false}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {children}
+                </ScrollView>
+                <AlphabetRail
+                  letters={indexLetters ?? []}
+                  onSelect={(letter) => {
+                    const offset = indexOffsetFor?.(letter);
+                    if (offset === undefined) return;
+                    scrollRef.current?.scrollTo({ y: Math.max(0, offset - 6), animated: true });
+                  }}
+                />
+              </View>
             ) : (
               children
             )}
@@ -1011,14 +1235,85 @@ function ChatPopover({
   );
 }
 
-function MessageBubble({ message, model }: { message: ChatMessage; model?: Model }) {
-  if (message.role === 'user') {
+function MessageBubble({
+  message,
+  model,
+  onEdit,
+  editDisabled,
+}: {
+  message: ChatMessage;
+  model?: Model;
+  onEdit?: (message: ChatMessage) => void;
+  editDisabled?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    },
+    [],
+  );
+
+  const copy = async () => {
+    try {
+      await Clipboard.setStringAsync(message.text);
+      setCopied(true);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // 复制失败不打断对话，文本本身仍可长按选择。
+    }
+  };
+
+  const isUser = message.role === 'user';
+  const time = formatMessageTime(message.createdAt);
+
+  const copyButton = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={copied ? '已复制' : '复制消息'}
+      onPress={copy}
+      hitSlop={10}
+      style={({ pressed }) => [styles.messageAction, pressed ? styles.pressed : null]}
+    >
+      <Icon
+        name={copied ? 'checkmark' : 'doc.on.doc'}
+        size={16}
+        color={copied ? palette.blue : palette.secondaryLabel}
+      />
+    </Pressable>
+  );
+
+  const timeText = time ? <Text style={styles.messageTime}>{time}</Text> : null;
+
+  if (isUser) {
     return (
       <View style={styles.userRow}>
         <View style={styles.userBubble}>
           <Text selectable style={styles.userText}>
             {message.text}
           </Text>
+        </View>
+        <View style={[styles.messageMeta, styles.messageMetaUser]}>
+          {timeText}
+          {copyButton}
+          {onEdit ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="编辑消息"
+              disabled={editDisabled}
+              onPress={() => onEdit(message)}
+              hitSlop={10}
+              style={({ pressed }) => [
+                styles.messageAction,
+                pressed || editDisabled ? styles.messageActionDim : null,
+              ]}
+            >
+              <Icon name="square.and.pencil" size={16} color={palette.secondaryLabel} />
+            </Pressable>
+          ) : null}
         </View>
       </View>
     );
@@ -1028,9 +1323,11 @@ function MessageBubble({ message, model }: { message: ChatMessage; model?: Model
     <View style={styles.assistantRow}>
       <Text style={styles.assistantMeta}>{model?.name ?? '助手'}</Text>
       <View style={styles.assistantBubble}>
-        <Text selectable style={styles.assistantText}>
-          {message.text}
-        </Text>
+        <RichText text={message.text} style={styles.assistantText} />
+      </View>
+      <View style={styles.messageMeta}>
+        {copyButton}
+        {timeText}
       </View>
     </View>
   );
@@ -1163,6 +1460,17 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   userText: { color: '#FFFFFF', fontSize: ios ? 17 : 16, lineHeight: ios ? 23 : 22 },
+  messageMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 5,
+    paddingHorizontal: 4,
+  },
+  messageMetaUser: { justifyContent: 'flex-end' },
+  messageTime: { color: palette.secondaryLabel, fontSize: 11.5 },
+  messageAction: { padding: 3 },
+  messageActionDim: { opacity: 0.4 },
   assistantRow: { alignItems: 'flex-start', maxWidth: '88%' },
   assistantMeta: {
     color: palette.secondaryLabel,
@@ -1266,6 +1574,23 @@ const styles = StyleSheet.create({
     top: -40,
     height: 48,
   },
+  editingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: 6,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: ios ? 12 : shape.lg,
+    backgroundColor: ios ? palette.fill : m3.primaryContainer,
+  },
+  editingText: {
+    flex: 1,
+    color: ios ? palette.secondaryLabel : m3.onPrimaryContainer,
+    fontSize: 12,
+  },
+  editingCancel: { color: palette.blue, fontSize: 12, fontWeight: '600' },
   composerRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -1310,6 +1635,7 @@ const styles = StyleSheet.create({
   },
   popoverCard: { overflow: 'hidden' },
   popoverScrollContent: { paddingVertical: 0 },
+  popoverListRow: { flexDirection: 'row' },
   popoverBacking: {
     backgroundColor: ios ? 'rgba(255,255,255,0.95)' : palette.card,
     paddingVertical: 4,
@@ -1385,7 +1711,46 @@ const styles = StyleSheet.create({
   },
   historyEmpty: { alignItems: 'center', paddingTop: 80, gap: 8 },
   historyEmptyTitle: { color: palette.label, fontSize: 17, fontWeight: '500' },
-  historyEmptyCopy: { color: palette.secondaryLabel, fontSize: 13, textAlign: 'center' },
+  modelSearch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 38,
+    marginHorizontal: 10,
+    marginTop: 10,
+    marginBottom: 4,
+    paddingHorizontal: 11,
+    borderRadius: ios ? 11 : shape.lg,
+    backgroundColor: ios ? 'rgba(118,118,128,0.12)' : palette.fill,
+  },
+  modelSearchInput: {
+    flex: 1,
+    color: palette.label,
+    fontSize: ios ? 15 : 16,
+    paddingVertical: 0,
+  },
+  modelSearchChipInput: {
+    flex: 1,
+    color: palette.label,
+    fontSize: 14,
+    paddingVertical: 0,
+  },
+  modelGlassSearch: { justifyContent: 'flex-start' },
+  sheetSearchHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 4,
+    paddingBottom: 6,
+  },
+  sheetSearchField: { flex: 1, marginHorizontal: 0, marginTop: 0, marginBottom: 0 },
+  sheetSearchDone: { color: palette.blue, fontSize: 16, fontWeight: '600', paddingHorizontal: 4 },
+  sheetListRow: { flex: 1, flexDirection: 'row' },
+  sheetFade: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  sheetScroll: { flex: 1 },
+  modelEmpty: { paddingVertical: 18, alignItems: 'center' },
+  modelEmptyText: { color: palette.secondaryLabel, fontSize: 15, textAlign: 'center', paddingVertical: 18 },
   modelList: { backgroundColor: palette.card, borderRadius: ios ? 14 : shape.xl, overflow: 'hidden' },
   modelRow: {
     flexDirection: 'row',
@@ -1398,17 +1763,6 @@ const styles = StyleSheet.create({
   modelMain: { flex: 1, gap: 3 },
   modelName: { color: palette.label, fontSize: 17, fontWeight: '500' },
   modelVendor: { color: palette.secondaryLabel, fontSize: 13 },
-  modelChips: { flexDirection: 'row', gap: 6, marginTop: 2 },
-  modelChip: {
-    color: palette.secondaryLabel,
-    fontSize: 11,
-    fontWeight: '500',
-    backgroundColor: ios ? 'rgba(118,118,128,0.10)' : m3.surfaceContainerHigh,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: ios ? 6 : shape.sm,
-    overflow: 'hidden',
-  },
   checkCircle: {
     width: 22,
     height: 22,

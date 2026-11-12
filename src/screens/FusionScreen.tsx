@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Dimensions,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
+  type ScrollViewInstance,
+  type ViewInstance,
   Text,
   TextInput,
   View,
@@ -12,8 +16,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chatOnce } from '../api/client';
+import { ModelLogo } from '../components/ModelLogo';
 import { cardSurface, pressedDim } from '../material';
 import { Badge, GlassPillButton, Group, Row, Sheet, Subpage, palette } from '../ui';
+import { RichText } from '../richText';
+import { alphabetOf, letterOf, sortModelNames } from '../modelSort';
 
 const ios = Platform.OS === 'ios';
 
@@ -34,8 +41,82 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
   const [summary, setSummary] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [sheet, setSheet] = useState<'assistant' | 'summary' | null>(null);
+  const [assistantQuery, setAssistantQuery] = useState('');
+  const [summaryQuery, setSummaryQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [messages, setMessages] = useState<FusionMessage[]>([]);
+  // 安卓键盘覆盖在窗口上，ScrollView 不会自己缩小，需要手动补底部留白才能滚到按钮。
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const sendButtonRef = useRef<ViewInstance>(null);
+  const keyboardHeightRef = useRef(0);
+  const scrollOffsetRef = useRef(0);
+  // 两个模型弹层各自的 A-Z 索引位置。
+  const assistantGroupY = useRef(0);
+  const assistantBodyY = useRef(0);
+  const assistantRowOffsets = useRef<number[]>([]);
+  const summaryGroupY = useRef(0);
+  const summaryBodyY = useRef(0);
+  const summaryRowOffsets = useRef<number[]>([]);
+  const sortedModels = useMemo(() => sortModelNames(models), [models]);
+  const filterModels = (list: string[], query: string) => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return list;
+    return list.filter((name) => name.toLowerCase().includes(keyword));
+  };
+  const assistantModels = useMemo(
+    () => filterModels(sortedModels, assistantQuery),
+    [sortedModels, assistantQuery],
+  );
+  const summaryModels = useMemo(
+    () => filterModels(sortedModels, summaryQuery),
+    [sortedModels, summaryQuery],
+  );
+  const assistantLetters = useMemo(() => alphabetOf(assistantModels), [assistantModels]);
+  const summaryLetters = useMemo(() => alphabetOf(summaryModels), [summaryModels]);
+  const offsetIn = (
+    letter: string,
+    list: string[],
+    groupY: React.RefObject<number>,
+    bodyY: React.RefObject<number>,
+    rows: React.RefObject<number[]>,
+  ) => {
+    const index = list.findIndex((name) => letterOf(name) === letter);
+    if (index < 0) return undefined;
+    return groupY.current + bodyY.current + (rows.current[index] ?? 0);
+  };
+
+  // 键盘弹起后把「发送并融合」按钮滚到键盘上方。
+  // 键盘是覆盖在窗口上的（窗口不会缩小），所以用 measureInWindow 拿按钮的屏幕位置，
+  // 再和「窗口高度 - 键盘高度」比较，把超出的部分滚出去。
+  const revealSendButton = () => {
+    const keyboardHeight = keyboardHeightRef.current;
+    if (!keyboardHeight) return;
+    sendButtonRef.current?.measureInWindow((_x, y, _width, height) => {
+      const keyboardTop = Dimensions.get('window').height - keyboardHeight;
+      const overflow = y + height + 24 - keyboardTop;
+      if (overflow > 4) {
+        scrollRef.current?.scrollTo({ y: scrollOffsetRef.current + overflow, animated: true });
+      }
+    });
+  };
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (event) => {
+      keyboardHeightRef.current = event.endCoordinates.height;
+      // iOS 页面本来就不会被键盘挡住，只有安卓需要补留白。
+      setKeyboardInset(ios ? 0 : event.endCoordinates.height);
+      [60, 240, 480].forEach((delay) => setTimeout(revealSendButton, delay));
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      keyboardHeightRef.current = 0;
+      setKeyboardInset(0);
+    });
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
   const addAssistant = (name: string) => {
     setAssistants((current) => {
@@ -138,7 +219,18 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
       right={messages.length > 0 ? <GlassPillButton label="新建" onPress={reset} /> : null}
     >
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}
+        ref={scrollRef}
+        onScroll={(event) => {
+          scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+        }}
+        onContentSizeChange={() => {
+          if (keyboardHeightRef.current) revealSendButton();
+        }}
+        scrollEventThrottle={32}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: 24 + insets.bottom + keyboardInset },
+        ]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>
@@ -153,13 +245,19 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
             title="助手模型"
             value={assistants.length > 0 ? `${assistants.length}/3` : '选择模型'}
             chevron
-            onPress={() => setSheet('assistant')}
+            onPress={() => {
+              setAssistantQuery('');
+              setSheet('assistant');
+            }}
           />
           <Row
             title="总结模型"
             value={summary ?? '选择模型'}
             chevron
-            onPress={() => setSheet('summary')}
+            onPress={() => {
+              setSummaryQuery('');
+              setSheet('summary');
+            }}
           />
         </Group>
 
@@ -190,6 +288,7 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
           accessibilityRole="button"
           accessibilityState={{ disabled: !canSend }}
           disabled={!canSend}
+          ref={sendButtonRef}
           onPress={send}
           style={({ pressed }) => [
             styles.sendButton,
@@ -208,7 +307,6 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
         {messages.length === 0 ? (
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>暂无会话</Text>
-            <Text style={styles.emptyCopy}>选择模型并输入问题，融合结果会显示在这里。</Text>
           </View>
         ) : (
           messages.map((message) => (
@@ -218,19 +316,17 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
                 <Badge text="融合结果" tone="success" />
                 <Text style={styles.resultMeta}>总结：{message.summary}</Text>
               </View>
-              <Text selectable style={styles.resultAnswer}>
-                {message.answer}
-              </Text>
+              <RichText text={message.answer} style={styles.resultAnswer} />
               {message.replies.map((reply) => (
                 <View key={reply.model} style={styles.replyBlock}>
                   <Text style={styles.replyModel}>{reply.model}</Text>
-                  <Text
-                    selectable
-                    style={[styles.replyText, reply.error ? styles.replyError : null]}
-                    numberOfLines={reply.error ? 3 : undefined}
-                  >
-                    {reply.error ? reply.error : reply.text}
-                  </Text>
+                  {reply.error ? (
+                    <Text style={[styles.replyText, styles.replyError]} numberOfLines={3}>
+                      {reply.error}
+                    </Text>
+                  ) : (
+                    <RichText text={reply.text} style={styles.replyText} />
+                  )}
                 </View>
               ))}
             </View>
@@ -238,26 +334,77 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
         )}
       </ScrollView>
 
-      <Sheet visible={sheet === 'assistant'} title="选择助手模型" onClose={() => setSheet(null)}>
-        <Group header="最多选择 3 个">
-          {models.map((name) => (
+      <Sheet
+        visible={sheet === 'assistant'}
+        title="选择助手模型"
+        onClose={() => {
+          setSheet(null);
+          setAssistantQuery('');
+        }}
+        indexLetters={assistantLetters}
+        indexOffsetFor={(letter) =>
+          offsetIn(letter, assistantModels, assistantGroupY, assistantBodyY, assistantRowOffsets)
+        }
+        searchValue={assistantQuery}
+        onSearchChange={setAssistantQuery}
+        empty={assistantModels.length === 0}
+      >
+        <Group
+          header="最多选择 3 个"
+          onLayout={(event) => {
+            assistantGroupY.current = event.nativeEvent.layout.y;
+          }}
+          onBodyLayout={(event) => {
+            assistantBodyY.current = event.nativeEvent.layout.y;
+          }}
+        >
+          {assistantModels.map((name, index) => (
             <Row
               key={name}
               title={name}
+              leading={<ModelLogo name={name} size={24} />}
               value={assistants.includes(name) ? '✓' : undefined}
+              onLayout={(event) => {
+                assistantRowOffsets.current[index] = event.nativeEvent.layout.y;
+              }}
               onPress={() => addAssistant(name)}
             />
           ))}
         </Group>
       </Sheet>
 
-      <Sheet visible={sheet === 'summary'} title="选择总结模型" onClose={() => setSheet(null)}>
-        <Group>
-          {models.map((name) => (
+      <Sheet
+        visible={sheet === 'summary'}
+        title="选择总结模型"
+        onClose={() => {
+          setSheet(null);
+          setSummaryQuery('');
+        }}
+        indexLetters={summaryLetters}
+        indexOffsetFor={(letter) =>
+          offsetIn(letter, summaryModels, summaryGroupY, summaryBodyY, summaryRowOffsets)
+        }
+        searchValue={summaryQuery}
+        onSearchChange={setSummaryQuery}
+        empty={summaryModels.length === 0}
+      >
+        <Group
+          onLayout={(event) => {
+            summaryGroupY.current = event.nativeEvent.layout.y;
+          }}
+          onBodyLayout={(event) => {
+            summaryBodyY.current = event.nativeEvent.layout.y;
+          }}
+        >
+          {summaryModels.map((name, index) => (
             <Row
               key={name}
               title={name}
+              leading={<ModelLogo name={name} size={24} />}
               value={summary === name ? '✓' : undefined}
+              onLayout={(event) => {
+                summaryRowOffsets.current[index] = event.nativeEvent.layout.y;
+              }}
               onPress={() => {
                 setSummary(name);
                 setSheet(null);
@@ -371,11 +518,6 @@ const styles = StyleSheet.create({
     color: palette.label,
     fontSize: 16,
     fontWeight: '600',
-  },
-  emptyCopy: {
-    color: palette.secondaryLabel,
-    fontSize: 13,
-    textAlign: 'center',
   },
   resultCard: {
     backgroundColor: palette.card,

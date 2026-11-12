@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'r
 import {
   AccessibilityInfo,
   Animated,
+  Easing,
   PanResponder,
   Platform,
   Pressable,
@@ -40,6 +41,9 @@ const glassSupported =
 
 const PADDING = 6;
 const ITEM_INSET = 4;
+
+// GlassView 需要参与尺寸/圆角动画，包一层 Animated。
+const AnimatedGlassView = Animated.createAnimatedComponent(GlassView);
 
 export function LiquidTabBar({
   activeKey,
@@ -165,6 +169,47 @@ export function LiquidTabBar({
   const useGlass = glassSupported && !reduceTransparency;
   const activeTab = appTabs[activeIndex];
 
+  // 完整导航栏 ↔ 圆形玻璃钮的收起/展开动画。宽度和高度只能 JS 驱动，
+  // 用同一个进度值驱动尺寸、圆角与两套内容的交叉淡入淡出。
+  const miniProgress = useRef(new Animated.Value(minimized ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(miniProgress, {
+      toValue: minimized ? 1 : 0,
+      duration: 240,
+      easing: Easing.inOut(Easing.ease),
+      useNativeDriver: false,
+    }).start();
+  }, [minimized, miniProgress]);
+
+  const barWidthProgress =
+    barWidth > 0
+      ? miniProgress.interpolate({
+          inputRange: [0, 1],
+          outputRange: [barWidth, 60],
+          extrapolate: 'clamp',
+        })
+      : undefined;
+  const barHeightProgress = miniProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [64, 60],
+    extrapolate: 'clamp',
+  });
+  const barRadiusProgress = miniProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [ios ? 32 : shape.xl, 30],
+    extrapolate: 'clamp',
+  });
+  const tabsOpacity = miniProgress.interpolate({
+    inputRange: [0, 0.45],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+  const miniOpacity = miniProgress.interpolate({
+    inputRange: [0.4, 1],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
   // 底部滚动边缘渐隐：让内容在悬浮导航栏下方平滑过渡到页面背景，
   // 避免列表在安全区边界被裁出一道硬边（看起来像被切掉一块）。
   const scrimHeight = insets.bottom + 70;
@@ -181,10 +226,10 @@ export function LiquidTabBar({
         })
       : 0;
 
-  const handleBarLayout = (event: LayoutChangeEvent) => {
-    if (!minimized) {
-      setBarWidth(event.nativeEvent.layout.width);
-    }
+  // 用外层 dock 的宽度换算导航栏宽度：收起动画会持续改 bar 自身宽度，
+  // 若在 bar 上量宽度会把动画中间值写回状态，形成反馈抖动。
+  const handleDockLayout = (event: LayoutChangeEvent) => {
+    setBarWidth(Math.max(0, event.nativeEvent.layout.width - 32));
   };
 
   // iOS 沿用系统蓝；安卓用 Material 3 的 primary / onSurfaceVariant
@@ -217,18 +262,13 @@ export function LiquidTabBar({
     );
   });
 
-  const content = minimized ? (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${activeTab.label}，展开导航栏`}
-      accessibilityHint="轻点展开全部导航标签"
-      onPress={() => onMinimizedChange(false)}
-      style={({ pressed }) => [styles.miniItem, pressed ? styles.itemPressed : null]}
+  const tabsLayer = (
+    <Animated.View
+      pointerEvents={minimized ? 'none' : 'auto'}
+      accessibilityElementsHidden={minimized}
+      importantForAccessibility={minimized ? 'no-hide-descendants' : 'auto'}
+      style={[styles.tabsLayer, { opacity: tabsOpacity }]}
     >
-      <AppIcon name={activeTab.symbol} size={24} color={activeTint} />
-    </Pressable>
-  ) : (
-    <>
       {barWidth > 0 ? (
         <Animated.View
           pointerEvents="none"
@@ -249,7 +289,24 @@ export function LiquidTabBar({
         </Animated.View>
       ) : null}
       {tabItems}
-    </>
+    </Animated.View>
+  );
+
+  const miniLayer = (
+    <Animated.View
+      pointerEvents={minimized ? 'auto' : 'none'}
+      style={[styles.miniLayer, { opacity: miniOpacity }]}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${activeTab.label}，展开导航栏`}
+        accessibilityHint="轻点展开全部导航标签"
+        onPress={() => onMinimizedChange(false)}
+        style={({ pressed }) => [styles.miniItem, pressed ? styles.itemPressed : null]}
+      >
+        <AppIcon name={activeTab.symbol} size={24} color={activeTint} />
+      </Pressable>
+    </Animated.View>
   );
 
   return (
@@ -274,27 +331,44 @@ export function LiquidTabBar({
       <View
         style={[styles.dock, { paddingBottom: insets.bottom + 6 }]}
         pointerEvents="box-none"
+        onLayout={handleDockLayout}
         {...verticalPan.panHandlers}
       >
         {useGlass ? (
-          <GlassView
+          <AnimatedGlassView
             glassEffectStyle="regular"
             tintColor="rgba(118,118,128,0.12)"
             isInteractive
-            onLayout={handleBarLayout}
-            style={[styles.bar, minimized ? styles.barMinimized : null, styles.barGlass]}
+            style={[
+              styles.bar,
+              styles.barGlass,
+              {
+                width: barWidthProgress,
+                height: barHeightProgress,
+                borderRadius: barRadiusProgress,
+              },
+            ]}
             {...horizontalPan.panHandlers}
           >
-            {content}
-          </GlassView>
+            {tabsLayer}
+            {miniLayer}
+          </AnimatedGlassView>
         ) : (
-          <View
-            onLayout={handleBarLayout}
-            style={[styles.bar, minimized ? styles.barMinimized : null, styles.barFallback]}
+          <Animated.View
+            style={[
+              styles.bar,
+              styles.barFallback,
+              {
+                width: barWidthProgress,
+                height: barHeightProgress,
+                borderRadius: barRadiusProgress,
+              },
+            ]}
             {...horizontalPan.panHandlers}
           >
-            {content}
-          </View>
+            {tabsLayer}
+            {miniLayer}
+          </Animated.View>
         )}
       </View>
     </View>
@@ -323,16 +397,25 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 64,
     borderRadius: ios ? 32 : shape.xl,
+  },
+  tabsLayer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: PADDING,
   },
-  barMinimized: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 0,
+  miniLayer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   barGlass: {
     backgroundColor: 'rgba(255,255,255,0.42)',

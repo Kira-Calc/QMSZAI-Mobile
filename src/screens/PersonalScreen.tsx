@@ -35,7 +35,8 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     loadCheckin();
-  }, [loadCheckin]);
+    refreshUser();
+  }, [loadCheckin, refreshUser]);
 
   const displayNameValue = user?.display_name || user?.username || '';
   const initial = displayNameValue.trim().charAt(0).toUpperCase() || '·';

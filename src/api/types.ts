@@ -218,6 +218,10 @@ export type ApiToken = {
   model_limits_enabled?: boolean;
   model_limits?: string;
   allow_ips?: string;
+  /** 网页端的分组优先级，JSON 字符串数组。 */
+  routing_group_order?: string;
+  cross_group_retry?: boolean;
+  routing_enabled?: boolean;
 };
 
 export type ApiTokenPage = {

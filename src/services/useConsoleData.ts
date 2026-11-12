@@ -103,6 +103,38 @@ export function useConsoleData() {
     }
   }, [quotaPerUnit, owner]);
 
+  const refreshLogs = useCallback(async () => {
+    setLogsLoading(true);
+    try {
+      const page = await fetchUsageLogs({ page: 1, pageSize: 50 });
+      if (mounted.current) {
+        setState((current) => ({
+          ...current,
+          logs: mapUsageLogs(page.items ?? [], quotaPerUnit),
+          logPoints: pointsFromLogs(page.items ?? []),
+        }));
+      }
+    } catch {
+      /* 保留已有数据 */
+    } finally {
+      if (mounted.current) setLogsLoading(false);
+    }
+  }, [quotaPerUnit]);
+
+  const refreshTasks = useCallback(async () => {
+    setTasksLoading(true);
+    try {
+      const page = await fetchTasks(1, 50);
+      if (mounted.current) {
+        setState((current) => ({ ...current, tasks: mapTasks(page.items ?? [], quotaPerUnit) }));
+      }
+    } catch {
+      /* 保留已有数据 */
+    } finally {
+      if (mounted.current) setTasksLoading(false);
+    }
+  }, [quotaPerUnit]);
+
   const refresh = useCallback(async () => {
     if (!user) return;
     setError('');
@@ -234,5 +266,7 @@ export function useConsoleData() {
     tokensLoading,
     refresh,
     refreshTokens,
+    refreshLogs,
+    refreshTasks,
   };
 }

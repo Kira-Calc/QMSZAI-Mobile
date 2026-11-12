@@ -1,4 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
+import { useEffect } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -13,7 +14,11 @@ const REGISTER_HOST = 'https://test.qmszai.cn';
 
 export function WalletScreen({ onBack }: { onBack: () => void }) {
   const insets = useSafeAreaInsets();
-  const { user, quotaPerUnit } = useAuth();
+  const { user, quotaPerUnit, refreshUser } = useAuth();
+
+  useEffect(() => {
+    refreshUser();
+  }, [refreshUser]);
 
   const affCode = user?.aff_code || '';
   const inviteLink = affCode ? `${REGISTER_HOST}/register?aff=${affCode}` : '';

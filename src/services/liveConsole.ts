@@ -156,14 +156,29 @@ export function mapMarketModels(
   });
 }
 
+function parseRoutingGroups(value?: string): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((name): name is string => typeof name === 'string' && name.length > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function mapTokens(items: ApiToken[], quotaPerUnit: number): Token[] {
   return items.map((item) => {
     const expired = item.expired_time > 0 && item.expired_time * 1000 < Date.now();
     const total = item.unlimited_quota ? item.used_quota : item.used_quota + item.remain_quota;
+    const routingGroups = parseRoutingGroups(item.routing_group_order);
+    const modelLimits = (item.model_limits ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
     return {
       id: String(item.id),
       name: item.name || `令牌 ${item.id}`,
-      scope: item.group || '所有分组',
+      scope: routingGroups.length > 0 ? routingGroups.join(' → ') : item.group || '所有分组',
       usage: item.used_quota ?? 0,
       quota: total > 0 ? total : 1,
       lastUsed: item.accessed_time ? formatRelative(item.accessed_time) : '从未使用',
@@ -172,6 +187,9 @@ export function mapTokens(items: ApiToken[], quotaPerUnit: number): Token[] {
       remainQuota: item.remain_quota ?? 0,
       expiredTime: item.expired_time ?? -1,
       group: item.group ?? '',
+      routingGroups,
+      modelLimits,
+      allowIps: item.allow_ips ?? '',
     } satisfies Token;
   });
 }
@@ -234,10 +252,11 @@ export function mapTasks(items: TaskItem[], quotaPerUnit: number): TaskRecord[] 
         : state === 'running'
           ? 45
           : 0;
-    const elapsedSeconds =
-      state === 'running' || state === 'succeeded'
-        ? (task.finish_time || Math.floor(Date.now() / 1000)) - (task.start_time || task.submit_time)
-        : 0;
+    // 只有拿到 finish_time 才算真实耗时；已完成但没有 finish_time 时留空，
+    // 否则会用「现在」减提交时间，数字会随页面停留不断变大。
+    const endStamp =
+      task.finish_time || (state === 'running' ? Math.floor(Date.now() / 1000) : 0);
+    const elapsedSeconds = endStamp ? endStamp - (task.start_time || task.submit_time) : 0;
     return {
       id: task.task_id || String(task.id),
       title: task.action ? `${task.platform ?? '任务'} · ${task.action}` : `${task.platform ?? '任务'} #${task.id}`,

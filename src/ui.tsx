@@ -8,8 +8,10 @@ import {
   Children,
   Fragment,
   useEffect,
+  useRef,
   useState,
   type ComponentProps,
+  type ComponentRef,
   type ComponentType,
   type ReactNode,
 } from 'react';
@@ -22,11 +24,14 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
+  type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { elevation, m3, ripple, shape, type } from './material';
 
@@ -34,6 +39,7 @@ import { elevation, m3, ripple, shape, type } from './material';
 const SegmentedControl = NativeSegmentedControl as unknown as ComponentType<SegmentedControlProps>;
 
 const ios = Platform.OS === 'ios';
+let fadeSeq = 0;
 
 // 列表内容因筛选、模式切换而增删时，让行淡入淡出，而不是瞬间替换。
 export function animateContentChange() {
@@ -134,7 +140,8 @@ export function GlassSurface({
     <View
       style={[
         styles.glassFallback,
-        { borderRadius: radius, backgroundColor: palette.card },
+        // 安卓没有真正的毛玻璃，用浅灰填充让白色面板上的按钮仍然可见（不加阴影）。
+        { borderRadius: radius, backgroundColor: ios ? palette.card : m3.surfaceContainer },
         style,
       ]}
     >
@@ -271,17 +278,21 @@ export function Group({
   footer,
   children,
   style,
+  onLayout,
+  onBodyLayout,
 }: {
   header?: string;
   footer?: string;
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
+  onLayout?: (event: LayoutChangeEvent) => void;
+  onBodyLayout?: (event: LayoutChangeEvent) => void;
 }) {
   const items = Children.toArray(children);
   return (
-    <View style={[styles.group, style]}>
+    <View style={[styles.group, style]} onLayout={onLayout}>
       {header ? <Text style={styles.groupHeader}>{header}</Text> : null}
-      <View style={styles.groupBody}>
+      <View style={styles.groupBody} onLayout={onBodyLayout}>
         {items.map((child, index) => (
           <Fragment key={index}>
             {child}
@@ -302,8 +313,10 @@ export function Row({
   chevron,
   destructive,
   icon,
+  leading,
   accessory,
   detail,
+  onLayout,
 }: {
   title: string;
   subtitle?: string;
@@ -312,8 +325,10 @@ export function Row({
   chevron?: boolean;
   destructive?: boolean;
   icon?: ComponentProps<typeof SymbolView>['name'];
+  leading?: ReactNode;
   accessory?: ReactNode;
   detail?: string;
+  onLayout?: (event: LayoutChangeEvent) => void;
 }) {
   const content = (
     <>
@@ -324,6 +339,7 @@ export function Row({
           color={destructive ? palette.red : palette.blue}
         />
       ) : null}
+      {leading}
       <View style={styles.rowMain}>
         <Text style={[styles.rowTitle, destructive ? { color: palette.red } : null]} numberOfLines={1}>
           {title}
@@ -344,13 +360,14 @@ export function Row({
   );
 
   if (!onPress) {
-    return <View style={styles.row}>{content}</View>;
+    return <View style={styles.row} onLayout={onLayout}>{content}</View>;
   }
 
   return (
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
+      onLayout={onLayout}
       android_ripple={ios ? undefined : ripple()}
       style={({ pressed }) => [styles.row, pressed && ios ? styles.rowPressed : null]}
     >
@@ -473,13 +490,31 @@ export function Sheet({
   onClose,
   children,
   footer,
+  indexLetters,
+  indexOffsetFor,
+  searchValue,
+  onSearchChange,
+  searchPlaceholder = '搜索模型或厂商',
+  empty,
+  emptyText = '没有匹配的模型',
 }: {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  indexLetters?: string[];
+  indexOffsetFor?: (letter: string) => number | undefined;
+  /** 传了 onSearchChange 就在标题下方固定一条搜索框。 */
+  searchValue?: string;
+  onSearchChange?: (text: string) => void;
+  searchPlaceholder?: string;
+  /** 搜索结果为空时用一句提示占位，避免弹层只剩一条空列表。 */
+  empty?: boolean;
+  emptyText?: string;
 }) {
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const [fadeId] = useState(() => `sheetFade${fadeSeq++}`);
   return (
     <Modal
       visible={visible}
@@ -490,12 +525,90 @@ export function Sheet({
     >
       <SafeAreaView style={styles.sheetRoot} edges={['top', 'bottom', 'left', 'right']}>
         <SheetHeader title={title} onClose={onClose} />
-        <ScrollView contentContainerStyle={styles.sheetContent}>
-          {children}
-        </ScrollView>
+        {onSearchChange ? (
+          <View style={styles.sheetSearchBar}>
+            <View style={styles.sheetSearchField}>
+              <AppIcon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
+              <TextInput
+                accessibilityLabel="搜索模型"
+                value={searchValue}
+                onChangeText={onSearchChange}
+                placeholder={searchPlaceholder}
+                placeholderTextColor={palette.tertiaryLabel}
+                autoCorrect={false}
+                style={styles.sheetSearchInput}
+              />
+              {searchValue ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="清除搜索"
+                  onPress={() => onSearchChange('')}
+                  hitSlop={10}
+                >
+                  <AppIcon name="xmark" size={14} color={palette.secondaryLabel} />
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+        <View style={styles.sheetBody}>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.sheetScroll}
+            contentContainerStyle={styles.sheetContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {empty ? <Text style={styles.sheetEmptyText}>{emptyText}</Text> : children}
+          </ScrollView>
+          <AlphabetRail
+            letters={indexLetters ?? []}
+            onSelect={(letter) => {
+              const offset = indexOffsetFor?.(letter);
+              if (offset === undefined) return;
+              scrollRef.current?.scrollTo({ y: Math.max(0, offset - 6), animated: true });
+            }}
+          />
+          {/* 底部渐隐：滚动时内容在弹层底边淡出，而不是被切成直角硬边。 */}
+          <Svg pointerEvents="none" style={styles.sheetFade} width="100%" height={32}>
+            <Defs>
+              <SvgLinearGradient id={fadeId} x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0" stopColor={palette.groupedBackground} stopOpacity="0" />
+                <Stop offset="1" stopColor={palette.groupedBackground} stopOpacity="1" />
+              </SvgLinearGradient>
+            </Defs>
+            <Rect width="100%" height="100%" fill={`url(#${fadeId})`} />
+          </Svg>
+        </View>
         {footer ? <View style={styles.sheetFooter}>{footer}</View> : null}
       </SafeAreaView>
     </Modal>
+  );
+}
+
+// 列表右侧的 A-Z 索引，字母按模型名称首字母去重后竖向排列。
+export function AlphabetRail({
+  letters,
+  onSelect,
+}: {
+  letters: string[];
+  onSelect?: (letter: string) => void;
+}) {
+  if (letters.length < 2) return null;
+  return (
+    <View style={styles.alphabetRail} accessibilityLabel="字母索引">
+      {letters.map((letter) => (
+        <Pressable
+          key={letter}
+          accessibilityRole="button"
+          accessibilityLabel={`跳到 ${letter}`}
+          onPress={() => onSelect?.(letter)}
+          hitSlop={5}
+          style={({ pressed }) => [styles.alphabetItem, pressed ? styles.alphabetPressed : null]}
+        >
+          <Text style={styles.alphabetLetter}>{letter}</Text>
+        </Pressable>
+      ))}
+    </View>
   );
 }
 
@@ -736,6 +849,64 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  sheetBody: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  sheetFade: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  sheetSearchBar: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: ios ? 8 : 10,
+  },
+  sheetSearchField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: ios ? 8 : 10,
+    height: ios ? 38 : 46,
+    paddingHorizontal: ios ? 11 : 14,
+    borderRadius: ios ? 11 : shape.lg,
+    backgroundColor: ios ? 'rgba(118,118,128,0.12)' : palette.fill,
+  },
+  sheetSearchInput: {
+    flex: 1,
+    color: palette.label,
+    fontSize: ios ? 15 : 16,
+    paddingVertical: 0,
+  },
+  sheetEmptyText: {
+    paddingTop: 44,
+    textAlign: 'center',
+    color: palette.secondaryLabel,
+    fontSize: 15,
+  },
+  sheetScroll: {
+    flex: 1,
+  },
+  alphabetRail: {
+    width: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 1,
+    paddingVertical: 8,
+  },
+  alphabetItem: {
+    minWidth: 16,
+    alignItems: 'center',
+  },
+  alphabetPressed: {
+    opacity: 0.4,
+  },
+  alphabetLetter: {
+    color: palette.secondaryLabel,
+    fontSize: ios ? 10 : 9.5,
+    fontWeight: '600',
+  },
   sheetContent: {
     paddingHorizontal: 16,
     paddingTop: 8,
@@ -771,7 +942,7 @@ const styles = StyleSheet.create({
           shadowOffset: { width: 0, height: 6 },
           elevation: 6,
         }
-      : elevation.level1),
+      : null),
   },
   glassPressed: {
     opacity: 0.55,
