@@ -23,7 +23,8 @@
     },
     "plugins": [
       "expo-secure-store",
-      "expo-audio"
+      "expo-audio",
+      "expo-localization"
     ]
   }
 }

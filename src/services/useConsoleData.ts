@@ -32,6 +32,7 @@ import {
   mapUsageLogs,
   pointsFromLogs,
 } from './liveConsole';
+import { t, useLanguage } from '../i18n';
 
 type ConsoleState = {
   models: Model[];
@@ -71,6 +72,8 @@ function extractPoints(payload: unknown): DataSelfPoint[] {
 
 export function useConsoleData() {
   const { user, quotaPerUnit } = useAuth();
+  // 映射层会把「按次计费」「令牌 #1」等文案写进数据，切换语言后需要重新取一次。
+  const language = useLanguage();
   const [state, setState] = useState<ConsoleState>(emptyState);
   const [pricing, setPricing] = useState<PricingPayload | null>(null);
   const [modelsLoading, setModelsLoading] = useState(true);
@@ -200,7 +203,7 @@ export function useConsoleData() {
     ].filter((result) => result.status === 'rejected');
     if (failures.length) {
       const first = failures[0] as PromiseRejectedResult;
-      const message = first.reason instanceof Error ? first.reason.message : '部分数据加载失败';
+      const message = first.reason instanceof Error ? first.reason.message : t('部分数据加载失败');
       setError(message);
     }
 
@@ -208,7 +211,7 @@ export function useConsoleData() {
     setLogsLoading(false);
     setTasksLoading(false);
     setTokensLoading(false);
-  }, [quotaPerUnit, user, owner]);
+  }, [quotaPerUnit, user, owner, language]);
 
   useEffect(() => {
     if (!user) {
@@ -244,14 +247,14 @@ export function useConsoleData() {
     return [
       {
         id: 'notice',
-        title: '站点公告',
+        title: t('站点公告'),
         body: state.notice.trim(),
-        time: '公告',
+        time: t('公告'),
         category: 'system',
         read: false,
       },
     ];
-  }, [state.notice]);
+  }, [state.notice, language]);
 
   return {
     ...state,

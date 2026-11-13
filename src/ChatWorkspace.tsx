@@ -43,6 +43,7 @@ import { RichText, plainText } from './richText';
 import { formatMessageTime } from './messageTime';
 import { alphabetOf, letterOf, sortByName } from './modelSort';
 import { useKeyboardInsets } from './useKeyboardInsets';
+import { isEnglish, t, tf } from './i18n';
 
 // masked-view 的旧声明依赖已移除的 NativeMethods，限定为它实际支持的 props。
 const MaskedView = NativeMaskedView as unknown as ComponentType<ViewProps & {
@@ -70,17 +71,11 @@ type Conversation = {
   loaded?: boolean;
 };
 
-const suggestions = [
-  '帮我总结一段技术文档',
-  '解释一个概念并给出例子',
-  '把这段话润色得更专业',
-];
-
 const seedConversations: Conversation[] = [];
 
 const fallbackModel: Model = {
   id: '',
-  name: '选择模型',
+  name: t('选择模型'),
   vendor: '',
   context: '—',
   latency: '—',
@@ -98,7 +93,7 @@ function toConversation(item: ChatConversation): Conversation {
   const updatedAt = Date.parse(item.UpdatedAt);
   return {
     id: item.ID,
-    title: item.Title?.trim() || `对话 ${item.ID}`,
+    title: item.Title?.trim() || tf('对话 {0}', item.ID),
     modelId: item.Model || '',
     updatedAt: Number.isNaN(updatedAt) ? 0 : updatedAt,
     messages: [],
@@ -108,17 +103,20 @@ function toConversation(item: ChatConversation): Conversation {
 
 export type ChatToolKey = 'media' | 'experience' | 'fusion' | 'pricing';
 
-const chatTools: {
+// 文案随语言切换，必须在渲染时求值。
+function buildChatTools(): {
   key: ChatToolKey;
   icon: ComponentProps<typeof SymbolView>['name'];
   fallback: string;
   label: string;
-}[] = [
-  { key: 'media', icon: 'sparkles', fallback: '✦', label: 'AI 创作' },
-  { key: 'experience', icon: 'text.bubble', fallback: '◌', label: '模型体验' },
-  { key: 'fusion', icon: 'arrow.triangle.merge', fallback: '◈', label: '模型融合' },
-  { key: 'pricing', icon: 'square.grid.2x2', fallback: '▦', label: '模型广场' },
-];
+}[] {
+  return [
+    { key: 'media', icon: 'sparkles', fallback: '✦', label: t('AI 创作') },
+    { key: 'experience', icon: 'text.bubble', fallback: '◌', label: t('模型体验') },
+    { key: 'fusion', icon: 'arrow.triangle.merge', fallback: '◈', label: t('模型融合') },
+    { key: 'pricing', icon: 'square.grid.2x2', fallback: '▦', label: t('模型广场') },
+  ];
+}
 
 export function ChatWorkspace({
   bottomInset = 0,
@@ -132,6 +130,14 @@ export function ChatWorkspace({
   /** 切到其他标签页时页面仍挂载，需要收起弹层，回来时不会残留。 */
   active?: boolean;
 }) {
+  // 文案随语言切换，放在渲染期求值。
+  const chatTools = buildChatTools();
+  const suggestions = [
+    t('帮我总结一段技术文档'),
+    t('解释一个概念并给出例子'),
+    t('把这段话润色得更专业'),
+  ];
+
   const [conversations, setConversations] = useState<Conversation[]>(seedConversations);
   const [selected, setSelected] = useState<number | null>(null);
   const [selectedModelId, setSelectedModelId] = useState(models[0]?.id ?? '');
@@ -357,10 +363,10 @@ export function ChatWorkspace({
   };
 
   const deleteConversation = (id: number) => {
-    Alert.alert('删除对话？', '删除后无法恢复。', [
-      { text: '取消', style: 'cancel' },
+    Alert.alert(t('删除对话？'), t('删除后无法恢复。'), [
+      { text: t('取消'), style: 'cancel' },
       {
-        text: '删除',
+        text: t('删除'),
         style: 'destructive',
         onPress: async () => {
           if (selected === id) stop();
@@ -383,7 +389,7 @@ export function ChatWorkspace({
     const prompt = (preset ?? draft).trim();
     if (!prompt || busy || !currentModel) return;
     if (!currentModel.id) {
-      Alert.alert('请先选择模型');
+      Alert.alert(t('请先选择模型'));
       return;
     }
 
@@ -509,7 +515,7 @@ export function ChatWorkspace({
         return;
       }
       setBusy(false);
-      Alert.alert('发送失败', error instanceof Error ? error.message : '请稍后重试');
+      Alert.alert(t('发送失败'), error instanceof Error ? error.message : t('请稍后重试'));
       if (conversationId !== null) {
         const target = conversationId;
         setConversations((items) =>
@@ -551,13 +557,13 @@ export function ChatWorkspace({
       <View style={styles.toolbar}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="查看对话历史"
+          accessibilityLabel={t("查看对话历史")}
           onPress={() => setHistoryVisible(true)}
           style={({ pressed }) => [styles.toolButton, pressed ? styles.pressed : null]}
         >
           <GlassSurface radius={18} interactive style={styles.toolGlass}>
             <Icon name="clock.arrow.circlepath" fallback="◷" size={17} />
-            <Text style={styles.toolLabel}>历史</Text>
+            <Text style={styles.toolLabel}>{t('历史')}</Text>
             {conversations.length > 0 ? (
               <View style={styles.countBadge}>
                 <Text style={styles.countText}>{conversations.length}</Text>
@@ -573,10 +579,10 @@ export function ChatWorkspace({
               <Icon name="magnifyingglass" size={14} color={palette.secondaryLabel} />
               <TextInput
                 keyboardAppearance={isDark() ? 'dark' : 'light'}
-                accessibilityLabel="搜索模型"
+                accessibilityLabel={t("搜索模型")}
                 value={modelQuery}
                 onChangeText={setModelQuery}
-                placeholder="搜索模型或厂商"
+                placeholder={t("搜索模型或厂商")}
                 placeholderTextColor={palette.tertiaryLabel}
                 autoCorrect={false}
                 style={styles.modelSearchChipInput}
@@ -584,7 +590,7 @@ export function ChatWorkspace({
               {modelQuery.length > 0 ? (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="清除搜索"
+                  accessibilityLabel={t("清除搜索")}
                   onPress={() => setModelQuery('')}
                   hitSlop={10}
                 >
@@ -599,7 +605,7 @@ export function ChatWorkspace({
           <Pressable
             ref={modelButton}
             accessibilityRole="button"
-            accessibilityLabel={`当前模型 ${currentModel.name}，点击切换`}
+            accessibilityLabel={tf('当前模型 {0}，点击切换', currentModel.name)}
             onPress={openModelPicker}
             style={({ pressed }) => [styles.modelButton, pressed ? styles.pressed : null]}
           >
@@ -616,7 +622,7 @@ export function ChatWorkspace({
         <GlassIconButton
           icon="square.and.pencil"
           fallback="✎"
-          label="新建对话"
+          label={t("新建对话")}
           onPress={startNewConversation}
           size={36}
         />
@@ -668,7 +674,7 @@ export function ChatWorkspace({
           <View style={styles.welcomeIcon}>
             <Icon name="sparkles" fallback="✦" size={40} color={palette.blue} />
           </View>
-          <Text style={styles.welcomeTitle}>开始新的对话</Text>
+          <Text style={styles.welcomeTitle}>{t('开始新的对话')}</Text>
 
           <View style={styles.suggestionList}>
             {suggestions.map((suggestion) => (
@@ -687,9 +693,9 @@ export function ChatWorkspace({
           {sortedConversations.length > 0 ? (
             <>
               <View style={styles.recentHeader}>
-                <Text style={styles.recentTitle}>最近对话</Text>
+                <Text style={styles.recentTitle}>{t('最近对话')}</Text>
                 <Pressable accessibilityRole="button" onPress={() => setHistoryVisible(true)}>
-                  <Text style={styles.link}>查看全部</Text>
+                  <Text style={styles.link}>{t('查看全部')}</Text>
                 </Pressable>
               </View>
               <View style={styles.recentList}>
@@ -711,7 +717,7 @@ export function ChatWorkspace({
                       <Text numberOfLines={1} style={styles.recentPreview}>
                         {conversation.messages[conversation.messages.length - 1]?.text ??
                           conversation.modelId ??
-                          '暂无消息'}
+                          t('暂无消息')}
                       </Text>
                     </View>
                     <Text style={styles.recentTime}>{relativeTime(conversation.updatedAt)}</Text>
@@ -730,11 +736,9 @@ export function ChatWorkspace({
         {editing ? (
           <View style={styles.editingBar}>
             <Icon name="square.and.pencil" size={13} color={ios ? palette.secondaryLabel : m3.onPrimaryContainer} />
-            <Text numberOfLines={1} style={styles.editingText}>
-              正在编辑消息，发送后将重新生成回复
-            </Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="取消编辑" onPress={cancelEdit} hitSlop={8}>
-              <Text style={styles.editingCancel}>取消</Text>
+            <Text numberOfLines={1} style={styles.editingText}>{t('正在编辑消息，发送后将重新生成回复')}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={t("取消编辑")} onPress={cancelEdit} hitSlop={8}>
+              <Text style={styles.editingCancel}>{t('取消')}</Text>
             </Pressable>
           </View>
         ) : null}
@@ -778,7 +782,7 @@ export function ChatWorkspace({
             <GlassIconButton
               icon="plus"
               fallback="+"
-              label="AI 功能"
+              label={t("AI 功能")}
               onPress={openTools}
               size={48}
               tint={palette.label}
@@ -788,8 +792,8 @@ export function ChatWorkspace({
             <TextInput
               keyboardAppearance={isDark() ? 'dark' : 'light'}
               ref={inputRef}
-              accessibilityLabel="聊天消息"
-              placeholder={`给 ${currentModel.name} 发消息`}
+              accessibilityLabel={t("聊天消息")}
+              placeholder={tf('给 {0} 发消息', currentModel.name)}
               placeholderTextColor={ios ? palette.subtleLabel : palette.tertiaryLabel}
               multiline
               maxLength={8000}
@@ -799,7 +803,7 @@ export function ChatWorkspace({
             />
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={busy ? '停止生成' : '发送'}
+              accessibilityLabel={busy ? t('停止生成') : t('发送')}
               disabled={!busy && !canSend}
               onPress={busy ? stop : () => send(undefined, editing?.id)}
               style={({ pressed }) => [
@@ -827,7 +831,7 @@ export function ChatWorkspace({
         onRequestClose={() => setHistoryVisible(false)}
       >
         <SafeAreaView style={styles.sheetRoot} edges={['top', 'bottom', 'left', 'right']}>
-          <SheetHeader title="对话历史" onClose={() => setHistoryVisible(false)} />
+          <SheetHeader title={t("对话历史")} onClose={() => setHistoryVisible(false)} />
 
           <ScrollView contentContainerStyle={styles.sheetContent}>
             <Pressable
@@ -838,17 +842,17 @@ export function ChatWorkspace({
               <View style={styles.newConversationIcon}>
                 <Icon name="plus.bubble" fallback="＋" size={19} color={palette.blue} />
               </View>
-              <Text style={styles.newConversationText}>新建对话</Text>
+              <Text style={styles.newConversationText}>{t('新建对话')}</Text>
             </Pressable>
 
             {sortedConversations.length === 0 ? (
               <View style={styles.historyEmpty}>
                 <Icon name="bubble.left.and.bubble.right" fallback="◌" size={32} color={palette.tertiaryLabel} />
-                <Text style={styles.historyEmptyTitle}>还没有对话</Text>
+                <Text style={styles.historyEmptyTitle}>{t('还没有对话')}</Text>
               </View>
             ) : (
               <>
-                <Text style={styles.groupLabel}>最近</Text>
+                <Text style={styles.groupLabel}>{t('最近')}</Text>
                 <View style={styles.historyList}>
                   {sortedConversations.map((conversation, index) => {
                     const isSelected = selected === conversation.id;
@@ -879,17 +883,17 @@ export function ChatWorkspace({
                             {plainText(
                               conversation.messages[conversation.messages.length - 1]?.text ??
                                 conversation.modelId ??
-                                '暂无消息',
+                                t('暂无消息'),
                             )}
                           </Text>
                           <Text style={styles.historyMeta}>
-                            {conversation.messages.length} 条消息 · {model?.name ?? '未知模型'} ·{' '}
+                            {conversation.messages.length} {t('条消息 ·')} {model?.name ?? t('未知模型')} ·{' '}
                             {relativeTime(conversation.updatedAt)}
                           </Text>
                         </Pressable>
                         <Pressable
                           accessibilityRole="button"
-                          accessibilityLabel={`删除 ${conversation.title}`}
+                          accessibilityLabel={tf('删除 {0}', conversation.title)}
                           onPress={() => deleteConversation(conversation.id)}
                           hitSlop={8}
                           style={({ pressed }) => [styles.deleteButton, pressed ? styles.pressed : null]}
@@ -919,7 +923,7 @@ export function ChatWorkspace({
         >
           {pickerModels.length === 0 ? (
             <View style={styles.modelEmpty}>
-              <Text style={styles.modelEmptyText}>没有匹配的模型</Text>
+              <Text style={styles.modelEmptyText}>{t('没有匹配的模型')}</Text>
             </View>
           ) : null}
           {pickerModels.map((model, index) => {
@@ -964,22 +968,22 @@ export function ChatWorkspace({
                 <Icon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
                 <TextInput
                   keyboardAppearance={isDark() ? 'dark' : 'light'}
-                  accessibilityLabel="搜索模型"
+                  accessibilityLabel={t("搜索模型")}
                   value={modelQuery}
                   onChangeText={setModelQuery}
-                  placeholder="搜索模型或厂商"
+                  placeholder={t("搜索模型或厂商")}
                   placeholderTextColor={palette.tertiaryLabel}
                   autoCorrect={false}
                   style={styles.modelSearchInput}
                 />
                 {modelQuery.length > 0 ? (
-                  <Pressable accessibilityRole="button" accessibilityLabel="清除搜索" onPress={() => setModelQuery('')} hitSlop={10}>
+                  <Pressable accessibilityRole="button" accessibilityLabel={t("清除搜索")} onPress={() => setModelQuery('')} hitSlop={10}>
                     <Icon name="xmark" size={15} color={palette.secondaryLabel} />
                   </Pressable>
                 ) : null}
               </View>
-              <Pressable accessibilityRole="button" accessibilityLabel="完成" onPress={closeModelPicker} hitSlop={8}>
-                <Text style={styles.sheetSearchDone}>完成</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel={t("完成")} onPress={closeModelPicker} hitSlop={8}>
+                <Text style={styles.sheetSearchDone}>{t('完成')}</Text>
               </Pressable>
             </View>
 
@@ -991,7 +995,7 @@ export function ChatWorkspace({
               keyboardShouldPersistTaps="handled"
             >
               {pickerModels.length === 0 ? (
-                <Text style={styles.modelEmptyText}>没有匹配的模型</Text>
+                <Text style={styles.modelEmptyText}>{t('没有匹配的模型')}</Text>
               ) : (
                 <View
                   style={styles.modelList}
@@ -1182,7 +1186,7 @@ function ChatPopover({
       {/* 默认遮罩从选择框下方开始，弹层打开时顶部搜索框仍然可以直接点按输入。 */}
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="关闭菜单"
+        accessibilityLabel={t("关闭菜单")}
         onPress={onClose}
         style={[StyleSheet.absoluteFill, { top: overlayTop ?? anchor.y + anchor.height }]}
       />
@@ -1277,7 +1281,7 @@ function MessageBubble({
   const copyButton = (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={copied ? '已复制' : '复制消息'}
+      accessibilityLabel={copied ? t('已复制') : t('复制消息')}
       onPress={copy}
       hitSlop={10}
       style={({ pressed }) => [styles.messageAction, pressed ? styles.pressed : null]}
@@ -1306,7 +1310,7 @@ function MessageBubble({
           {onEdit ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="编辑消息"
+              accessibilityLabel={t("编辑消息")}
               disabled={editDisabled}
               onPress={() => onEdit(message)}
               hitSlop={10}
@@ -1325,7 +1329,7 @@ function MessageBubble({
 
   return (
     <View style={styles.assistantRow}>
-      <Text style={styles.assistantMeta}>{model?.name ?? '助手'}</Text>
+      <Text style={styles.assistantMeta}>{model?.name ?? t('助手')}</Text>
       <View style={styles.assistantBubble}>
         <RichText text={message.text} style={styles.assistantText} />
       </View>
@@ -1387,10 +1391,20 @@ function Icon({
 
 function relativeTime(timestamp: number) {
   const difference = Math.max(0, Date.now() - timestamp);
-  if (difference < 60 * 1000) return '刚刚';
-  if (difference < 60 * 60 * 1000) return `${Math.floor(difference / (60 * 1000))} 分钟前`;
-  if (difference < 24 * 60 * 60 * 1000) return `${Math.floor(difference / (60 * 60 * 1000))} 小时前`;
-  return `${Math.floor(difference / (24 * 60 * 60 * 1000))} 天前`;
+  if (difference < 60 * 1000) return t('刚刚');
+  if (difference < 60 * 60 * 1000) {
+    const minutes = Math.floor(difference / (60 * 1000));
+    if (isEnglish()) return `${minutes} min ago`;
+    return tf('{0} 分钟前', minutes);
+  }
+  if (difference < 24 * 60 * 60 * 1000) {
+    const hours = Math.floor(difference / (60 * 60 * 1000));
+    if (isEnglish()) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+    return tf('{0} 小时前', hours);
+  }
+  const days = Math.floor(difference / (24 * 60 * 60 * 1000));
+  if (isEnglish()) return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+  return tf('{0} 天前', days);
 }
 
 const styles = themedStyles(() => StyleSheet.create({

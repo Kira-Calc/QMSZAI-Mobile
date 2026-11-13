@@ -28,15 +28,20 @@ const ios = Platform.OS === 'ios';
 import { GlassPillButton, Group, Sheet, Subpage, palette } from '../ui';
 import { themedStyles, isDark } from '../theme';
 import { streamChat } from '../api/client';
+import { t, tf } from '../i18n';
 
 type ChatMessage = { id: number; role: 'user' | 'assistant'; text: string; createdAt?: number };
-
-const suggestions = ['用三句话介绍阡陌数智', '帮我写一条模型上架公告', '把这段文字改写得更简洁'];
 
 export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; models: string[] }) {
   const insets = useSafeAreaInsets();
   const { inset: keyboardInset } = useKeyboardInsets();
   const [model, setModel] = useState(models[0] ?? '');
+  // 文案随语言切换，放在渲染期求值。
+  const suggestions = [
+    t('用三句话介绍阡陌数智'),
+    t('帮我写一条模型上架公告'),
+    t('把这段文字改写得更简洁'),
+  ];
 
   useEffect(() => {
     setModel((current) => (models.includes(current) ? current : models[0] ?? ''));
@@ -128,15 +133,15 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
         if (generation.current !== generationId) return;
         setBusy(false);
         if (error instanceof Error && error.name === 'AbortError') return;
-        Alert.alert('发送失败', error instanceof Error ? error.message : '请稍后重试');
+        Alert.alert(t('发送失败'), error instanceof Error ? error.message : t('请稍后重试'));
       });
   };
 
   const clear = () => {
-    Alert.alert('清空会话？', '当前对话仅保存在本次运行中，清空后无法恢复。', [
-      { text: '取消', style: 'cancel' },
+    Alert.alert(t('清空会话？'), t('当前对话仅保存在本次运行中，清空后无法恢复。'), [
+      { text: t('取消'), style: 'cancel' },
       {
-        text: '清空',
+        text: t('清空'),
         style: 'destructive',
         onPress: () => {
           stop();
@@ -149,10 +154,10 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
 
   return (
     <Subpage
-      title="模型体验"
+      title={t("模型体验")}
       onBack={onBack}
       right={
-        messages.length > 0 ? <GlassPillButton label="清空" onPress={clear} /> : null
+        messages.length > 0 ? <GlassPillButton label={t("清空")} onPress={clear} /> : null
       }
     >
       <KeyboardAvoidingView
@@ -162,7 +167,7 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
       >
         <View style={styles.modelBar}>
           <View style={styles.modelInfo}>
-            <Text style={styles.modelLabel}>当前模型</Text>
+            <Text style={styles.modelLabel}>{t('当前模型')}</Text>
             <Text style={styles.modelName}>{model}</Text>
           </View>
           <Pressable
@@ -173,7 +178,7 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
         }}
             style={styles.switchButton}
           >
-            <Text style={[styles.switchText, { color: palette.blue }]}>切换</Text>
+            <Text style={[styles.switchText, { color: palette.blue }]}>{t('切换')}</Text>
           </Pressable>
         </View>
 
@@ -194,7 +199,7 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
                 tintColor={palette.tertiaryLabel}
                 style={styles.emptyIcon}
               />
-              <Text style={styles.emptyTitle}>开始与模型对话</Text>
+              <Text style={styles.emptyTitle}>{t('开始与模型对话')}</Text>
               <View style={styles.suggestions}>
                 {suggestions.map((suggestion) => (
                   <Pressable
@@ -210,7 +215,7 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
                   </Pressable>
                 ))}
               </View>
-              {clearedNotice ? <Text style={styles.clearedText}>会话已清空</Text> : null}
+              {clearedNotice ? <Text style={styles.clearedText}>{t('会话已清空')}</Text> : null}
             </View>
           ) : (
             messages.map((message) => (
@@ -224,7 +229,7 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
             keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={draft}
             onChangeText={setDraft}
-            placeholder={`向 ${model} 提问`}
+            placeholder={tf('向 {0} 提问', model)}
             placeholderTextColor={palette.tertiaryLabel}
             multiline
             style={styles.composerInput}
@@ -232,7 +237,7 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
           {busy ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="停止生成"
+              accessibilityLabel={t("停止生成")}
               onPress={stop}
               style={styles.stopButton}
             >
@@ -241,7 +246,7 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
           ) : (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="发送"
+              accessibilityLabel={t("发送")}
               accessibilityState={{ disabled: draft.trim().length === 0 }}
               disabled={draft.trim().length === 0}
               onPress={send}
@@ -255,7 +260,7 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
 
       <Sheet
         visible={modelSheet}
-        title="选择模型"
+        title={t("选择模型")}
         onClose={() => {
           setModelSheet(false);
           setModelQuery('');
@@ -267,7 +272,7 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
         empty={visibleModels.length === 0}
       >
         <Group
-          header="可用模型"
+          header={t("可用模型")}
           onLayout={(event) => {
             sheetGroupY.current = event.nativeEvent.layout.y;
           }}
@@ -339,7 +344,7 @@ function ExperienceMessage({ message }: { message: ChatMessage }) {
       <View style={styles.messageMeta}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={copied ? '已复制' : '复制消息'}
+          accessibilityLabel={copied ? t('已复制') : t('复制消息')}
           onPress={copy}
           hitSlop={10}
           style={({ pressed }) => [styles.messageAction, pressed ? pressedSurface : null]}

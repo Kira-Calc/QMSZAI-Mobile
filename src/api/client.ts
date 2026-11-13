@@ -3,6 +3,8 @@ import { File, Paths } from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
+import { isEnglish, t } from '../i18n';
+
 // 测试环境。生产切换时只改这里。
 export const API_BASE_URL = 'https://test.qmszai.cn';
 
@@ -145,8 +147,8 @@ export function rawRequest(path: string, options: RequestOptions = {}): Promise<
         cookie: parseSessionCookie(headers),
       });
     };
-    xhr.onerror = () => reject(new ApiError('网络连接失败，请检查网络后重试', 0));
-    xhr.ontimeout = () => reject(new ApiError('请求超时，请稍后重试', 0));
+    xhr.onerror = () => reject(new ApiError(t('网络连接失败，请检查网络后重试'), 0));
+    xhr.ontimeout = () => reject(new ApiError(t('请求超时，请稍后重试'), 0));
 
     xhr.send(body === undefined ? null : JSON.stringify(body));
   });
@@ -172,6 +174,8 @@ const MESSAGE_MAP: Array<[RegExp, string]> = [
 
 export function localizeMessage(message: string): string {
   if (!message) return message;
+  // 英文界面直接使用服务端原文，避免把英文提示再映射一次。
+  if (isEnglish()) return message;
   const hit = MESSAGE_MAP.find(([pattern]) => pattern.test(message));
   return hit ? hit[1] : message;
 }
@@ -185,10 +189,10 @@ function extractError(message: string, status: number, text: string): string {
   } catch {
     // ignore
   }
-  if (status === 401) return '登录状态已失效，请重新登录';
-  if (status === 403) return '没有权限或额度不足';
-  if (status === 429) return '操作过于频繁，请稍后重试';
-  return '服务暂时不可用，请稍后重试';
+  if (status === 401) return t('登录状态已失效，请重新登录');
+  if (status === 403) return t('没有权限或额度不足');
+  if (status === 429) return t('操作过于频繁，请稍后重试');
+  return t('服务暂时不可用，请稍后重试');
 }
 
 // /api/*：统一 {success,message,data} 包裹，业务失败时 HTTP 仍可能是 200。
@@ -236,7 +240,7 @@ export async function pgRequest<T>(path: string, options: RequestOptions = {}): 
     const error = (parsed as { error?: { message?: string } | string | null }).error;
     if (error) {
       const message = typeof error === 'string' ? error : error.message;
-      throw new ApiError(message || '请求失败', response.status);
+      throw new ApiError(message || t('请求失败'), response.status);
     }
   }
   return parsed as T;
@@ -378,7 +382,7 @@ export async function chatOnce(
     return '';
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw new ApiError('模型返回格式异常', response.status);
+    throw new ApiError(t('模型返回格式异常'), response.status);
   }
 }
 
@@ -405,7 +409,7 @@ export async function streamChat(
     throw new ApiError(extractError('', response.status, text), response.status);
   }
   if (!response.body) {
-    throw new ApiError('当前设备不支持流式响应', 0);
+    throw new ApiError(t('当前设备不支持流式响应'), 0);
   }
 
   const reader = response.body.getReader();

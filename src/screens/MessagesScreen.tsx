@@ -19,15 +19,8 @@ import { themedStyles } from '../theme';
 
 const ios = Platform.OS === 'ios';
 import type { MessageCategory, MessageRecord } from '../types';
+import { t } from '../i18n';
 
-const categoryMeta: Record<MessageCategory, { label: string; tone: Tone }> = {
-  system: { label: '系统', tone: 'info' },
-  billing: { label: '账单', tone: 'warning' },
-  security: { label: '安全', tone: 'danger' },
-  product: { label: '产品', tone: 'neutral' },
-};
-
-const filters = ['全部', '未读'] as const;
 
 export function MessagesScreen({
   messages,
@@ -46,6 +39,15 @@ export function MessagesScreen({
   const [filterIndex, setFilterIndex] = useState(0);
   const [selected, setSelected] = useState<MessageRecord | null>(null);
 
+  // 文案随语言切换，放在渲染期求值。
+  const categoryMeta: Record<MessageCategory, { label: string; tone: Tone }> = {
+    system: { label: t('系统'), tone: 'info' },
+    billing: { label: t('账单'), tone: 'warning' },
+    security: { label: t('安全'), tone: 'danger' },
+    product: { label: t('产品'), tone: 'neutral' },
+  };
+  const filters = [t('全部'), t('未读')];
+
   const unreadCount = messages.filter((message) => !message.read).length;
   const filtered = useMemo(
     () => (filterIndex === 1 ? messages.filter((message) => !message.read) : messages),
@@ -61,10 +63,10 @@ export function MessagesScreen({
   };
 
   const confirmDelete = (message: MessageRecord) => {
-    Alert.alert('删除消息？', '删除后无法恢复。', [
-      { text: '取消', style: 'cancel' },
+    Alert.alert(t('删除消息？'), t('删除后无法恢复。'), [
+      { text: t('取消'), style: 'cancel' },
       {
-        text: '删除',
+        text: t('删除'),
         style: 'destructive',
         onPress: () => {
           onDelete(message.id);
@@ -76,10 +78,10 @@ export function MessagesScreen({
 
   return (
     <Subpage
-      title="消息"
+      title={t("消息")}
       onBack={onBack}
       right={
-        unreadCount > 0 ? <GlassPillButton label="全部已读" onPress={onReadAll} /> : null
+        unreadCount > 0 ? <GlassPillButton label={t("全部已读")} onPress={onReadAll} /> : null
       }
     >
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}>
@@ -92,12 +94,12 @@ export function MessagesScreen({
           }}
         />
 
-        {unreadCount > 0 ? <Text style={styles.unreadSummary}>{unreadCount} 条未读</Text> : null}
+        {unreadCount > 0 ? <Text style={styles.unreadSummary}>{unreadCount} {t('条未读')}</Text> : null}
 
         {filtered.length === 0 ? (
-          <EmptyState title="没有未读消息" icon="bell" />
+          <EmptyState title={t("没有未读消息")} icon="bell" />
         ) : (
-          <Group header={filterIndex === 1 ? '未读' : '全部消息'}>
+          <Group header={filterIndex === 1 ? t('未读') : t('全部消息')}>
             {filtered.map((message) => {
               const meta = categoryMeta[message.category];
               return (
@@ -128,7 +130,7 @@ export function MessagesScreen({
         )}
       </ScrollView>
 
-      <Sheet visible={current !== null} title="消息详情" onClose={() => setSelected(null)}>
+      <Sheet visible={current !== null} title={t("消息详情")} onClose={() => setSelected(null)}>
         {current ? (
           <>
             <View style={styles.detailHeading}>
@@ -149,7 +151,7 @@ export function MessagesScreen({
               onPress={() => confirmDelete(current)}
               style={styles.deleteButton}
             >
-              <Text style={[styles.deleteText, { color: palette.red }]}>删除消息</Text>
+              <Text style={[styles.deleteText, { color: palette.red }]}>{t('删除消息')}</Text>
             </Pressable>
           </>
         ) : null}

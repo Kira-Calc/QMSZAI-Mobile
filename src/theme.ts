@@ -13,6 +13,8 @@ import { useSyncExternalStore } from 'react';
 import { Appearance, Platform } from 'react-native';
 
 export type Scheme = 'light' | 'dark';
+// 用户的三种选择：跟随系统 / 固定浅色 / 固定深色。
+export type ThemeMode = 'system' | Scheme;
 
 const ios = Platform.OS === 'ios';
 const STORAGE_KEY = 'qmszai.theme';
@@ -299,9 +301,17 @@ const palettes = ios
   ? { light: iosLight, dark: iosDark }
   : { light: androidLight, dark: androidDark };
 
+let mode: ThemeMode = 'light';
 let scheme: Scheme = 'light';
 const listeners = new Set<() => void>();
 const rebuilders: Array<() => void> = [];
+
+function resolveMode(next: ThemeMode): Scheme {
+  if (next === 'system') {
+    return Appearance.getColorScheme() === 'dark' ? 'dark' : 'light';
+  }
+  return next;
+}
 
 function liveTokens<K extends string>(
   keys: readonly K[],
@@ -328,6 +338,10 @@ export function getScheme(): Scheme {
   return scheme;
 }
 
+export function getMode(): ThemeMode {
+  return mode;
+}
+
 export function isDark(): boolean {
   return scheme === 'dark';
 }
@@ -348,38 +362,60 @@ export function themedStyles<T extends object>(factory: () => T): T {
   return target;
 }
 
-function apply(next: Scheme) {
-  if (next === scheme) return;
-  scheme = next;
+function apply(next: ThemeMode, persist = true) {
+  const nextScheme = resolveMode(next);
+  const modeChanged = next !== mode;
+  const schemeChanged = nextScheme !== scheme;
+  if (!modeChanged && !schemeChanged) {
+    if (persist) AsyncStorage.setItem(STORAGE_KEY, next).catch(() => {});
+    return;
+  }
+  mode = next;
+  scheme = nextScheme;
   try {
-    Appearance.setColorScheme(next);
+    // 跟随系统时交还给系统（'auto'），否则用应用内的选择覆盖。
+    Appearance.setColorScheme(next === 'system' ? 'auto' : next);
   } catch {
     // 某些运行环境（Expo Go / Web）不支持覆盖系统外观，忽略即可。
   }
-  rebuilders.forEach((rebuild) => rebuild());
+  if (schemeChanged) {
+    rebuilders.forEach((rebuild) => rebuild());
+  }
   listeners.forEach((listener) => listener());
-}
-
-export function setScheme(next: Scheme, persist = true) {
-  apply(next);
   if (persist) {
     AsyncStorage.setItem(STORAGE_KEY, next).catch(() => {});
   }
+}
+
+export function setMode(next: ThemeMode) {
+  apply(next);
+}
+
+// 供只需要切明暗的调用方使用；会退出「跟随系统」。
+export function setScheme(next: Scheme) {
+  apply(next);
 }
 
 export function toggleScheme() {
   setScheme(scheme === 'dark' ? 'light' : 'dark');
 }
 
-// 启动时恢复上次选择；默认跟随浅色，和改动前的观感一致。
+// 启动时恢复上次选择；旧版本只存了 light / dark，仍然兼容。默认浅色，
+// 和改动前的观感一致（想要跟随系统需要显式选择）。
 export async function initTheme() {
   try {
     const saved = await AsyncStorage.getItem(STORAGE_KEY);
-    if (saved === 'dark' || saved === 'light') apply(saved);
+    if (saved === 'system' || saved === 'dark' || saved === 'light') apply(saved, false);
   } catch {
     // 存储不可用时保持浅色。
   }
 }
+
+// 跟随系统时，系统外观变化要同步过来（应用内 fixed 模式忽略）。
+Appearance.addChangeListener(() => {
+  if (mode !== 'system') return;
+  apply('system', false);
+});
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
@@ -390,4 +426,8 @@ function subscribe(listener: () => void) {
 
 export function useScheme(): Scheme {
   return useSyncExternalStore(subscribe, getScheme, getScheme);
+}
+
+export function useThemeMode(): ThemeMode {
+  return useSyncExternalStore(subscribe, getMode, getMode);
 }

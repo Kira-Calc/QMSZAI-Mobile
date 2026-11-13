@@ -21,21 +21,25 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { palette } from './ui';
 import { isDark, themedStyles } from './theme';
 import type { TabKey } from './types';
+import { t, tf } from './i18n';
 
 const ios = Platform.OS === 'ios';
 
-export const appTabs: Array<{
+// 标签文案随语言变化，必须在渲染时求值，不能存成模块级常量。
+function appTabs(): Array<{
   key: TabKey;
   label: string;
   icon: string;
   symbol: ComponentProps<typeof SymbolView>['name'];
-}> = [
-  { key: 'chat', label: '聊天', icon: '◇', symbol: 'bubble.left.and.bubble.right' },
-  { key: 'overview', label: '概览', icon: '⌂', symbol: 'chart.bar' },
-  { key: 'models', label: '模型', icon: '▦', symbol: 'square.stack.3d.up' },
-  { key: 'tokens', label: '令牌', icon: '◇', symbol: 'key' },
-  { key: 'account', label: '账户', icon: '◌', symbol: 'person.crop.circle' },
-];
+}> {
+  return [
+    { key: 'chat', label: t('聊天'), icon: '◇', symbol: 'bubble.left.and.bubble.right' },
+    { key: 'overview', label: t('概览'), icon: '⌂', symbol: 'chart.bar' },
+    { key: 'models', label: t('模型'), icon: '▦', symbol: 'square.stack.3d.up' },
+    { key: 'tokens', label: t('令牌'), icon: '◇', symbol: 'key' },
+    { key: 'account', label: t('账户'), icon: '◌', symbol: 'person.crop.circle' },
+  ];
+}
 
 const glassSupported =
   Platform.OS === 'ios' && isGlassEffectAPIAvailable() && isLiquidGlassAvailable();
@@ -60,12 +64,13 @@ export function LiquidTabBar({
   const insets = useSafeAreaInsets();
   const [reduceTransparency, setReduceTransparency] = useState(false);
   const [barWidth, setBarWidth] = useState(0);
+  const tabs = appTabs();
 
   const activeIndex = Math.max(
     0,
-    appTabs.findIndex((tab) => tab.key === activeKey),
+    tabs.findIndex((tab) => tab.key === activeKey),
   );
-  const itemWidth = barWidth > 0 ? (barWidth - PADDING * 2) / appTabs.length : 0;
+  const itemWidth = barWidth > 0 ? (barWidth - PADDING * 2) / tabs.length : 0;
 
   const activeIndexRef = useRef(activeIndex);
   const itemWidthRef = useRef(itemWidth);
@@ -129,12 +134,12 @@ export function LiquidTabBar({
         const width = itemWidthRef.current;
         if (!width) return;
         const raw = dragStartIndex.current + gesture.dx / width;
-        const clamped = Math.max(0, Math.min(appTabs.length - 1, raw));
+        const clamped = Math.max(0, Math.min(tabs.length - 1, raw));
         indexAnim.setValue(clamped);
         const nearest = Math.round(clamped);
         if (nearest !== activeIndexRef.current) {
           activeIndexRef.current = nearest;
-          onChangeRef.current(appTabs[nearest].key);
+          onChangeRef.current(tabs[nearest].key);
         }
       },
       onPanResponderRelease: () => {
@@ -168,7 +173,7 @@ export function LiquidTabBar({
   ).current;
 
   const useGlass = glassSupported && !reduceTransparency;
-  const activeTab = appTabs[activeIndex];
+  const activeTab = tabs[activeIndex];
 
   // 完整导航栏 ↔ 圆形玻璃钮的收起/展开动画。宽度和高度只能 JS 驱动，
   // 用同一个进度值驱动尺寸、圆角与两套内容的交叉淡入淡出。
@@ -222,8 +227,8 @@ export function LiquidTabBar({
   const translateX =
     itemWidth > 0
       ? indexAnim.interpolate({
-          inputRange: [0, appTabs.length - 1],
-          outputRange: [0, itemWidth * (appTabs.length - 1)],
+          inputRange: [0, tabs.length - 1],
+          outputRange: [0, itemWidth * (tabs.length - 1)],
         })
       : 0;
 
@@ -237,7 +242,7 @@ export function LiquidTabBar({
   const activeTint = palette.blue;
   const inactiveTint = palette.secondaryLabel;
 
-  const tabItems = appTabs.map((tab) => {
+  const tabItems = tabs.map((tab) => {
     const selected = activeKey === tab.key;
     return (
       <Pressable
@@ -300,8 +305,8 @@ export function LiquidTabBar({
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${activeTab.label}，展开导航栏`}
-        accessibilityHint="轻点展开全部导航标签"
+        accessibilityLabel={tf('{0}，展开导航栏', activeTab.label)}
+        accessibilityHint={t("轻点展开全部导航标签")}
         onPress={() => onMinimizedChange(false)}
         style={({ pressed }) => [styles.miniItem, pressed ? styles.itemPressed : null]}
       >

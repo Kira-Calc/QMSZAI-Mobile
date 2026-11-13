@@ -59,7 +59,8 @@ import {
   palette,
 } from './src/ui';
 import { alphabetOf, letterOf, sortByName } from './src/modelSort';
-import { initTheme, isDark, setScheme, themedStyles, useScheme } from './src/theme';
+import { initTheme, isDark, themedStyles, useScheme } from './src/theme';
+import { initLanguage, useLanguage } from './src/i18n';
 import { FusionScreen } from './src/screens/FusionScreen';
 import { MediaStudioScreen } from './src/screens/MediaStudioScreen';
 import { MessagesScreen } from './src/screens/MessagesScreen';
@@ -80,6 +81,7 @@ import type {
   TokenStatus,
   UsageRange,
 } from './src/types';
+import { t, tf } from './src/i18n';
 
 type SubpageKey =
   | 'logs'
@@ -94,16 +96,16 @@ type SubpageKey =
 
 type TabScrollHandler = (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
 
-const statusLabel: Record<ModelStatus, string> = {
-  stable: '可用',
-  watch: '观察',
-  limited: '限流',
+const statusLabel = (status: ModelStatus) => {
+  if (status === 'stable') return t('可用');
+  if (status === 'watch') return t('观察');
+  return t('限流');
 };
 
-const tokenStatusLabel: Record<TokenStatus, string> = {
-  active: '启用',
-  paused: '暂停',
-  expired: '过期',
+const tokenStatusLabel = (status: TokenStatus) => {
+  if (status === 'active') return t('启用');
+  if (status === 'paused') return t('暂停');
+  return t('过期');
 };
 
 const ios = Platform.OS === 'ios';
@@ -136,10 +138,12 @@ const statusColor: Record<ModelStatus | TokenStatus, string> = {
 };
 
 export default function App() {
-  // 订阅全局主题：切换时 App 重渲染，整棵界面同步换成新颜色。
+  // 订阅全局主题与语言：切换时 App 重渲染，整棵界面同步换成新文案/颜色。
   useScheme();
+  useLanguage();
   useEffect(() => {
     initTheme();
+    initLanguage();
   }, []);
 
   return (
@@ -386,7 +390,7 @@ function AppShell() {
       await setTokenStatus(Number(id), nextStatus);
       await consoleData.refreshTokens();
     } catch (error) {
-      Alert.alert('操作失败', error instanceof Error ? error.message : '请稍后重试');
+      Alert.alert(t('操作失败'), error instanceof Error ? error.message : t('请稍后重试'));
     }
   };
 
@@ -443,15 +447,15 @@ function AppShell() {
       setEditingToken(null);
       await consoleData.refreshTokens();
     } catch (error) {
-      Alert.alert('保存失败', error instanceof Error ? error.message : '请稍后重试');
+      Alert.alert(t('保存失败'), error instanceof Error ? error.message : t('请稍后重试'));
     }
   };
 
   const deleteToken = (token: Token) => {
-    Alert.alert('删除令牌？', `“${token.name}”删除后无法恢复，使用该令牌的请求会被拒绝。`, [
-      { text: '取消', style: 'cancel' },
+    Alert.alert(t('删除令牌？'), tf('“{0}”删除后无法恢复，使用该令牌的请求会被拒绝。', token.name), [
+      { text: t('取消'), style: 'cancel' },
       {
-        text: '删除',
+        text: t('删除'),
         style: 'destructive',
         onPress: async () => {
           setSelectedToken(null);
@@ -459,7 +463,7 @@ function AppShell() {
             await removeToken(Number(token.id));
             await consoleData.refreshTokens();
           } catch (error) {
-            Alert.alert('删除失败', error instanceof Error ? error.message : '请稍后重试');
+            Alert.alert(t('删除失败'), error instanceof Error ? error.message : t('请稍后重试'));
           }
         },
       },
@@ -480,12 +484,12 @@ function AppShell() {
 
   const currentTitle =
     activeTab === 'overview'
-      ? '概览'
+      ? t('概览')
       : activeTab === 'models'
-        ? '模型目录'
+        ? t('模型目录')
         : activeTab === 'tokens'
-          ? '令牌管理'
-          : '账户中心';
+          ? t('令牌管理')
+          : t('账户中心');
 
   const subpageView = subpageRendered ? (
     <Animated.View style={[styles.subpageOverlay, styles.subpageShadow, overlayStyle]}>
@@ -545,7 +549,7 @@ function AppShell() {
         <StatusBar style={isDark() ? 'light' : 'dark'} />
         <View style={styles.appShell}>
         <View style={styles.header}>
-          <Animated.Text style={[styles.title, titleStyle]}>{activeTab === 'chat' ? '聊天' : currentTitle}</Animated.Text>
+          <Animated.Text style={[styles.title, titleStyle]}>{activeTab === 'chat' ? t('聊天') : currentTitle}</Animated.Text>
         </View>
 
         <Animated.View style={[styles.content, sceneStyle]}>
@@ -703,95 +707,95 @@ function Overview({
         <View style={styles.heroPanel}>
           <View style={styles.heroTopRow}>
             <View>
-              <Text style={styles.panelLabel}>请求次数</Text>
+              <Text style={styles.panelLabel}>{t('请求次数')}</Text>
               <Text style={styles.heroMetric}>{metrics.requests}</Text>
             </View>
-            <Text style={styles.mutedText}>成功率 {metrics.reliability}</Text>
+            <Text style={styles.mutedText}>{t('成功率')} {metrics.reliability}</Text>
           </View>
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${usagePercent}%` }]} />
           </View>
           <View style={styles.metricRow}>
-            <Text style={styles.mutedText}>{spent} 已使用</Text>
-            <Text style={styles.mutedText}>{balance} 余额</Text>
+            <Text style={styles.mutedText}>{spent} {t('已使用')}</Text>
+            <Text style={styles.mutedText}>{balance} {t('余额')}</Text>
           </View>
         </View>
 
         <View style={styles.gridTwo}>
-          <StatBlock label="可用模型" value={availableModels} tone="blue" />
-          <StatBlock label="启用令牌" value={`${activeTokens}`} tone="green" />
-          <StatBlock label="平均延迟" value={metrics.averageLatency} tone="amber" />
-          <StatBlock label="异常队列" value={`${metrics.issueCount}`} tone="rose" />
+          <StatBlock label={t("可用模型")} value={availableModels} tone="blue" />
+          <StatBlock label={t("启用令牌")} value={`${activeTokens}`} tone="green" />
+          <StatBlock label={t("平均延迟")} value={metrics.averageLatency} tone="amber" />
+          <StatBlock label={t("异常队列")} value={`${metrics.issueCount}`} tone="rose" />
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>快捷访问</Text>
+          <Text style={styles.sectionTitle}>{t('快捷访问')}</Text>
         </View>
         <View style={styles.actionList}>
           <QuickAction
             symbol="square.stack.3d.up"
             icon="▦"
-            title="模型目录"
+            title={t("模型目录")}
             onPress={onOpenModels}
           />
           <QuickAction
             symbol="key"
             icon="◇"
-            title="API 令牌"
+            title={t("API 令牌")}
             onPress={onOpenTokens}
           />
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>AI 功能</Text>
+          <Text style={styles.sectionTitle}>{t('AI 功能')}</Text>
         </View>
         <View style={styles.actionList}>
           <QuickAction
             symbol="sparkles"
             icon="✦"
-            title="AI 创作"
+            title={t("AI 创作")}
             onPress={onOpenMedia}
           />
           <QuickAction
             symbol="text.bubble"
             icon="◇"
-            title="模型体验"
+            title={t("模型体验")}
             onPress={onOpenExperience}
           />
           <QuickAction
             symbol="arrow.triangle.merge"
             icon="◈"
-            title="模型融合"
+            title={t("模型融合")}
             onPress={onOpenFusion}
           />
           <QuickAction
             symbol="square.grid.2x2"
             icon="▦"
-            title="模型广场"
+            title={t("模型广场")}
             onPress={onOpenPricing}
           />
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>用量与消息</Text>
+          <Text style={styles.sectionTitle}>{t('用量与消息')}</Text>
         </View>
         <View style={styles.actionList}>
           <QuickAction
             symbol="doc.text.magnifyingglass"
             icon="▤"
-            title="用量日志"
+            title={t("用量日志")}
             onPress={onOpenLogs}
           />
           <QuickAction
             symbol="square.stack.3d.up"
             icon="◫"
-            title="任务"
+            title={t("任务")}
             onPress={onOpenTasks}
           />
           <QuickAction
             symbol="bell"
             icon="✉"
-            title="消息"
+            title={t("消息")}
             onPress={onOpenMessages}
           />
         </View>
@@ -810,11 +814,11 @@ function Overview({
           <View style={styles.heroCard}>
             <View style={styles.heroCardTop}>
               <View style={styles.heroCardMain}>
-                <Text style={styles.heroCardLabel}>请求次数</Text>
+                <Text style={styles.heroCardLabel}>{t('请求次数')}</Text>
                 <Text style={styles.heroCardValue}>{metrics.requests}</Text>
               </View>
               <View style={styles.heroCardAside}>
-                <Text style={styles.heroCardAsideLabel}>成功率</Text>
+                <Text style={styles.heroCardAsideLabel}>{t('成功率')}</Text>
                 <Text style={styles.heroCardAsideValue}>{metrics.reliability}</Text>
               </View>
             </View>
@@ -822,40 +826,40 @@ function Overview({
               <View style={[styles.heroCardFill, { width: `${usagePercent}%` }]} />
             </View>
             <View style={styles.heroCardMetaRow}>
-              <Text style={styles.heroCardMeta}>{spent} 已使用</Text>
-              <Text style={styles.heroCardMeta}>{balance} 余额</Text>
+              <Text style={styles.heroCardMeta}>{spent} {t('已使用')}</Text>
+              <Text style={styles.heroCardMeta}>{balance} {t('余额')}</Text>
             </View>
           </View>
 
           <Group style={styles.overviewGroup}>
-            <Row title="可用模型" accessory={<Text style={styles.overviewStatValue}>{availableModels}</Text>} />
-            <Row title="启用令牌" accessory={<Text style={styles.overviewStatValue}>{activeTokens}</Text>} />
+            <Row title={t("可用模型")} accessory={<Text style={styles.overviewStatValue}>{availableModels}</Text>} />
+            <Row title={t("启用令牌")} accessory={<Text style={styles.overviewStatValue}>{activeTokens}</Text>} />
             <Row
-              title="平均延迟"
+              title={t("平均延迟")}
               accessory={<Text style={styles.overviewStatValue}>{metrics.averageLatency}</Text>}
             />
             <Row
-              title="异常队列"
+              title={t("异常队列")}
               accessory={<Text style={styles.overviewStatValue}>{metrics.issueCount}</Text>}
             />
           </Group>
 
-          <Group header="快捷访问" style={styles.overviewGroup}>
-            <Row title="模型目录" icon="square.stack.3d.up" chevron onPress={onOpenModels} />
-            <Row title="API 令牌" icon="key" chevron onPress={onOpenTokens} />
+          <Group header={t("快捷访问")} style={styles.overviewGroup}>
+            <Row title={t("模型目录")} icon="square.stack.3d.up" chevron onPress={onOpenModels} />
+            <Row title={t("API 令牌")} icon="key" chevron onPress={onOpenTokens} />
           </Group>
 
-          <Group header="AI 功能" style={styles.overviewGroup}>
-            <Row title="AI 创作" icon="sparkles" chevron onPress={onOpenMedia} />
-            <Row title="模型体验" icon="text.bubble" chevron onPress={onOpenExperience} />
-            <Row title="模型融合" icon="arrow.triangle.merge" chevron onPress={onOpenFusion} />
-            <Row title="模型广场" icon="square.grid.2x2" chevron onPress={onOpenPricing} />
+          <Group header={t("AI 功能")} style={styles.overviewGroup}>
+            <Row title={t("AI 创作")} icon="sparkles" chevron onPress={onOpenMedia} />
+            <Row title={t("模型体验")} icon="text.bubble" chevron onPress={onOpenExperience} />
+            <Row title={t("模型融合")} icon="arrow.triangle.merge" chevron onPress={onOpenFusion} />
+            <Row title={t("模型广场")} icon="square.grid.2x2" chevron onPress={onOpenPricing} />
           </Group>
 
-          <Group header="用量与消息" style={styles.overviewGroup}>
-            <Row title="用量日志" icon="doc.text.magnifyingglass" chevron onPress={onOpenLogs} />
-            <Row title="任务" icon="square.stack.3d.up" chevron onPress={onOpenTasks} />
-            <Row title="消息" icon="bell" chevron onPress={onOpenMessages} />
+          <Group header={t("用量与消息")} style={styles.overviewGroup}>
+            <Row title={t("用量日志")} icon="doc.text.magnifyingglass" chevron onPress={onOpenLogs} />
+            <Row title={t("任务")} icon="square.stack.3d.up" chevron onPress={onOpenTasks} />
+            <Row title={t("消息")} icon="bell" chevron onPress={onOpenMessages} />
           </Group>
         </>
       )}
@@ -908,7 +912,7 @@ function ModelsView({
           keyboardAppearance={isDark() ? 'dark' : 'light'}
           value={query}
           onChangeText={setQuery}
-          placeholder="搜索模型、厂商或标签"
+          placeholder={t("搜索模型、厂商或标签")}
           placeholderTextColor={palette.placeholder}
           style={styles.searchInput}
           clearButtonMode="while-editing"
@@ -932,7 +936,7 @@ function ModelsView({
         {filteredModels.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyTitle}>
-              {query.trim() ? '没有匹配的模型' : '暂无模型'}
+              {query.trim() ? t('没有匹配的模型') : t('暂无模型')}
             </Text>
           </View>
         ) : null}
@@ -967,7 +971,7 @@ function ModelsView({
                 ]}
               >
                 <Text style={[styles.pillText, { color: statusColor[model.status] }]}>
-                  {statusLabel[model.status]}
+                  {statusLabel(model.status)}
                 </Text>
               </View>
             </Pressable>
@@ -1005,7 +1009,7 @@ function ModelsView({
       </View>
       <Modal visible={selectedModel !== null} animationType="slide" presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'} statusBarTranslucent onRequestClose={() => setSelectedModel(null)}>
         <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
-          <SheetHeader title="模型详情" onClose={() => setSelectedModel(null)} />
+          <SheetHeader title={t("模型详情")} onClose={() => setSelectedModel(null)} />
           <ScrollView contentContainerStyle={styles.detailSheetContent}>
             {selectedModel ? <ModelDetail model={selectedModel} /> : null}
           </ScrollView>
@@ -1024,19 +1028,19 @@ function ModelDetail({ model }: { model: Model }) {
           <Text style={styles.modelVendor}>{model.vendor}</Text>
         </View>
         <Text style={[styles.statusText, { color: statusColor[model.status] }]}>
-          {statusLabel[model.status]}
+          {statusLabel(model.status)}
         </Text>
       </View>
       <View style={styles.detailStats}>
-        <MiniStat label="上下文" value={model.context} />
-        <MiniStat label="延迟" value={model.latency} />
-        <MiniStat label="成本" value={model.price} />
+        <MiniStat label={t("上下文")} value={model.context} />
+        <MiniStat label={t("延迟")} value={model.latency} />
+        <MiniStat label={t("成本")} value={model.price} />
       </View>
       <View style={styles.billingGrid}>
-        <SettingsRow label="路由" value={model.route} />
-        <SettingsRow label="输入费率" value={model.inputRate} />
-        <SettingsRow label="输出费率" value={model.outputRate} />
-        <SettingsRow label="健康检查" value={model.updatedAt} />
+        <SettingsRow label={t("路由")} value={model.route} />
+        <SettingsRow label={t("输入费率")} value={model.inputRate} />
+        <SettingsRow label={t("输出费率")} value={model.outputRate} />
+        <SettingsRow label={t("健康检查")} value={model.updatedAt} />
       </View>
       <Text style={styles.detailNote}>{model.note}</Text>
       <View style={styles.tagRow}>
@@ -1076,11 +1080,11 @@ function TokensView({
         style={({ pressed }) => [styles.primaryButton, pressed ? pressedDim : null]}
       >
         <Text style={styles.primaryButtonIcon}>＋</Text>
-        <Text style={styles.primaryButtonText}>新建令牌</Text>
+        <Text style={styles.primaryButtonText}>{t('新建令牌')}</Text>
       </Pressable>
       {tokens.length === 0 ? (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>暂无令牌</Text>
+          <Text style={styles.emptyTitle}>{t('暂无令牌')}</Text>
         </View>
       ) : null}
       {tokens.map((token) => {
@@ -1091,10 +1095,10 @@ function TokensView({
               <View style={styles.tokenHeader}>
                 <View>
                   <Text style={styles.tokenTitle}>{token.name}</Text>
-                  <Text style={styles.modelVendor}>令牌 #{token.id}</Text>
+                  <Text style={styles.modelVendor}>{t('令牌 #')}{token.id}</Text>
                 </View>
                 <Text style={[styles.statusText, { color: statusColor[token.status] }]}>
-                  {tokenStatusLabel[token.status]}
+                  {tokenStatusLabel(token.status)}
                 </Text>
               </View>
               <Text style={styles.scopeText}>{token.scope}</Text>
@@ -1103,7 +1107,7 @@ function TokensView({
               </View>
               <View style={styles.metricRow}>
                 <Text style={styles.mutedText}>
-                  {token.unlimited ? '不限额度' : `${percent}% 已使用`}
+                  {token.unlimited ? t('不限额度') : tf('{0}% 已使用', percent)}
                 </Text>
                 <Text style={styles.mutedText}>{token.lastUsed}</Text>
               </View>
@@ -1114,7 +1118,7 @@ function TokensView({
               style={[styles.secondaryButton, token.status === 'expired' ? styles.buttonDisabled : null]}
             >
               <Text style={styles.secondaryButtonText}>
-                {token.status === 'active' ? '暂停' : token.status === 'paused' ? '启用' : '不可用'}
+                {token.status === 'active' ? t('暂停') : token.status === 'paused' ? t('启用') : t('不可用')}
               </Text>
             </Pressable>
           </View>
@@ -1136,10 +1140,9 @@ function AccountView({
   onScroll: TabScrollHandler;
 }) {
   const { user } = useAuth();
-  const scheme = useScheme();
-  const displayName = user?.display_name || user?.username || '未登录';
+  const displayName = user?.display_name || user?.username || t('未登录');
   const initial = displayName.trim().charAt(0).toUpperCase() || '·';
-  const roleLabel = user?.role === 1 ? '普通用户' : `角色 ${user?.role ?? '—'}`;
+  const roleLabel = user?.role === 1 ? t('普通用户') : tf('角色 {0}', user?.role ?? '—');
   return (
     <ScrollView
       contentContainerStyle={styles.scrollContent}
@@ -1174,29 +1177,15 @@ function AccountView({
       </Pressable>
 
       <Group>
-        <Row title="当前分组" value={account?.plan ?? user?.group ?? '—'} />
-        <Row title="剩余额度" value={account?.balance ?? '—'} />
-        <Row title="API 端点" value={account?.endpoint ?? 'test.qmszai.cn'} />
-        <Row title="连接状态" value={account?.mode ?? '在线'} />
+        <Row title={t("当前分组")} value={account?.plan ?? user?.group ?? '—'} />
+        <Row title={t("剩余额度")} value={account?.balance ?? '—'} />
+        <Row title={t("API 端点")} value={account?.endpoint ?? 'test.qmszai.cn'} />
+        <Row title={t("连接状态")} value={account?.mode ?? t('在线')} />
       </Group>
-      <Group header="账户">
-        <Row title="个人设置" chevron icon="person.crop.circle" onPress={onOpenPersonal} />
-        <Row title="钱包" chevron icon="creditcard" onPress={onOpenWallet} />
+      <Group header={t("账户")}>
+        <Row title={t("个人设置")} chevron icon="person.crop.circle" onPress={onOpenPersonal} />
+        <Row title={t("钱包")} chevron icon="creditcard" onPress={onOpenWallet} />
       </Group>
-      <Group header="外观">
-        <Row
-          title="夜间模式"
-          accessory={
-            <Switch
-              accessibilityLabel="夜间模式"
-              value={scheme === 'dark'}
-              onValueChange={(value) => setScheme(value ? 'dark' : 'light')}
-              trackColor={{ false: ios ? palette.fill : palette.separator, true: palette.blue }}
-            />
-          }
-        />
-      </Group>
-
     </ScrollView>
   );
 }
@@ -1231,22 +1220,22 @@ function TokenModal({
             <GlassIconButton
               icon="xmark"
               fallback="×"
-              label="关闭令牌详情"
+              label={t("关闭令牌详情")}
               onPress={onClose}
               size={32}
               tint={palette.secondaryLabel}
             />
           </View>
           <View style={styles.detailStats}>
-            <MiniStat label="用量" value={formatQuota(token.usage, quotaPerUnit)} />
+            <MiniStat label={t("用量")} value={formatQuota(token.usage, quotaPerUnit)} />
             <MiniStat
-              label="限额"
-              value={token.unlimited ? '不限' : formatQuota(token.remainQuota ?? token.quota, quotaPerUnit)}
+              label={t("限额")}
+              value={token.unlimited ? t('不限') : formatQuota(token.remainQuota ?? token.quota, quotaPerUnit)}
             />
-            <MiniStat label="状态" value={tokenStatusLabel[token.status]} />
+            <MiniStat label={t("状态")} value={tokenStatusLabel(token.status)} />
           </View>
-          <SettingsRow label="分组" value={token.scope} />
-          <SettingsRow label="最后使用" value={token.lastUsed} />
+          <SettingsRow label={t("分组")} value={token.scope} />
+          <SettingsRow label={t("最后使用")} value={token.lastUsed} />
 
           <View style={styles.modalActions}>
             <Pressable
@@ -1254,14 +1243,14 @@ function TokenModal({
               onPress={() => onDelete(token)}
               style={[styles.secondaryActionButton, styles.destructiveOutline]}
             >
-              <Text style={[styles.secondaryButtonText, styles.destructiveText]}>删除</Text>
+              <Text style={[styles.secondaryButtonText, styles.destructiveText]}>{t('删除')}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
               onPress={() => onEdit(token)}
               style={styles.primaryActionButton}
             >
-              <Text style={styles.primaryActionText}>编辑</Text>
+              <Text style={styles.primaryActionText}>{t('编辑')}</Text>
             </Pressable>
           </View>
         </View>
@@ -1461,9 +1450,9 @@ function TokenFormModal({
   const limitSummary =
     modelLimits.length <= 1
       ? (modelLimits[0] ?? '')
-      : `${modelLimits[0]} 等 ${modelLimits.length} 个`;
+      : tf('{0} 等 {1} 个', modelLimits[0], modelLimits.length);
 
-  const pickerTitle = pickerMode === 'models' ? '模型限制' : '选择分组';
+  const pickerTitle = pickerMode === 'models' ? t('模型限制') : t('选择分组');
   const pickerSearch = pickerMode === 'models' ? modelQuery : groupQuery;
 
   return (
@@ -1482,23 +1471,23 @@ function TokenFormModal({
               <View style={styles.pickerNav}>
                 <GlassPillButton
                   icon="chevron.left"
-                  label="返回"
+                  label={t("返回")}
                   tint={palette.blue}
                   onPress={closePicker}
                 />
                 <Text style={styles.pickerTitle} pointerEvents="none">
                   {pickerTitle}
                 </Text>
-                <GlassPillButton label="完成" tint={palette.blue} onPress={closePicker} />
+                <GlassPillButton label={t("完成")} tint={palette.blue} onPress={closePicker} />
               </View>
               <View style={styles.groupSearch}>
                 <AppIcon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
                 <TextInput
                   keyboardAppearance={isDark() ? 'dark' : 'light'}
-                  accessibilityLabel={pickerMode === 'models' ? '搜索模型' : '搜索分组'}
+                  accessibilityLabel={pickerMode === 'models' ? t('搜索模型') : t('搜索分组')}
                   value={pickerSearch}
                   onChangeText={pickerMode === 'models' ? setModelQuery : setGroupQuery}
-                  placeholder={pickerMode === 'models' ? '搜索模型' : '搜索分组'}
+                  placeholder={pickerMode === 'models' ? t('搜索模型') : t('搜索分组')}
                   placeholderTextColor={palette.tertiaryLabel}
                   autoCorrect={false}
                   style={styles.groupSearchInput}
@@ -1506,7 +1495,7 @@ function TokenFormModal({
                 {pickerSearch ? (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={pickerMode === 'models' ? '清除模型搜索' : '清除分组搜索'}
+                    accessibilityLabel={pickerMode === 'models' ? t('清除模型搜索') : t('清除分组搜索')}
                     onPress={() => (pickerMode === 'models' ? setModelQuery('') : setGroupQuery(''))}
                     hitSlop={10}
                   >
@@ -1521,9 +1510,9 @@ function TokenFormModal({
                   keyboardShouldPersistTaps="handled"
                 >
                   {groups === null ? (
-                    <Text style={styles.groupEmpty}>正在加载分组…</Text>
+                    <Text style={styles.groupEmpty}>{t('正在加载分组…')}</Text>
                   ) : filteredGroups.length === 0 ? (
-                    <Text style={styles.groupEmpty}>没有匹配的分组</Text>
+                    <Text style={styles.groupEmpty}>{t('没有匹配的分组')}</Text>
                   ) : (
                     filteredGroups.map((option) => {
                       const order = selectedGroups.indexOf(option.name);
@@ -1533,7 +1522,7 @@ function TokenFormModal({
                           key={option.name}
                           accessibilityRole="button"
                           accessibilityState={{ selected }}
-                          accessibilityLabel={`${option.name}${selected ? `，第 ${order + 1} 优先` : ''}`}
+                          accessibilityLabel={`${option.name}${selected ? tf('，第 {0} 优先', order + 1) : ''}`}
                           onPress={() => toggleGroup(option.name)}
                           style={({ pressed }) => [
                             styles.groupOption,
@@ -1562,7 +1551,7 @@ function TokenFormModal({
                             ) : null}
                           </View>
                           <Text style={styles.groupOptionRatio}>
-                            {`${Number(option.ratio.toFixed(5))}x 倍率`}
+                            {tf('{0}x 倍率', Number(option.ratio.toFixed(5)))}
                           </Text>
                         </Pressable>
                       );
@@ -1580,7 +1569,7 @@ function TokenFormModal({
                   windowSize={9}
                   ListEmptyComponent={
                     <Text style={styles.groupEmpty}>
-                      {models === null ? '正在加载模型…' : '没有匹配的模型'}
+                      {models === null ? t('正在加载模型…') : t('没有匹配的模型')}
                     </Text>
                   }
                   renderItem={({ item }) => {
@@ -1589,7 +1578,7 @@ function TokenFormModal({
                       <Pressable
                         accessibilityRole="button"
                         accessibilityState={{ selected }}
-                        accessibilityLabel={`${item}${selected ? '，已选择' : ''}`}
+                        accessibilityLabel={`${item}${selected ? t('，已选择') : ''}`}
                         onPress={() => toggleModelLimit(item)}
                         style={({ pressed }) => [
                           styles.groupOption,
@@ -1623,15 +1612,15 @@ function TokenFormModal({
             <>
               <View style={styles.detailHeader}>
                 <View>
-                  <Text style={styles.detailTitle}>{initial ? '编辑令牌' : '新建令牌'}</Text>
+                  <Text style={styles.detailTitle}>{initial ? t('编辑令牌') : t('新建令牌')}</Text>
                   <Text style={styles.modelVendor}>
-                    {initial ? '修改名称与限额' : '创建后可用于调用 API'}
+                    {initial ? t('修改名称与限额') : t('创建后可用于调用 API')}
                   </Text>
                 </View>
                 <GlassIconButton
                   icon="xmark"
                   fallback="×"
-                  label="关闭令牌编辑"
+                  label={t("关闭令牌编辑")}
                   onPress={onCancel}
                   size={32}
                   tint={palette.secondaryLabel}
@@ -1651,7 +1640,7 @@ function TokenFormModal({
                   }}
                 >
                   <FieldInput
-                    label="名称"
+                    label={t("名称")}
                     value={name}
                     onChangeText={setName}
                     onFocus={() => {
@@ -1662,13 +1651,13 @@ function TokenFormModal({
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.formLabel}>分组优先选择</Text>
+                  <Text style={styles.formLabel}>{t('分组优先选择')}</Text>
                   {groups && groups.length === 0 ? (
                     <TextInput
                       keyboardAppearance={isDark() ? 'dark' : 'light'}
                       value={freeGroup}
                       onChangeText={setFreeGroup}
-                      placeholder="输入分组名，留空使用默认分组"
+                      placeholder={t("输入分组名，留空使用默认分组")}
                       placeholderTextColor={palette.placeholder}
                       autoCorrect={false}
                       style={styles.formInput}
@@ -1676,7 +1665,7 @@ function TokenFormModal({
                   ) : (
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="选择分组"
+                      accessibilityLabel={t("选择分组")}
                       onPress={() => openPicker('groups')}
                       style={({ pressed }) => [
                         styles.groupField,
@@ -1684,9 +1673,7 @@ function TokenFormModal({
                       ]}
                     >
                       {selectedGroups.length === 0 ? (
-                        <Text style={styles.groupPlaceholder}>
-                          选择分组，可多选，顺序即优先级
-                        </Text>
+                        <Text style={styles.groupPlaceholder}>{t('选择分组，可多选，顺序即优先级')}</Text>
                       ) : (
                         <View style={styles.groupChips}>
                           {selectedGroups.map((groupName, index) => (
@@ -1705,9 +1692,9 @@ function TokenFormModal({
                 </View>
 
                 <View style={styles.switchRow}>
-                  <Text style={styles.formLabel}>无限额度</Text>
+                  <Text style={styles.formLabel}>{t('无限额度')}</Text>
                   <Switch
-                    accessibilityLabel="无限额度"
+                    accessibilityLabel={t("无限额度")}
                     value={unlimited}
                     onValueChange={setUnlimited}
                     // iOS 原生 Switch 默认 alignSelf: 'flex-start'，会贴住行顶，这里强制居中。
@@ -1722,7 +1709,7 @@ function TokenFormModal({
                     }}
                   >
                     <FieldInput
-                      label="金额（元）"
+                      label={t("金额（元）")}
                       value={amount}
                       onChangeText={setAmount}
                       keyboardType="decimal-pad"
@@ -1736,13 +1723,13 @@ function TokenFormModal({
                 )}
 
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.formLabel}>模型限制列表</Text>
+                  <Text style={styles.formLabel}>{t('模型限制列表')}</Text>
                   {models && models.length === 0 ? (
-                    <Text style={styles.groupPlaceholder}>模型列表不可用</Text>
+                    <Text style={styles.groupPlaceholder}>{t('模型列表不可用')}</Text>
                   ) : (
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="选择模型限制"
+                      accessibilityLabel={t("选择模型限制")}
                       onPress={() => openPicker('models')}
                       style={({ pressed }) => [
                         styles.groupField,
@@ -1753,7 +1740,7 @@ function TokenFormModal({
                         style={modelLimits.length === 0 ? styles.groupPlaceholder : styles.limitSummary}
                         numberOfLines={1}
                       >
-                        {modelLimits.length === 0 ? '留空支持所有模型' : limitSummary}
+                        {modelLimits.length === 0 ? t('留空支持所有模型') : limitSummary}
                       </Text>
                       <AppIcon name="chevron.down" size={14} color={palette.placeholder} />
                     </Pressable>
@@ -1766,13 +1753,13 @@ function TokenFormModal({
                     fieldOffsets.current.allowIps = event.nativeEvent.layout.y;
                   }}
                 >
-                  <Text style={styles.formLabel}>IP 白名单</Text>
+                  <Text style={styles.formLabel}>{t('IP 白名单')}</Text>
                   <TextInput
                     keyboardAppearance={isDark() ? 'dark' : 'light'}
-                    accessibilityLabel="IP 白名单"
+                    accessibilityLabel={t("IP 白名单")}
                     value={allowIps}
                     onChangeText={setAllowIps}
-                    placeholder="允许的 IP，一行一个，留空不限制"
+                    placeholder={t("允许的 IP，一行一个，留空不限制")}
                     placeholderTextColor={palette.placeholder}
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -1788,7 +1775,7 @@ function TokenFormModal({
 
               <View style={styles.modalActions}>
                 <Pressable accessibilityRole="button" onPress={onCancel} style={styles.secondaryActionButton}>
-                  <Text style={styles.secondaryButtonText}>取消</Text>
+                  <Text style={styles.secondaryButtonText}>{t('取消')}</Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
@@ -1796,7 +1783,7 @@ function TokenFormModal({
                   onPress={submit}
                   style={[styles.primaryActionButton, !canSubmit ? styles.buttonDisabled : null]}
                 >
-                  <Text style={styles.primaryActionText}>{initial ? '保存' : '创建'}</Text>
+                  <Text style={styles.primaryActionText}>{initial ? t('保存') : t('创建')}</Text>
                 </Pressable>
               </View>
             </>

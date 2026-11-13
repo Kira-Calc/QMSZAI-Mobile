@@ -1,3 +1,4 @@
+import { isEnglish, t, tf } from '../i18n';
 // 额度与时间格式化。额度单位为 quota，按站点 quota_per_unit 换算成货币。
 
 const DEFAULT_QUOTA_PER_UNIT = 500000;
@@ -24,8 +25,15 @@ export function formatQuotaSmart(quota: number, quotaPerUnit = DEFAULT_QUOTA_PER
 
 export function formatCompact(value: number) {
   if (!Number.isFinite(value)) return '0';
-  if (Math.abs(value) >= 100000000) return `${(value / 100000000).toFixed(1)}亿`;
-  if (Math.abs(value) >= 10000) return `${(value / 10000).toFixed(1)}万`;
+  if (isEnglish()) {
+    const abs = Math.abs(value);
+    if (abs >= 1000000000) return `${(value / 1000000000).toFixed(1)}B`;
+    if (abs >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+    if (abs >= 1000) return `${(value / 1000).toFixed(1)}K`;
+    return String(Math.round(value));
+  }
+  if (Math.abs(value) >= 100000000) return tf('{0}亿', (value / 100000000).toFixed(1));
+  if (Math.abs(value) >= 10000) return tf('{0}万', (value / 10000).toFixed(1));
   return String(Math.round(value));
 }
 
@@ -53,10 +61,22 @@ export function formatIsoTime(iso: string) {
 export function formatRelative(seconds: number) {
   if (!seconds) return '—';
   const diff = Math.floor(Date.now() / 1000) - seconds;
-  if (diff < 60) return '刚刚';
-  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
-  if (diff < 86400 * 30) return `${Math.floor(diff / 86400)} 天前`;
+  if (diff < 60) return t('刚刚');
+  if (diff < 3600) {
+    const minutes = Math.floor(diff / 60);
+    if (isEnglish()) return `${minutes} min ago`;
+    return tf('{0} 分钟前', minutes);
+  }
+  if (diff < 86400) {
+    const hours = Math.floor(diff / 3600);
+    if (isEnglish()) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+    return tf('{0} 小时前', hours);
+  }
+  if (diff < 86400 * 30) {
+    const days = Math.floor(diff / 86400);
+    if (isEnglish()) return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+    return tf('{0} 天前', days);
+  }
   return formatUnixTime(seconds);
 }
 

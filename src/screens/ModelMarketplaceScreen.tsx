@@ -24,8 +24,7 @@ import { ModelLogo } from '../components/ModelLogo';
 import { ripple } from '../material';
 import { themedStyles, isDark } from '../theme';
 import type { MarketModel } from '../types';
-
-const filters = ['全部', '对话', '图像/视频', '音频'] as const;
+import { t, tf } from '../i18n';
 
 function matches(model: MarketModel, filterIndex: number) {
   if (filterIndex === 1) {
@@ -58,6 +57,8 @@ export function ModelMarketplaceScreen({
   const [filterIndex, setFilterIndex] = useState(0);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<MarketModel | null>(null);
+  // 文案随语言切换，放在渲染期求值。
+  const filters = [t('全部'), t('对话'), t('图像/视频'), t('音频')];
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const groupY = useRef(0);
   const bodyY = useRef(0);
@@ -89,27 +90,27 @@ export function ModelMarketplaceScreen({
   };
 
   const badgeLabel = (model: MarketModel) => {
-    if (model.category === 'free') return '免费';
-    if (model.category === 'image') return '图像';
-    if (model.category === 'video') return '视频';
-    if (model.category === 'audio') return '音频';
-    return model.group === 'default' ? '对话' : model.group;
+    if (model.category === 'free') return t('免费');
+    if (model.category === 'image') return t('图像');
+    if (model.category === 'video') return t('视频');
+    if (model.category === 'audio') return t('音频');
+    return model.group === 'default' ? t('对话') : model.group;
   };
 
   const priceLabel = (model: MarketModel) => {
     if (model.category === 'free') {
-      return '免费';
+      return t('免费');
     }
     if (model.category === 'image' || model.category === 'video' || model.category === 'audio') {
       return model.outputPrice > 0
-        ? `${priceText(model.inputPrice)} / ${priceText(model.outputPrice)} 每 1M`
-        : `${priceText(model.inputPrice)} / 次`;
+        ? tf('{0} / {1} 每 1M', priceText(model.inputPrice), priceText(model.outputPrice))
+        : tf('{0} / 次', priceText(model.inputPrice));
     }
-    return `${priceText(model.inputPrice)} / ${priceText(model.outputPrice)} 每 1M`;
+    return tf('{0} / {1} 每 1M', priceText(model.inputPrice), priceText(model.outputPrice));
   };
 
   return (
-    <Subpage title="模型广场" onBack={onBack}>
+    <Subpage title={t("模型广场")} onBack={onBack}>
       <View style={styles.listRow}>
       <ScrollView
         ref={scrollRef}
@@ -127,7 +128,7 @@ export function ModelMarketplaceScreen({
             keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={query}
             onChangeText={setQuery}
-            placeholder="搜索模型、厂商或分组"
+            placeholder={t("搜索模型、厂商或分组")}
             placeholderTextColor={palette.tertiaryLabel}
             autoCorrect={false}
             style={styles.searchInput}
@@ -149,11 +150,10 @@ export function ModelMarketplaceScreen({
         />
 
         <Text style={styles.summary}>
-          {filtered.length} 个模型
-        </Text>
+          {filtered.length} {t('个模型')}</Text>
 
         {filtered.length === 0 ? (
-          <EmptyState title="没有匹配的模型" icon="magnifyingglass" />
+          <EmptyState title={t("没有匹配的模型")} icon="magnifyingglass" />
         ) : (
           <Group
             onLayout={(event) => {
@@ -188,7 +188,7 @@ export function ModelMarketplaceScreen({
                   />
                 </View>
                 <Text style={styles.modelVendor}>
-                  {model.context === '—' ? model.vendor : `${model.vendor} · 上下文 ${model.context}`}
+                  {model.context === '—' ? model.vendor : tf('{0} · 上下文 {1}', model.vendor, model.context)}
                 </Text>
                 <View style={styles.modelBottom}>
                   <View style={styles.tags}>
@@ -217,7 +217,7 @@ export function ModelMarketplaceScreen({
       />
       </View>
 
-      <Sheet visible={selected !== null} title="模型详情" onClose={() => setSelected(null)}>
+      <Sheet visible={selected !== null} title={t("模型详情")} onClose={() => setSelected(null)}>
         {selected ? (
           <>
             <View style={styles.sheetHeading}>
@@ -232,20 +232,20 @@ export function ModelMarketplaceScreen({
               />
             </View>
             <Group>
-              <Row title="分组" value={selected.group === 'default' ? '默认' : selected.group} />
+              <Row title={t("分组")} value={selected.group === 'default' ? t('默认') : selected.group} />
               {selected.category === 'chat' ? (
                 <>
-                  <Row title="输入价格" value={`¥${selected.inputPrice} / 1M`} />
-                  <Row title="输出价格" value={`¥${selected.outputPrice} / 1M`} />
+                  <Row title={t("输入价格")} value={`¥${selected.inputPrice} / 1M`} />
+                  <Row title={t("输出价格")} value={`¥${selected.outputPrice} / 1M`} />
                   {selected.cachePrice !== undefined ? (
-                    <Row title="缓存读取" value={`¥${selected.cachePrice} / 1M`} />
+                    <Row title={t("缓存读取")} value={`¥${selected.cachePrice} / 1M`} />
                   ) : null}
                 </>
               ) : (
-                <Row title="单次价格" value={`¥${selected.inputPrice.toFixed(2)}`} />
+                <Row title={t("单次价格")} value={`¥${selected.inputPrice.toFixed(2)}`} />
               )}
               {selected.tags.length > 0 ? (
-                <Row title="能力标签" value={selected.tags.join('、')} />
+                <Row title={t("能力标签")} value={selected.tags.join('、')} />
               ) : null}
             </Group>
             {selected.note ? <Text style={styles.sheetNote}>{selected.note}</Text> : null}

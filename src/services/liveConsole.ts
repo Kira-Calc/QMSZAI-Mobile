@@ -21,6 +21,7 @@ import type {
   UsageLog,
   UsageRange,
 } from '../types';
+import { t, tf } from '../i18n';
 
 const VENDOR_MAP: Array<[RegExp, string]> = [
   [/^gpt|^o[134]\b|^chatgpt|^dall-e|^whisper|^tts-|^text-embedding/i, 'OpenAI'],
@@ -46,9 +47,9 @@ const VENDOR_MAP: Array<[RegExp, string]> = [
 
 export function vendorOf(modelName: string) {
   const hit = VENDOR_MAP.find(([pattern]) => pattern.test(modelName));
-  if (hit) return hit[1];
+  if (hit) return t(hit[1]);
   const prefix = modelName.split(/[-/:]/)[0];
-  if (!prefix) return '其他';
+  if (!prefix) return t('其他');
   return prefix.charAt(0).toUpperCase() + prefix.slice(1);
 }
 
@@ -79,10 +80,10 @@ function unitPrice(item: PricingItem, ratio: number, completion = false) {
 }
 
 function priceTier(price: number) {
-  if (price <= 0) return '免费';
-  if (price < 2) return '低';
-  if (price < 10) return '中';
-  return '高';
+  if (price <= 0) return t('免费');
+  if (price < 2) return t('低');
+  if (price < 10) return t('中');
+  return t('高');
 }
 
 export function mapModels(
@@ -101,9 +102,9 @@ export function mapModels(
     const input = item ? (perCall ? (item.model_price || 0) * ratio : unitPrice(item, ratio)) : 0;
     const output = item && !perCall ? unitPrice(item, ratio, true) : 0;
     const tags: string[] = [];
-    if (perCall) tags.push('按次');
-    if (item?.supported_endpoint_types?.includes('openai')) tags.push('OpenAI 兼容');
-    if (item?.is_foreign) tags.push('海外');
+    if (perCall) tags.push(t('按次'));
+    if (item?.supported_endpoint_types?.includes('openai')) tags.push(t('OpenAI 兼容'));
+    if (item?.is_foreign) tags.push(t('海外'));
     return {
       id: name,
       name,
@@ -115,9 +116,9 @@ export function mapModels(
       tags,
       note: item?.description ?? '',
       route: item?.enable_groups?.slice(0, 2).join(' / ') || group || 'default',
-      inputRate: item ? `${formatCurrency(input, 2)} ${perCall ? '/ 次' : '/ 1M'}` : '—',
+      inputRate: item ? `${formatCurrency(input, 2)} ${perCall ? t('/ 次') : '/ 1M'}` : '—',
       outputRate: item && !perCall ? `${formatCurrency(output, 2)} / 1M` : '—',
-      updatedAt: perCall ? '按次计费' : '按 token 计费',
+      updatedAt: perCall ? t('按次计费') : t('按 token 计费'),
     } satisfies Model;
   });
 }
@@ -150,7 +151,7 @@ export function mapMarketModels(
       inputPrice: input,
       outputPrice: output,
       cachePrice: !perCall && item?.cache_ratio ? input * item.cache_ratio : undefined,
-      tags: item?.is_foreign ? ['海外'] : [],
+      tags: item?.is_foreign ? [t('海外')] : [],
       note: item?.description ?? '',
     } satisfies MarketModel;
   });
@@ -177,11 +178,11 @@ export function mapTokens(items: ApiToken[], quotaPerUnit: number): Token[] {
       .filter((value) => value.length > 0);
     return {
       id: String(item.id),
-      name: item.name || `令牌 ${item.id}`,
-      scope: routingGroups.length > 0 ? routingGroups.join(' → ') : item.group || '所有分组',
+      name: item.name || tf('令牌 {0}', item.id),
+      scope: routingGroups.length > 0 ? routingGroups.join(' → ') : item.group || t('所有分组'),
       usage: item.used_quota ?? 0,
       quota: total > 0 ? total : 1,
-      lastUsed: item.accessed_time ? formatRelative(item.accessed_time) : '从未使用',
+      lastUsed: item.accessed_time ? formatRelative(item.accessed_time) : t('从未使用'),
       status: expired ? 'expired' : item.status === 1 ? 'active' : 'paused',
       unlimited: Boolean(item.unlimited_quota),
       remainQuota: item.remain_quota ?? 0,
@@ -259,7 +260,7 @@ export function mapTasks(items: TaskItem[], quotaPerUnit: number): TaskRecord[] 
     const elapsedSeconds = endStamp ? endStamp - (task.start_time || task.submit_time) : 0;
     return {
       id: task.task_id || String(task.id),
-      title: task.action ? `${task.platform ?? '任务'} · ${task.action}` : `${task.platform ?? '任务'} #${task.id}`,
+      title: task.action ? `${task.platform ?? t('任务')} · ${task.action}` : `${task.platform ?? t('任务')} #${task.id}`,
       kind: taskKindOf(task),
       state,
       progress,
@@ -352,14 +353,14 @@ export function buildAccountSummary(input: {
 }): AccountSummary {
   return {
     workspaceName: input.username,
-    role: input.role === 1 ? '普通用户' : `角色 ${input.role}`,
+    role: input.role === 1 ? t('普通用户') : tf('角色 {0}', input.role),
     plan: input.group || 'default',
     balance: formatQuota(input.quota, input.quotaPerUnit),
     endpoint: 'test.qmszai.cn',
-    mode: '在线',
+    mode: t('在线'),
   };
 }
 
 export function conversationTitle(conversation: ChatConversation) {
-  return conversation.Title?.trim() || `对话 ${conversation.ID}`;
+  return conversation.Title?.trim() || tf('对话 {0}', conversation.ID);
 }

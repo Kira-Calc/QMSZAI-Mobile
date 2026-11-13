@@ -8,6 +8,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { pressedSurface } from '../material';
 import { Group, Row, Subpage, palette } from '../ui';
 import { themedStyles } from '../theme';
+import { t, tf } from '../i18n';
 
 const ios = Platform.OS === 'ios';
 
@@ -27,52 +28,52 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
   const copyInvite = async () => {
     if (!inviteLink) return;
     await Clipboard.setStringAsync(inviteLink);
-    Alert.alert('已复制邀请链接');
+    Alert.alert(t('已复制邀请链接'));
   };
 
   return (
-    <Subpage title="钱包" onBack={onBack}>
+    <Subpage title={t("钱包")} onBack={onBack}>
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}>
         <View style={styles.hero}>
-          <Text style={styles.heroLabel}>当前余额</Text>
+          <Text style={styles.heroLabel}>{t('当前余额')}</Text>
           <Text style={styles.heroValue}>{formatQuota(user?.quota ?? 0, quotaPerUnit)}</Text>
           <View style={styles.heroMetaRow}>
             <View style={styles.heroMeta}>
               <Text style={styles.heroMetaValue}>{formatQuota(user?.used_quota ?? 0, quotaPerUnit)}</Text>
-              <Text style={styles.heroMetaLabel}>历史消耗</Text>
+              <Text style={styles.heroMetaLabel}>{t('历史消耗')}</Text>
             </View>
             <View style={styles.heroMeta}>
               <Text style={styles.heroMetaValue}>{(user?.request_count ?? 0).toLocaleString()}</Text>
-              <Text style={styles.heroMetaLabel}>请求次数</Text>
+              <Text style={styles.heroMetaLabel}>{t('请求次数')}</Text>
             </View>
             <View style={styles.heroMeta}>
               <Text style={styles.heroMetaValue}>{user?.group || '—'}</Text>
-              <Text style={styles.heroMetaLabel}>用户分组</Text>
+              <Text style={styles.heroMetaLabel}>{t('用户分组')}</Text>
             </View>
           </View>
         </View>
 
-        <Group header="邀请奖励">
+        <Group header={t("邀请奖励")}>
           <View style={styles.inviteStats}>
             <View style={styles.inviteStat}>
               <Text style={styles.inviteValue}>
                 {formatQuota(user?.aff_quota ?? 0, quotaPerUnit)}
               </Text>
-              <Text style={styles.inviteLabel}>待使用收益</Text>
+              <Text style={styles.inviteLabel}>{t('待使用收益')}</Text>
             </View>
             <View style={styles.inviteStat}>
               <Text style={styles.inviteValue}>
                 {formatQuota(user?.aff_history_quota ?? 0, quotaPerUnit)}
               </Text>
-              <Text style={styles.inviteLabel}>总收益</Text>
+              <Text style={styles.inviteLabel}>{t('总收益')}</Text>
             </View>
             <View style={styles.inviteStat}>
               <Text style={styles.inviteValue}>{(user?.aff_count ?? 0).toLocaleString()}</Text>
-              <Text style={styles.inviteLabel}>邀请人数</Text>
+              <Text style={styles.inviteLabel}>{t('邀请人数')}</Text>
             </View>
           </View>
           <View style={styles.linkBox}>
-            <Text style={styles.linkLabel}>邀请码</Text>
+            <Text style={styles.linkLabel}>{t('邀请码')}</Text>
             <Text selectable style={styles.linkText}>
               {affCode || '—'}
             </Text>
@@ -83,14 +84,14 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
               onPress={copyInvite}
               style={({ pressed }) => [styles.copyRow, pressed ? pressedSurface : null]}
             >
-              <Text style={[styles.copyText, { color: palette.blue }]}>复制邀请链接</Text>
+              <Text style={[styles.copyText, { color: palette.blue }]}>{t('复制邀请链接')}</Text>
             </Pressable>
           ) : null}
         </Group>
 
-        <Group header="额度说明">
-          <Row title="计费单位" value={`${quotaPerUnit.toLocaleString()} 额度 / ¥1`} />
-          <Row title="余额来源" value="签到、兑换码、邀请奖励" />
+        <Group header={t("额度说明")}>
+          <Row title={t("计费单位")} value={tf('{0} 额度 / ¥1', quotaPerUnit.toLocaleString())} />
+          <Row title={t("余额来源")} value={t("签到、兑换码、邀请奖励")} />
         </Group>
       </ScrollView>
     </Subpage>

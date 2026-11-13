@@ -28,6 +28,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { cardSurface, m3, pressedDim, shape } from '../material';
 import { palette } from '../ui';
 import { themedStyles, isDark } from '../theme';
+import { t } from '../i18n';
 
 const ios = Platform.OS === 'ios';
 
@@ -67,7 +68,7 @@ export function LoginScreen() {
     if (countdown > 0) return;
     const target = phone.trim();
     if (!target) {
-      setError('请填写手机号');
+      setError(t('请填写手机号'));
       return;
     }
     setError('');
@@ -93,7 +94,7 @@ export function LoginScreen() {
   const submitLogin = async () => {
     if (busy) return;
     if (!username.trim() || !password) {
-      setError('请填写账号和密码');
+      setError(t('请填写账号和密码'));
       return;
     }
     setBusy(true);
@@ -105,7 +106,7 @@ export function LoginScreen() {
       } else if (outcome.kind === 'needPassword') {
         setMode('reset');
         setPhone(/^1\d{10}$/.test(outcome.username) ? outcome.username : '');
-        setError('该账号尚未设置密码，请验证手机号后设置密码');
+        setError(t('该账号尚未设置密码，请验证手机号后设置密码'));
       }
     } catch (err) {
       setError(errorMessage(err));
@@ -117,7 +118,7 @@ export function LoginScreen() {
   const submit2FA = async () => {
     if (busy) return;
     if (!code2fa.trim()) {
-      setError('请输入验证码');
+      setError(t('请输入验证码'));
       return;
     }
     setBusy(true);
@@ -134,11 +135,11 @@ export function LoginScreen() {
   const submitRegister = async () => {
     if (busy) return;
     if (!phone.trim() || !code.trim() || !newPassword) {
-      setError('请完整填写手机号、验证码和密码');
+      setError(t('请完整填写手机号、验证码和密码'));
       return;
     }
     if (newPassword.length < 8 || newPassword.length > 20) {
-      setError('密码需为 8–20 位');
+      setError(t('密码需为 8–20 位'));
       return;
     }
     setBusy(true);
@@ -162,11 +163,11 @@ export function LoginScreen() {
   const submitReset = async () => {
     if (busy) return;
     if (!phone.trim() || !code.trim() || !newPassword) {
-      setError('请完整填写手机号、验证码和新密码');
+      setError(t('请完整填写手机号、验证码和新密码'));
       return;
     }
     if (newPassword.length < 8 || newPassword.length > 20) {
-      setError('密码需为 8–20 位');
+      setError(t('密码需为 8–20 位'));
       return;
     }
     setBusy(true);
@@ -182,7 +183,7 @@ export function LoginScreen() {
       setPassword('');
       setCode('');
       setNewPassword('');
-      setError('密码已重置，请使用新密码登录');
+      setError(t('密码已重置，请使用新密码登录'));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -202,10 +203,10 @@ export function LoginScreen() {
 
   const submit = step === '2fa' ? submit2FA : mode === 'login' ? submitLogin : mode === 'register' ? submitRegister : submitReset;
 
-  const title = step === '2fa' ? '两步验证' : mode === 'login' ? '登录' : mode === 'register' ? '注册账号' : '重置密码';
+  const title = step === '2fa' ? t('两步验证') : mode === 'login' ? t('登录') : mode === 'register' ? t('注册账号') : t('重置密码');
 
   const primaryLabel =
-    step === '2fa' ? '验证' : mode === 'login' ? '登录' : mode === 'register' ? '注册并登录' : '重置密码';
+    step === '2fa' ? t('验证') : mode === 'login' ? t('登录') : mode === 'register' ? t('注册并登录') : t('重置密码');
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
@@ -223,9 +224,9 @@ export function LoginScreen() {
         >
           <View style={styles.brand}>
             <View style={styles.brandMark}>
-              <Text style={styles.brandMarkText}>阡</Text>
+              <Text style={styles.brandMarkText}>{t('阡')}</Text>
             </View>
-            <Text style={styles.brandName}>{publicStatus?.system_name ?? '阡陌数智'}</Text>
+            <Text style={styles.brandName}>{publicStatus?.system_name ?? t('阡陌数智')}</Text>
           </View>
 
           <Text style={styles.title}>{title}</Text>
@@ -233,29 +234,29 @@ export function LoginScreen() {
           <View style={styles.form}>
             {step === '2fa' ? (
               <Field
-                label="验证码"
+                label={t("验证码")}
                 value={code2fa}
                 onChangeText={setCode2fa}
-                placeholder="请输入 6 位验证码"
+                placeholder={t("请输入 6 位验证码")}
                 keyboardType="number-pad"
                 autoFocus
               />
             ) : mode === 'login' ? (
               <>
                 <Field
-                  label="账号"
+                  label={t("账号")}
                   value={username}
                   onChangeText={setUsername}
-                  placeholder="用户名或手机号"
+                  placeholder={t("用户名或手机号")}
                   autoCapitalize="none"
                   autoCorrect={false}
                   textContentType="username"
                 />
                 <Field
-                  label="密码"
+                  label={t("密码")}
                   value={password}
                   onChangeText={setPassword}
-                  placeholder="请输入密码"
+                  placeholder={t("请输入密码")}
                   secureTextEntry
                   textContentType="password"
                 />
@@ -263,19 +264,19 @@ export function LoginScreen() {
             ) : (
               <>
                 <Field
-                  label="手机号"
+                  label={t("手机号")}
                   value={phone}
                   onChangeText={setPhone}
-                  placeholder="请输入手机号"
+                  placeholder={t("请输入手机号")}
                   keyboardType="phone-pad"
                   textContentType="telephoneNumber"
                 />
                 {smsEnabled ? (
                   <Field
-                    label="短信验证码"
+                    label={t("短信验证码")}
                     value={code}
                     onChangeText={setCode}
-                    placeholder="请输入验证码"
+                    placeholder={t("请输入验证码")}
                     keyboardType="number-pad"
                     right={
                       <Pressable
@@ -285,7 +286,7 @@ export function LoginScreen() {
                         hitSlop={8}
                       >
                         <Text style={[styles.codeButton, countdown > 0 ? styles.codeButtonDisabled : null]}>
-                          {countdown > 0 ? `${countdown}s` : '获取验证码'}
+                          {countdown > 0 ? `${countdown}s` : t('获取验证码')}
                         </Text>
                       </Pressable>
                     }
@@ -293,19 +294,19 @@ export function LoginScreen() {
                 ) : null}
                 {mode === 'register' ? (
                   <Field
-                    label="用户名"
+                    label={t("用户名")}
                     value={username}
                     onChangeText={setUsername}
-                    placeholder="留空自动生成"
+                    placeholder={t("留空自动生成")}
                     autoCapitalize="none"
                     autoCorrect={false}
                   />
                 ) : null}
                 <Field
-                  label={mode === 'register' ? '设置密码' : '新密码'}
+                  label={mode === 'register' ? t('设置密码') : t('新密码')}
                   value={newPassword}
                   onChangeText={setNewPassword}
-                  placeholder="8–20 位"
+                  placeholder={t("8–20 位")}
                   secureTextEntry
                   textContentType="newPassword"
                 />
@@ -333,14 +334,14 @@ export function LoginScreen() {
             </Pressable>
 
             {step === '2fa' ? (
-              <TextLink label="返回登录" onPress={() => { setStep('form'); setError(''); }} />
+              <TextLink label={t("返回登录")} onPress={() => { setStep('form'); setError(''); }} />
             ) : mode === 'login' ? (
               <View style={styles.linkRow}>
-                {registerEnabled ? <TextLink label="注册账号" onPress={() => switchMode('register')} /> : null}
-                <TextLink label="忘记密码" onPress={() => switchMode('reset')} />
+                {registerEnabled ? <TextLink label={t("注册账号")} onPress={() => switchMode('register')} /> : null}
+                <TextLink label={t("忘记密码")} onPress={() => switchMode('reset')} />
               </View>
             ) : (
-              <TextLink label="返回登录" onPress={() => switchMode('login')} />
+              <TextLink label={t("返回登录")} onPress={() => switchMode('login')} />
             )}
           </View>
         </ScrollView>
@@ -479,7 +480,7 @@ function CaptchaSheet({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.captchaBackdrop}>
         <View style={[styles.captchaCard, { paddingBottom: 20 + insets.bottom }]}>
-          <Text style={styles.captchaTitle}>安全验证</Text>
+          <Text style={styles.captchaTitle}>{t('安全验证')}</Text>
           <View style={styles.captchaTargetRow}>
             {targets.map((target, index) => (
               <View
@@ -518,8 +519,8 @@ function CaptchaSheet({
           </View>
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <View style={styles.captchaActions}>
-            <TextLink label="刷新" onPress={load} />
-            <TextLink label="取消" onPress={onClose} />
+            <TextLink label={t("刷新")} onPress={load} />
+            <TextLink label={t("取消")} onPress={onClose} />
           </View>
         </View>
       </View>
@@ -530,7 +531,7 @@ function CaptchaSheet({
 function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
-  return '操作失败，请稍后重试';
+  return t('操作失败，请稍后重试');
 }
 
 const styles = themedStyles(() => StyleSheet.create({

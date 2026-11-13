@@ -8,15 +8,34 @@ import { formatQuota, formatQuotaSmart } from '../api/format';
 import { useAuth } from '../auth/AuthProvider';
 import { cardSurface, m3, pressedDim } from '../material';
 import { Group, Row, Sheet, Subpage, palette } from '../ui';
-import { themedStyles, isDark } from '../theme';
+import { AppIcon } from '../components/AppIcon';
+import { isDark, setMode, themedStyles, useThemeMode } from '../theme';
+import type { ThemeMode } from '../theme';
+import { setLanguage, t, tf, useLanguage, useLanguageSetting } from '../i18n';
+import type { LanguageSetting } from '../i18n';
 
 const ios = Platform.OS === 'ios';
 
-const roleLabel = (role: number) => (role === 1 ? '普通用户' : `角色 ${role}`);
+const roleLabel = (role: number) => (role === 1 ? t('普通用户') : tf('角色 {0}', role));
 
 export function PersonalScreen({ onBack }: { onBack: () => void }) {
   const insets = useSafeAreaInsets();
   const { user, signOut, refreshUser, quotaPerUnit, siteStatus } = useAuth();
+  const themeMode = useThemeMode();
+  const languageSetting = useLanguageSetting();
+  useLanguage();
+
+  // 文案随语言切换，放在渲染期求值。
+  const appearanceOptions: Array<{ mode: ThemeMode; title: string }> = [
+    { mode: 'system', title: t('跟随系统') },
+    { mode: 'light', title: t('浅色') },
+    { mode: 'dark', title: t('深色') },
+  ];
+  const languageOptions: Array<{ value: LanguageSetting; title: string }> = [
+    { value: 'system', title: t('跟随系统') },
+    { value: 'zh', title: '简体中文' },
+    { value: 'en', title: 'English' },
+  ];
 
   const [checkin, setCheckin] = useState<CheckinStatus | null>(null);
   const [checkinBusy, setCheckinBusy] = useState(false);
@@ -49,10 +68,10 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
     setCheckinBusy(true);
     try {
       const result = await submitCheckin();
-      Alert.alert('签到成功', `获得 ${formatQuotaSmart(result.quota_awarded ?? 0, quotaPerUnit)} 额度`);
+      Alert.alert(t('签到成功'), tf('获得 {0} 额度', formatQuotaSmart(result.quota_awarded ?? 0, quotaPerUnit)));
       await Promise.all([loadCheckin(), refreshUser()]);
     } catch (error) {
-      Alert.alert('签到失败', error instanceof Error ? error.message : '请稍后重试');
+      Alert.alert(t('签到失败'), error instanceof Error ? error.message : t('请稍后重试'));
     } finally {
       setCheckinBusy(false);
     }
@@ -80,7 +99,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
       await refreshUser();
       setSheet(null);
     } catch (error) {
-      Alert.alert('保存失败', error instanceof Error ? error.message : '请稍后重试');
+      Alert.alert(t('保存失败'), error instanceof Error ? error.message : t('请稍后重试'));
     } finally {
       setBusy(false);
     }
@@ -89,7 +108,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
   const savePassword = async () => {
     if (!user || busy) return;
     if (newPassword.length < 8 || newPassword.length > 20) {
-      Alert.alert('密码格式不正确', '新密码需为 8–20 位');
+      Alert.alert(t('密码格式不正确'), t('新密码需为 8–20 位'));
       return;
     }
     setBusy(true);
@@ -100,66 +119,66 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
         password: newPassword,
       });
       setSheet(null);
-      Alert.alert('密码已更新');
+      Alert.alert(t('密码已更新'));
     } catch (error) {
-      Alert.alert('修改失败', error instanceof Error ? error.message : '请稍后重试');
+      Alert.alert(t('修改失败'), error instanceof Error ? error.message : t('请稍后重试'));
     } finally {
       setBusy(false);
     }
   };
 
   const confirmSignOut = () => {
-    Alert.alert('退出登录？', '退出后需要重新输入账号密码。', [
-      { text: '取消', style: 'cancel' },
-      { text: '退出', style: 'destructive', onPress: () => signOut() },
+    Alert.alert(t('退出登录？'), t('退出后需要重新输入账号密码。'), [
+      { text: t('取消'), style: 'cancel' },
+      { text: t('退出'), style: 'destructive', onPress: () => signOut() },
     ]);
   };
 
   return (
-    <Subpage title="个人设置" onBack={onBack}>
+    <Subpage title={t("个人设置")} onBack={onBack}>
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}>
         <View style={styles.profile}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{initial}</Text>
           </View>
           <View style={styles.profileMain}>
-            <Text style={styles.name}>{displayNameValue || '未登录'}</Text>
+            <Text style={styles.name}>{displayNameValue || t('未登录')}</Text>
             <Text style={styles.role}>
               {roleLabel(user?.role ?? 0)} · ID {user?.id ?? '—'}
             </Text>
           </View>
           <View style={styles.balanceBlock}>
             <Text style={styles.balance}>{formatQuota(user?.quota ?? 0, quotaPerUnit)}</Text>
-            <Text style={styles.balanceLabel}>剩余额度</Text>
+            <Text style={styles.balanceLabel}>{t('剩余额度')}</Text>
           </View>
         </View>
 
         <Group>
-          <Row title="历史消耗" value={formatQuota(user?.used_quota ?? 0, quotaPerUnit)} />
-          <Row title="请求次数" value={(user?.request_count ?? 0).toLocaleString()} />
-          <Row title="用户分组" value={user?.group || '—'} />
-          <Row title="手机号" value={user?.phone || '—'} />
+          <Row title={t("历史消耗")} value={formatQuota(user?.used_quota ?? 0, quotaPerUnit)} />
+          <Row title={t("请求次数")} value={(user?.request_count ?? 0).toLocaleString()} />
+          <Row title={t("用户分组")} value={user?.group || '—'} />
+          <Row title={t("手机号")} value={user?.phone || '—'} />
         </Group>
 
         {checkinEnabled ? (
-          <Group header="每日签到">
+          <Group header={t("每日签到")}>
             <View style={styles.checkinBody}>
               <View style={styles.checkinStats}>
                 <View style={styles.checkinStat}>
                   <Text style={styles.statValue}>{checkin?.stats?.checkin_count ?? 0}</Text>
-                  <Text style={styles.statLabel}>累计签到</Text>
+                  <Text style={styles.statLabel}>{t('累计签到')}</Text>
                 </View>
                 <View style={styles.checkinStat}>
                   <Text style={styles.statValue}>
                     {formatQuotaSmart(checkin?.stats?.total_quota ?? 0, quotaPerUnit)}
                   </Text>
-                  <Text style={styles.statLabel}>累计获得</Text>
+                  <Text style={styles.statLabel}>{t('累计获得')}</Text>
                 </View>
                 <View style={styles.checkinStat}>
                   <Text style={styles.statValue}>
                     {formatQuotaSmart(checkin?.max_quota ?? 0, quotaPerUnit)}
                   </Text>
-                  <Text style={styles.statLabel}>单次上限</Text>
+                  <Text style={styles.statLabel}>{t('单次上限')}</Text>
                 </View>
               </View>
               <Pressable
@@ -174,17 +193,47 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
                 ]}
               >
                 <Text style={[styles.checkinText, checkedIn ? styles.checkinTextDone : null]}>
-                  {checkedIn ? '今日已签到' : checkinBusy ? '签到中…' : '立即签到'}
+                  {checkedIn ? t('今日已签到') : checkinBusy ? t('签到中…') : t('立即签到')}
                 </Text>
               </Pressable>
             </View>
           </Group>
         ) : null}
 
-        <Group header="账号">
-          <Row title="用户名" value={user?.username || '—'} />
-          <Row title="显示名称" value={user?.display_name || '—'} chevron onPress={openProfile} />
-          <Row title="登录密码" value={user?.has_password ? '已设置' : '未设置'} chevron onPress={openPassword} />
+        <Group header={t("账号")}>
+          <Row title={t("用户名")} value={user?.username || '—'} />
+          <Row title={t("显示名称")} value={user?.display_name || '—'} chevron onPress={openProfile} />
+          <Row title={t("登录密码")} value={user?.has_password ? t('已设置') : t('未设置')} chevron onPress={openPassword} />
+        </Group>
+
+        <Group header={t("外观")}>
+          {appearanceOptions.map((option) => (
+            <Row
+              key={option.mode}
+              title={option.title}
+              onPress={() => setMode(option.mode)}
+              accessory={
+                themeMode === option.mode ? (
+                  <AppIcon name="checkmark" size={18} color={palette.blue} />
+                ) : null
+              }
+            />
+          ))}
+        </Group>
+
+        <Group header={t("语言")}>
+          {languageOptions.map((option) => (
+            <Row
+              key={option.value}
+              title={option.title}
+              onPress={() => setLanguage(option.value)}
+              accessory={
+                languageSetting === option.value ? (
+                  <AppIcon name="checkmark" size={18} color={palette.blue} />
+                ) : null
+              }
+            />
+          ))}
         </Group>
 
         <Pressable
@@ -192,17 +241,17 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
           onPress={confirmSignOut}
           style={({ pressed }) => [styles.signOut, pressed ? styles.signOutPressed : null]}
         >
-          <Text style={[styles.signOutText, { color: palette.red }]}>退出登录</Text>
+          <Text style={[styles.signOutText, { color: palette.red }]}>{t('退出登录')}</Text>
         </Pressable>
       </ScrollView>
 
-      <Sheet visible={sheet === 'profile'} title="显示名称" onClose={() => setSheet(null)}>
+      <Sheet visible={sheet === 'profile'} title={t("显示名称")} onClose={() => setSheet(null)}>
         <View style={styles.form}>
           <TextInput
             keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={displayName}
             onChangeText={setDisplayName}
-            placeholder="输入显示名称"
+            placeholder={t("输入显示名称")}
             placeholderTextColor={palette.tertiaryLabel}
             style={styles.input}
           />
@@ -212,18 +261,18 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
             onPress={saveProfile}
             style={({ pressed }) => [styles.primary, pressed ? pressedDim : null]}
           >
-            <Text style={styles.primaryText}>{busy ? '保存中…' : '保存'}</Text>
+            <Text style={styles.primaryText}>{busy ? t('保存中…') : t('保存')}</Text>
           </Pressable>
         </View>
       </Sheet>
 
-      <Sheet visible={sheet === 'password'} title="修改密码" onClose={() => setSheet(null)}>
+      <Sheet visible={sheet === 'password'} title={t("修改密码")} onClose={() => setSheet(null)}>
         <View style={styles.form}>
           <TextInput
             keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={originalPassword}
             onChangeText={setOriginalPassword}
-            placeholder="当前密码"
+            placeholder={t("当前密码")}
             placeholderTextColor={palette.tertiaryLabel}
             secureTextEntry
             style={styles.input}
@@ -232,7 +281,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
             keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={newPassword}
             onChangeText={setNewPassword}
-            placeholder="新密码（8–20 位）"
+            placeholder={t("新密码（8–20 位）")}
             placeholderTextColor={palette.tertiaryLabel}
             secureTextEntry
             style={styles.input}
@@ -243,7 +292,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
             onPress={savePassword}
             style={({ pressed }) => [styles.primary, pressed ? pressedDim : null]}
           >
-            <Text style={styles.primaryText}>{busy ? '保存中…' : '保存'}</Text>
+            <Text style={styles.primaryText}>{busy ? t('保存中…') : t('保存')}</Text>
           </Pressable>
         </View>
       </Sheet>

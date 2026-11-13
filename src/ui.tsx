@@ -35,6 +35,7 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'reac
 
 import { elevation, m3, ripple, shape, type } from './material';
 import { isDark, palette, themedStyles } from './theme';
+import { t, tf } from './i18n';
 
 export { palette } from './theme';
 
@@ -409,7 +410,7 @@ export function Subpage({
         <View style={styles.navBar}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="返回"
+            accessibilityLabel={t("返回")}
             onPress={onBack}
             android_ripple={{ ...ripple(), borderless: true }}
             style={styles.navBackButton}
@@ -432,7 +433,7 @@ export function Subpage({
         <GlassPillButton
           icon="chevron.left"
           fallback="‹"
-          label="返回"
+          label={t("返回")}
           onPress={onBack}
           style={styles.backButton}
         />
@@ -454,7 +455,7 @@ export function SheetHeader({ title, onClose }: { title: string; onClose: () => 
       </Text>
       <View style={styles.sheetNavRight}>
         {ios ? (
-          <GlassPillButton label="完成" onPress={onClose} />
+          <GlassPillButton label={t("完成")} onPress={onClose} />
         ) : (
           <Pressable
             accessibilityRole="button"
@@ -464,7 +465,7 @@ export function SheetHeader({ title, onClose }: { title: string; onClose: () => 
               pressed ? styles.textButtonPressed : null,
             ]}
           >
-            <Text style={styles.textButtonLabel}>完成</Text>
+            <Text style={styles.textButtonLabel}>{t('完成')}</Text>
           </Pressable>
         )}
       </View>
@@ -482,9 +483,9 @@ export function Sheet({
   indexOffsetFor,
   searchValue,
   onSearchChange,
-  searchPlaceholder = '搜索模型或厂商',
+  searchPlaceholder = t('搜索模型或厂商'),
   empty,
-  emptyText = '没有匹配的模型',
+  emptyText = t('没有匹配的模型'),
 }: {
   visible: boolean;
   title: string;
@@ -519,7 +520,7 @@ export function Sheet({
               <AppIcon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
               <TextInput
                 keyboardAppearance={isDark() ? 'dark' : 'light'}
-                accessibilityLabel="搜索模型"
+                accessibilityLabel={t("搜索模型")}
                 value={searchValue}
                 onChangeText={onSearchChange}
                 placeholder={searchPlaceholder}
@@ -530,7 +531,7 @@ export function Sheet({
               {searchValue ? (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="清除搜索"
+                  accessibilityLabel={t("清除搜索")}
                   onPress={() => onSearchChange('')}
                   hitSlop={10}
                 >
@@ -584,12 +585,12 @@ export function AlphabetRail({
 }) {
   if (letters.length < 2) return null;
   return (
-    <View style={styles.alphabetRail} accessibilityLabel="字母索引">
+    <View style={styles.alphabetRail} accessibilityLabel={t("字母索引")}>
       {letters.map((letter) => (
         <Pressable
           key={letter}
           accessibilityRole="button"
-          accessibilityLabel={`跳到 ${letter}`}
+          accessibilityLabel={tf('跳到 {0}', letter)}
           onPress={() => onSelect?.(letter)}
           hitSlop={5}
           style={({ pressed }) => [styles.alphabetItem, pressed ? styles.alphabetPressed : null]}

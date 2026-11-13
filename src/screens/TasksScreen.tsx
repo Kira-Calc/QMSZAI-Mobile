@@ -20,24 +20,8 @@ import {
   type Tone,
 } from '../ui';
 import type { TaskKind, TaskRecord, TaskState } from '../types';
+import { t, tf } from '../i18n';
 
-const kindLabel: Record<TaskKind, string> = {
-  image: '图像',
-  video: '视频',
-  music: '音乐',
-  voice: '语音',
-  batch: '批次',
-};
-
-const stateMeta: Record<TaskState, { label: string; tone: Tone }> = {
-  queued: { label: '排队中', tone: 'neutral' },
-  running: { label: '进行中', tone: 'info' },
-  succeeded: { label: '已完成', tone: 'success' },
-  failed: { label: '失败', tone: 'danger' },
-  cancelled: { label: '已取消', tone: 'warning' },
-};
-
-const filters = ['全部', '进行中', '已完成', '失败'] as const;
 
 function matchesFilter(task: TaskRecord, index: number) {
   if (index === 1) {
@@ -67,6 +51,23 @@ export function TasksScreen({
   const [filterIndex, setFilterIndex] = useState(0);
   const [selected, setSelected] = useState<TaskRecord | null>(null);
 
+  // 文案随语言切换，放在渲染期求值。
+  const kindLabel: Record<TaskKind, string> = {
+    image: t('图像'),
+    video: t('视频'),
+    music: t('音乐'),
+    voice: t('语音'),
+    batch: t('批次'),
+  };
+  const stateMeta: Record<TaskState, { label: string; tone: Tone }> = {
+    queued: { label: t('排队中'), tone: 'neutral' },
+    running: { label: t('进行中'), tone: 'info' },
+    succeeded: { label: t('已完成'), tone: 'success' },
+    failed: { label: t('失败'), tone: 'danger' },
+    cancelled: { label: t('已取消'), tone: 'warning' },
+  };
+  const filters = [t('全部'), t('进行中'), t('已完成'), t('失败')];
+
   const filtered = useMemo(
     () => tasks.filter((task) => matchesFilter(task, filterIndex)),
     [filterIndex, tasks],
@@ -78,10 +79,10 @@ export function TasksScreen({
 
   const confirmCancel = (task: TaskRecord) => {
     if (!onCancel) return;
-    Alert.alert('取消任务？', '已生成的部分结果会被丢弃，此操作无法撤销。', [
-      { text: '保留', style: 'cancel' },
+    Alert.alert(t('取消任务？'), t('已生成的部分结果会被丢弃，此操作无法撤销。'), [
+      { text: t('保留'), style: 'cancel' },
       {
-        text: '取消任务',
+        text: t('取消任务'),
         style: 'destructive',
         onPress: () => {
           onCancel(task.id);
@@ -97,7 +98,7 @@ export function TasksScreen({
   };
 
   return (
-    <Subpage title="任务" onBack={onBack}>
+    <Subpage title={t("任务")} onBack={onBack}>
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}>
         <Segmented
           values={[...filters]}
@@ -110,15 +111,14 @@ export function TasksScreen({
 
         <View style={styles.summary}>
           <Text style={styles.summaryTitle}>
-            {running} 个进行中
-            {queued > 0 ? ` · ${queued} 个排队` : ''}
+            {running} {t('个进行中')}{queued > 0 ? tf(' · {0} 个排队', queued) : ''}
           </Text>
         </View>
 
         {filtered.length === 0 ? (
-          <EmptyState title="没有任务" icon="square.stack.3d.up" />
+          <EmptyState title={t("没有任务")} icon="square.stack.3d.up" />
         ) : (
-          <Group header="异步任务">
+          <Group header={t("异步任务")}>
             {filtered.map((task) => {
               const state = stateMeta[task.state];
               return (
@@ -137,7 +137,7 @@ export function TasksScreen({
                   </View>
                   <View style={styles.taskMetaRow}>
                     <Text style={styles.taskMeta}>
-                      {kindLabel[task.kind]} · 提交于 {task.submittedAt}
+                      {kindLabel[task.kind]} {t('· 提交于')} {task.submittedAt}
                     </Text>
                     <Text style={styles.taskMeta}>
                       {task.state === 'running' ? `${task.progress}%` : task.elapsed}
@@ -153,7 +153,7 @@ export function TasksScreen({
         )}
       </ScrollView>
 
-      <Sheet visible={current !== null} title="任务详情" onClose={() => setSelected(null)}>
+      <Sheet visible={current !== null} title={t("任务详情")} onClose={() => setSelected(null)}>
         {current ? (
           <>
             <View style={styles.sheetHeading}>
@@ -166,17 +166,17 @@ export function TasksScreen({
             {current.state === 'running' || current.state === 'queued' ? (
               <View style={styles.sheetProgress}>
                 <ProgressBar percent={current.progress} tone="info" />
-                <Text style={styles.sheetProgressText}>已完成 {current.progress}%</Text>
+                <Text style={styles.sheetProgressText}>{t('已完成')} {current.progress}%</Text>
               </View>
             ) : null}
             <Group>
-              <Row title="类型" value={kindLabel[current.kind]} />
-              <Row title="提交时间" value={current.submittedAt} />
-              <Row title="耗时" value={current.elapsed} />
-              <Row title="费用" value={current.cost > 0 ? `¥${current.cost.toFixed(2)}` : '—'} />
+              <Row title={t("类型")} value={kindLabel[current.kind]} />
+              <Row title={t("提交时间")} value={current.submittedAt} />
+              <Row title={t("耗时")} value={current.elapsed} />
+              <Row title={t("费用")} value={current.cost > 0 ? `¥${current.cost.toFixed(2)}` : '—'} />
             </Group>
             {current.note ? (
-              <Group header="说明">
+              <Group header={t("说明")}>
                 <View style={styles.note}>
                   <Text style={styles.noteText}>{current.note}</Text>
                 </View>
@@ -188,11 +188,11 @@ export function TasksScreen({
                 onPress={() => confirmCancel(current)}
                 style={[styles.action, styles.destructiveAction]}
               >
-                <Text style={styles.destructiveText}>取消任务</Text>
+                <Text style={styles.destructiveText}>{t('取消任务')}</Text>
               </Pressable>
             ) : onRetry && (current.state === 'failed' || current.state === 'cancelled') ? (
               <Pressable accessibilityRole="button" onPress={() => retry(current)} style={styles.action}>
-                <Text style={[styles.actionText, { color: palette.blue }]}>重试任务</Text>
+                <Text style={[styles.actionText, { color: palette.blue }]}>{t('重试任务')}</Text>
               </Pressable>
             ) : null}
           </>

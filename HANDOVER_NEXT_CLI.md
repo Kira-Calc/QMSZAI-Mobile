@@ -269,3 +269,40 @@ iOS 登录页右上角齿轮是 Expo Go 悬浮按钮，不是应用 UI。恢复�
   - 持久化：双端杀进程/重启 Expo Go 后仍是上次所选主题；随后都已切回浅色，抽查账户/聊天/令牌表单与改动前一致。
 - **已知非问题**：Expo Go 悬浮齿轮（iOS）正好压住部分右上角按钮（分组页「完成」、模型体验「切换」），这是模拟器开发覆盖层，不是布局问题；绕法是点按钮左侧未被覆盖的位置。
 - `npx tsc --noEmit --noUnusedLocals` 通过。改动未提交、未推送。
+
+## 外观设置入口调整 + 跟随系统（2026-11-13 新增）
+
+- 入口：账户页不再有「外观 / 夜间模式」开关，改到「个人设置 → 外观」，三选一：跟随系统 / 浅色 / 深色（选中行右侧蓝色对勾）。
+- `src/theme.ts` 新增 `ThemeMode = 'system' | 'light' | 'dark'`：
+  - `mode` 是用户选择，`scheme` 是最终生效的明暗；`resolveMode('system')` 读 `Appearance.getColorScheme()`。
+  - `setMode(next)` 用 `Appearance.setColorScheme(next === 'system' ? 'auto' : next)`：跟随系统时把外观交还系统，固定浅/深色时覆盖系统。持久化到 AsyncStorage `qmszai.theme`，值可能是 `system / light / dark`（旧值兼容）。
+  - `useThemeMode()` 供设置页显示勾选；`useScheme()` 仍是整树重渲染的订阅点。
+  - 模块级 `Appearance.addChangeListener`：只有 `system` 模式跟随系统实时变化，固定模式忽略（注意 RN 的 `setColorScheme` 不会派发 change 事件，因此不会自触发）。
+- 默认仍是浅色；显式选过「跟随系统」后才真正跟随系统。
+- 验证：iOS 三选项切换正常、系统切深色时实时跟随、固定深色时系统切浅色仍保持深色、杀进程后主题保留；安卓用 `adb shell cmd uimode night yes/no` 实测同样跟随/忽略，强杀重启后主题保留。随后双端都已切回「浅色」（系统外观也还原为浅色）。
+- **注意（iOS 会话）**：本轮用 Appium `terminate_app` 强杀 Expo Go 后出现过一次回到登录页（首次 `fetchSelf` 401 触发 `clearSession`）。已从模拟器 `host.exp.Exponent.binarycookies` 里取出仍有效的 `session` 临时恢复登录（临时代码已删除，`src/api/client.ts` 无 diff）。App 账号 `kira` 密码未知，**不要在未确认登录态的情况下再强杀 iOS Expo Go**。
+- `npx tsc --noEmit --noUnusedLocals` 通过。夜间模式已在提交 `9ff4dc7`，本轮改动未提交、未推送。
+
+## 语言选择（2026-11-13 新增）
+
+- **入口**：与「外观」并列，在「个人设置 → 语言」三选一：跟随系统 / 简体中文 / English（行尾蓝色对勾，交互与外观分组一致）。
+- **`src/i18n.ts`**：`Language = 'zh' | 'en'`，`LanguageSetting = 'system' | Language`；`setting` 是用户选择，`language` 是解析后的结果，两者都能驱动重渲染。
+  - `t(key)`：中文原文即 key，英文时查 `en[key]`，缺失回落中文。`tf(pattern, ...values)` 用 `{0}` `{1}` 占位替换。
+  - `setLanguage()` / `initLanguage()`（AsyncStorage key `qmszai.language`，默认中文）、`getLanguage` / `getLanguageSetting` / `isEnglish`。
+  - `useLanguage()` / `useLanguageSetting()` 走 `useSyncExternalStore`；`App()` 里调用 `useLanguage()` 让整棵树跟着换文案。
+  - 「跟随系统」在 `AppState` 回到 `active` 时重新解析一次系统语言。
+  - 系统语言识别：`expo-localization` 的 `getLocales()[0].languageTag` 为主，`NativeModules.SettingsManager`（iOS）/ `I18nManager`（Android）/ `Intl` 依次兜底。**这层兜底是必要的**：Expo Go 的 Hermes 里 `Intl` 与 `SettingsManager` 都拿不到真实系统语言，只有 `expo-localization` 能正确识别（曾是「跟随系统」失效的根因）。
+  - **新增依赖**：`expo-localization@~58.0.5`（`package.json` + `package-lock.json`），`app.json` 的 `plugins` 追加 `expo-localization`。
+- **`src/i18n.en.ts`**：442 条中文原文 → 英文词典，key 与源码里的 `t()/tf()` 一一对应（曾用脚本校验无缺失/多余）。新增界面文案时**必须同时补词典**，否则英文下会显示中文。
+- **改造方式**：一次性 codemod 把 613 处文案包成 `t()` / `tf()`（脚本已删除），随后手工收尾：
+  - `src/api/client.ts`：英文模式下 `localizeMessage()` 直接返回服务端原文（不再走 `MESSAGE_MAP` 英译中），内部错误文案（网络失败、超时、401/403/429/5xx、请求失败、流式格式异常等）用 `t()`。
+  - **模块级常量会冻结语言**：`appTabs()`（`LiquidTabBar`）、`buildChatTools()` / `suggestions`（`ChatWorkspace`）、`buildConfigs()` + `hero` + `voicePresets`（`MediaStudioScreen`）、`filters` / `kindLabel` / `stateMeta` / `categoryMeta`（`MessagesScreen`、`TasksScreen`、`UsageLogsScreen`、`ModelMarketplaceScreen`、`ModelExperienceScreen`）、`statusLabel()` / `tokenStatusLabel()`（`App.tsx`）、`appearanceOptions` / `languageOptions`（`PersonalScreen`）全部改成函数或在组件内求值。
+  - `src/services/liveConsole.ts`：`VENDOR_MAP` 保留中文 key，`vendorOf()` 返回时才 `t(hit[1])`。
+  - `src/services/useConsoleData.ts`：订阅 `useLanguage()` 并加入 effect 依赖，语言切换后重新取数——映射层会把「按次计费」「令牌 #1」等中文标签写进数据。
+- **英文格式**：`formatCompact` 英文走 K/M/B（不再出现「万/亿」）；`formatRelative` 与 `ChatWorkspace.relativeTime` 英文区分单复数（`1 hour ago` / `n hours ago`，不再有 `1 days ago`）；`messageTime.ts` 英文用 `Yesterday {0}` 与 `toLocaleDateString('en-US', …)`。
+- **双端验证**：
+  - iOS 逐页核对 Personal Settings（含语言分组）、Chat、Overview、Models、Tokens（新建弹层 / 分组选择页 / 模型限制页）、Model Playground、Model Fusion、Model Hub、AI Studio（Image/Music/Voice）、Usage logs、Tasks、Messages、Wallet；`zh-Hans-AU` 系统下「跟随系统」解析为中文。
+  - 安卓（系统 `en-US`）核对个人设置、Chat、Overview；「跟随系统」保持英文；强杀 Expo Go 后语言与登录态均保留。
+  - 双端最后都切回「简体中文 + 浅色」。
+- 源码里仍有中文但**不需要翻译**：`client.ts` 的 `MESSAGE_MAP` 中文值（仅中文模式使用）、`ModelLogo.tsx` 的「豆包/文心/海螺」匹配词、`messageTime.ts` 的 `'日一二三四五六'`、`PersonalScreen` 的 `'简体中文'`（语言名本身）、`liveConsole` 的 `VENDOR_MAP` 中文 key、`MediaStudioScreen` 参数对象的中文键（`尺寸`/`数量`/`音色` 等内部字段）。
+- `npx tsc --noEmit --noUnusedLocals` 通过。改动未提交、未推送；HEAD 仍为 `9ff4dc7`。

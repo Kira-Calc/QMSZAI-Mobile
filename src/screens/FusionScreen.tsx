@@ -22,6 +22,7 @@ import { Badge, GlassPillButton, Group, Row, Sheet, Subpage, palette } from '../
 import { themedStyles, isDark } from '../theme';
 import { RichText } from '../richText';
 import { alphabetOf, letterOf, sortModelNames } from '../modelSort';
+import { t, tf } from '../i18n';
 
 const ios = Platform.OS === 'ios';
 
@@ -127,7 +128,7 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
         return next;
       }
       if (current.length >= 3) {
-        Alert.alert('最多 3 个助手模型', '请先取消一个已选模型。');
+        Alert.alert(t('最多 3 个助手模型'), t('请先取消一个已选模型。'));
         return current;
       }
       const next = [...current, name];
@@ -161,13 +162,13 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
         return {
           model: name,
           text: '',
-          error: reason instanceof Error ? reason.message : '调用失败',
+          error: reason instanceof Error ? reason.message : t('调用失败'),
         };
       });
 
       const successful = replies.filter((reply) => reply.text);
       if (!successful.length) {
-        throw new Error(replies[0]?.error || '所有助手模型均调用失败');
+        throw new Error(replies[0]?.error || t('所有助手模型均调用失败'));
       }
 
       const merged = await chatOnce({
@@ -176,13 +177,13 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
           {
             role: 'system',
             content:
-              '你是融合助手。请综合多个模型对同一问题的回答，去重、互补、纠正错误，输出一段结构清晰的中文最终答案。',
+              t('你是融合助手。请综合多个模型对同一问题的回答，去重、互补、纠正错误，输出一段结构清晰的中文最终答案。'),
           },
           {
             role: 'user',
-            content: `问题：${text}\n\n${successful
-              .map((reply, index) => `模型 ${index + 1}（${reply.model}）：\n${reply.text}`)
-              .join('\n\n')}`,
+            content: tf('问题：{0}\n\n{1}', text, successful
+              .map((reply, index) => tf('模型 {0}（{1}）：\n{2}', index + 1, reply.model, reply.text))
+              .join('\n\n')),
           },
         ],
       });
@@ -200,7 +201,7 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
       ]);
       setPrompt('');
     } catch (error) {
-      Alert.alert('融合失败', error instanceof Error ? error.message : '请稍后重试');
+      Alert.alert(t('融合失败'), error instanceof Error ? error.message : t('请稍后重试'));
     } finally {
       setBusy(false);
     }
@@ -215,9 +216,9 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
 
   return (
     <Subpage
-      title="模型融合"
+      title={t("模型融合")}
       onBack={onBack}
-      right={messages.length > 0 ? <GlassPillButton label="新建" onPress={reset} /> : null}
+      right={messages.length > 0 ? <GlassPillButton label={t("新建")} onPress={reset} /> : null}
     >
       <ScrollView
         ref={scrollRef}
@@ -236,15 +237,15 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
       >
         <View style={styles.hero}>
           <View style={styles.heroTitleRow}>
-            <Text style={styles.heroTitle}>多模型协作</Text>
+            <Text style={styles.heroTitle}>{t('多模型协作')}</Text>
             <Badge text="beta" tone="info" />
           </View>
         </View>
 
-        <Group header="模型配置">
+        <Group header={t("模型配置")}>
           <Row
-            title="助手模型"
-            value={assistants.length > 0 ? `${assistants.length}/3` : '选择模型'}
+            title={t("助手模型")}
+            value={assistants.length > 0 ? `${assistants.length}/3` : t('选择模型')}
             chevron
             onPress={() => {
               setAssistantQuery('');
@@ -252,8 +253,8 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
             }}
           />
           <Row
-            title="总结模型"
-            value={summary ?? '选择模型'}
+            title={t("总结模型")}
+            value={summary ?? t('选择模型')}
             chevron
             onPress={() => {
               setSummaryQuery('');
@@ -277,7 +278,7 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
             keyboardAppearance={isDark() ? 'dark' : 'light'}
             value={prompt}
             onChangeText={setPrompt}
-            placeholder="说点什么…"
+            placeholder={t("说点什么…")}
             placeholderTextColor={palette.tertiaryLabel}
             multiline
             maxLength={500}
@@ -298,25 +299,25 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
             pressed ? pressedDim : null,
           ]}
         >
-          <Text style={styles.sendText}>{busy ? '融合中…' : '发送并融合'}</Text>
+          <Text style={styles.sendText}>{busy ? t('融合中…') : t('发送并融合')}</Text>
         </Pressable>
 
         <View style={styles.historyHeader}>
-          <Text style={styles.sectionTitle}>本次会话</Text>
-          {messages.length > 0 ? <Text style={styles.sectionMeta}>{messages.length} 条</Text> : null}
+          <Text style={styles.sectionTitle}>{t('本次会话')}</Text>
+          {messages.length > 0 ? <Text style={styles.sectionMeta}>{messages.length} {t('条')}</Text> : null}
         </View>
 
         {messages.length === 0 ? (
           <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>暂无会话</Text>
+            <Text style={styles.emptyTitle}>{t('暂无会话')}</Text>
           </View>
         ) : (
           messages.map((message) => (
             <View key={message.id} style={styles.resultCard}>
               <Text style={styles.resultPrompt}>{message.prompt}</Text>
               <View style={styles.resultBadges}>
-                <Badge text="融合结果" tone="success" />
-                <Text style={styles.resultMeta}>总结：{message.summary}</Text>
+                <Badge text={t("融合结果")} tone="success" />
+                <Text style={styles.resultMeta}>{t('总结：')}{message.summary}</Text>
               </View>
               <RichText text={message.answer} style={styles.resultAnswer} />
               {message.replies.map((reply) => (
@@ -338,7 +339,7 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
 
       <Sheet
         visible={sheet === 'assistant'}
-        title="选择助手模型"
+        title={t("选择助手模型")}
         onClose={() => {
           setSheet(null);
           setAssistantQuery('');
@@ -352,7 +353,7 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
         empty={assistantModels.length === 0}
       >
         <Group
-          header="最多选择 3 个"
+          header={t("最多选择 3 个")}
           onLayout={(event) => {
             assistantGroupY.current = event.nativeEvent.layout.y;
           }}
@@ -377,7 +378,7 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
 
       <Sheet
         visible={sheet === 'summary'}
-        title="选择总结模型"
+        title={t("选择总结模型")}
         onClose={() => {
           setSheet(null);
           setSummaryQuery('');

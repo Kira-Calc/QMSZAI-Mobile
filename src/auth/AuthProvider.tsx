@@ -10,6 +10,7 @@ import {
   logout as logoutRequest,
 } from '../api/endpoints';
 import type { PublicStatus, SelfUser, SiteStatus } from '../api/types';
+import { t } from '../i18n';
 
 export type AuthStatus = 'restoring' | 'signedOut' | 'signedIn';
 
@@ -182,6 +183,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const value = useContext(AuthContext);
-  if (!value) throw new Error('useAuth 必须在 AuthProvider 内使用');
+  if (!value) throw new Error(t('useAuth 必须在 AuthProvider 内使用'));
   return value;
 }

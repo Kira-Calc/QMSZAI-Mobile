@@ -1,5 +1,6 @@
 import type { PricingItem, PricingPayload } from '../api/types';
 import type { MediaKind, Model } from '../types';
+import { t, tf } from '../i18n';
 
 const IMAGE_PATTERN =
   /(^|[-_/])(image|imagen|dall-e|dalle|flux|mj|midjourney|seedream|cogview|kolors)([-_/]|$)|wand-vega-image|qwen-image/i;
@@ -38,14 +39,14 @@ export function priceLabelOf(
   group?: string,
 ) {
   const item = pricingOf(pricing, modelName);
-  if (!item) return '按站点计费';
+  if (!item) return t('按站点计费');
   const ratio = groupRatioOf(pricing, group);
   if (item.quota_type === 1) {
     const price = (item.model_price || 0) * ratio;
-    return price > 0 ? `¥${price.toFixed(2)} / 次` : '按站点计费';
+    return price > 0 ? tf('¥{0} / 次', price.toFixed(2)) : t('按站点计费');
   }
   const price = (item.model_ratio || 0) * 2 * ratio;
-  return price > 0 ? `¥${price.toFixed(2)} / 1M tokens` : '按站点计费';
+  return price > 0 ? `¥${price.toFixed(2)} / 1M tokens` : t('按站点计费');
 }
 
 const MEDIA_EXTENSION = /\.(png|jpe?g|webp|gif|mp4|mov|webm|mp3|wav|m4a|ogg|flac)(\?|$)/i;

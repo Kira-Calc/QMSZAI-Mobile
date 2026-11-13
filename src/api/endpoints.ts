@@ -25,6 +25,7 @@ import type {
   TaskPage,
   UsageLogPage,
 } from './types';
+import { t } from '../i18n';
 
 // ---------- 公共 ----------
 
@@ -50,7 +51,7 @@ export async function fetchPricing(): Promise<PricingPayload> {
     parsed = null;
   }
   if (!parsed || !Array.isArray(parsed.data)) {
-    throw new Error('价格数据加载失败');
+    throw new Error(t('价格数据加载失败'));
   }
   return parsed;
 }
@@ -92,12 +93,12 @@ export async function login(username: string, password: string): Promise<LoginAt
     body: { username, password },
   });
   const parsed = parseEnvelope<LoginResult>(response.status, response.text);
-  if (!parsed) throw new Error('登录失败：响应格式异常');
-  if (parsed.success === false) throw new Error(localizeMessage(parsed.message || '登录失败'));
+  if (!parsed) throw new Error(t('登录失败：响应格式异常'));
+  if (parsed.success === false) throw new Error(localizeMessage(parsed.message || t('登录失败')));
 
   const result = parsed.data ?? {};
   if (!response.cookie && !result.require_2fa && !result.need_set_password) {
-    throw new Error('登录会话保存失败，请重试');
+    throw new Error(t('登录会话保存失败，请重试'));
   }
   if (response.cookie) {
     await persistSession({ cookie: response.cookie, userId: result.id ?? 0 });
@@ -113,8 +114,8 @@ export async function loginWith2FA(code: string): Promise<LoginResult> {
     auth: true,
   });
   const parsed = parseEnvelope<LoginResult>(response.status, response.text);
-  if (!parsed) throw new Error('验证失败：响应格式异常');
-  if (parsed.success === false) throw new Error(localizeMessage(parsed.message || '验证码错误'));
+  if (!parsed) throw new Error(t('验证失败：响应格式异常'));
+  if (parsed.success === false) throw new Error(localizeMessage(parsed.message || t('验证码错误')));
   const result = parsed.data ?? {};
   const userId = result.id ?? (await restoreSession())?.userId ?? 0;
   const cookie = response.cookie ?? (await restoreSession())?.cookie;
@@ -159,7 +160,7 @@ export function checkPhone(phone: string) {
 
 export async function fetchSelf(): Promise<SelfUser> {
   const session = await restoreSession();
-  if (!session) throw new Error('未登录');
+  if (!session) throw new Error(t('未登录'));
   return apiRequest<SelfUser>('/api/user/self', { auth: true });
 }
 

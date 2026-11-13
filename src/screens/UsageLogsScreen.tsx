@@ -27,14 +27,8 @@ import { themedStyles } from '../theme';
 
 const ios = Platform.OS === 'ios';
 import type { LogStatus, UsageLog } from '../types';
+import { t } from '../i18n';
 
-const statusMeta: Record<LogStatus, { label: string; tone: Tone }> = {
-  success: { label: '成功', tone: 'success' },
-  error: { label: '失败', tone: 'danger' },
-  timeout: { label: '超时', tone: 'warning' },
-};
-
-const filters = ['全部', '成功', '异常'] as const;
 
 export function UsageLogsScreen({
   logs,
@@ -45,6 +39,14 @@ export function UsageLogsScreen({
 }) {
   const insets = useSafeAreaInsets();
   const [filterIndex, setFilterIndex] = useState(0);
+
+  // 文案随语言切换，放在渲染期求值。
+  const statusMeta: Record<LogStatus, { label: string; tone: Tone }> = {
+    success: { label: t('成功'), tone: 'success' },
+    error: { label: t('失败'), tone: 'danger' },
+    timeout: { label: t('超时'), tone: 'warning' },
+  };
+  const filters = [t('全部'), t('成功'), t('异常')];
   const [visibleCount, setVisibleCount] = useState(6);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selected, setSelected] = useState<UsageLog | null>(null);
@@ -79,7 +81,7 @@ export function UsageLogsScreen({
   };
 
   return (
-    <Subpage title="用量日志" onBack={onBack}>
+    <Subpage title={t("用量日志")} onBack={onBack}>
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}
 
@@ -96,14 +98,14 @@ export function UsageLogsScreen({
 
         <View style={styles.summary}>
           <Text style={styles.summaryValue}>{filtered.length}</Text>
-          <Text style={styles.summaryLabel}>条请求 · 合计 ¥{totalCost.toFixed(2)}</Text>
-          <Text style={styles.summaryMeta}>平均延迟 {averageLatency ? `${averageLatency} ms` : '—'}</Text>
+          <Text style={styles.summaryLabel}>{t('条请求 · 合计 ¥')}{totalCost.toFixed(2)}</Text>
+          <Text style={styles.summaryMeta}>{t('平均延迟')} {averageLatency ? `${averageLatency} ms` : '—'}</Text>
         </View>
 
         {filtered.length === 0 ? (
-          <EmptyState title="没有符合条件的日志" icon="doc.text.magnifyingglass" />
+          <EmptyState title={t("没有符合条件的日志")} icon="doc.text.magnifyingglass" />
         ) : (
-          <Group header={filterIndex === 2 ? '异常请求' : '最近请求'}>
+          <Group header={filterIndex === 2 ? t('异常请求') : t('最近请求')}>
             {visibleLogs.map((log) => {
               const meta = statusMeta[log.status];
               return (
@@ -142,7 +144,7 @@ export function UsageLogsScreen({
             {loadingMore ? (
               <ActivityIndicator color={palette.blue} />
             ) : (
-              <Text style={[styles.loadMoreText, { color: palette.blue }]}>加载更多</Text>
+              <Text style={[styles.loadMoreText, { color: palette.blue }]}>{t('加载更多')}</Text>
             )}
           </Pressable>
         ) : null}
@@ -150,7 +152,7 @@ export function UsageLogsScreen({
 
       <Sheet
         visible={selected !== null}
-        title="请求详情"
+        title={t("请求详情")}
         onClose={() => setSelected(null)}
       >
         {selected ? (
@@ -160,13 +162,13 @@ export function UsageLogsScreen({
               <Badge text={statusMeta[selected.status].label} tone={statusMeta[selected.status].tone} />
             </View>
             <Group>
-              <Row title="请求时间" value={selected.time} />
-              <Row title="令牌" value={selected.tokenName} />
-              <Row title="输入 tokens" value={selected.promptTokens.toLocaleString()} />
-              <Row title="输出 tokens" value={selected.completionTokens.toLocaleString()} />
-              <Row title="延迟" value={`${selected.latencyMs} ms`} />
-              <Row title="费用" value={selected.cost > 0 ? `¥${selected.cost.toFixed(3)}` : '未计费'} />
-              <Row title="请求 ID" value={selected.requestId} />
+              <Row title={t("请求时间")} value={selected.time} />
+              <Row title={t("令牌")} value={selected.tokenName} />
+              <Row title={t("输入 tokens")} value={selected.promptTokens.toLocaleString()} />
+              <Row title={t("输出 tokens")} value={selected.completionTokens.toLocaleString()} />
+              <Row title={t("延迟")} value={`${selected.latencyMs} ms`} />
+              <Row title={t("费用")} value={selected.cost > 0 ? `¥${selected.cost.toFixed(3)}` : t('未计费')} />
+              <Row title={t("请求 ID")} value={selected.requestId} />
             </Group>
           </>
         ) : null}
