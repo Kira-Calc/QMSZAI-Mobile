@@ -303,6 +303,7 @@ export function submitCheckin() {
   });
 }
 
+// /api/user/self 的 aff_code 可能为空，网页端会调这个接口按需生成 4 位邀请码。
 export function fetchAffCode() {
   return apiRequest<string>('/api/user/aff', { auth: true });
 }
@@ -382,6 +383,11 @@ export function fetchDataSelf() {
 
 export function fetchTokens(page = 1, pageSize = 100) {
   return apiRequest<ApiTokenPage>(`/api/token/?p=${page}&page_size=${pageSize}`, { auth: true });
+}
+
+// 列表里的 key 是掩码，完整密钥需要单独取；网页端也走这个接口。
+export function fetchTokenKey(id: number) {
+  return apiRequest<{ key: string }>(`/api/token/${id}/key`, { method: 'POST', auth: true });
 }
 
 export function createToken(input: {

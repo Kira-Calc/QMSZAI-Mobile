@@ -306,6 +306,7 @@ export function Row({
   accessory,
   detail,
   onLayout,
+  accessibilityLabel,
 }: {
   title: string;
   subtitle?: string;
@@ -318,6 +319,7 @@ export function Row({
   accessory?: ReactNode;
   detail?: string;
   onLayout?: (event: LayoutChangeEvent) => void;
+  accessibilityLabel?: string;
 }) {
   const content = (
     <>
@@ -355,6 +357,7 @@ export function Row({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       onPress={onPress}
       onLayout={onLayout}
       android_ripple={ios ? undefined : ripple()}

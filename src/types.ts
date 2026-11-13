@@ -101,6 +101,7 @@ export type MessageRecord = {
 };
 
 export type MediaKind = 'image' | 'video' | 'music' | 'voice';
+export type MediaTaskMode = 'video' | 'music' | 'music3' | 'audio';
 
 export type MediaGeneration = {
   id: string;
@@ -110,8 +111,15 @@ export type MediaGeneration = {
   status: 'running' | 'succeeded' | 'failed';
   createdAt: string;
   summary: string;
+  /** 0–100；同步接口没有进度时为 undefined，界面用不确定进度条。 */
+  progress?: number;
   url?: string;
   error?: string;
+  /** 上游任务号；有它才能在离开页面或重启 App 后继续轮询。 */
+  taskId?: string;
+  taskMode?: MediaTaskMode;
+  /** 记录在重启时仍是「生成中」且没有任务号，说明请求已随进程中断。 */
+  interrupted?: boolean;
 };
 
 export type MarketModel = {

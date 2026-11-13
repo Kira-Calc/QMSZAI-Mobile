@@ -1,9 +1,10 @@
 import { BlurView, BlurTargetView } from 'expo-blur';
+import * as Clipboard from 'expo-clipboard';
 import NativeMaskedView from '@react-native-masked-view/masked-view';
 import { SymbolView } from 'expo-symbols';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 import { AppIcon } from './src/components/AppIcon';
-import { cardSurface, elevation, m3, pressedDim, pressedSurface, ripple, shape, type as typeScale } from './src/material';
+import { cardSurface, elevation, m3, pressedSurface, ripple, shape, type as typeScale } from './src/material';
 import { ChatWorkspace } from './src/ChatWorkspace';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useCallback, useMemo, useRef, useState, type ComponentProps, type ComponentRef, type ComponentType, type ReactElement } from 'react';
@@ -11,6 +12,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Easing,
   FlatList,
   Modal,
@@ -34,11 +36,13 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { formatQuota, formatQuotaSmart } from './src/api/format';
 import { usageRangeOptions } from './src/data/mockConsole';
 import { ModelLogo } from './src/components/ModelLogo';
+import { UserAvatar } from './src/components/UserAvatar';
 import { LiquidTabBar } from './src/LiquidTabBar';
 import { AuthProvider, useAuth } from './src/auth/AuthProvider';
 import {
   createToken,
   deleteToken as removeToken,
+  fetchTokenKey,
   fetchUserGroups,
   fetchUserModels,
   setTokenStatus,
@@ -61,6 +65,8 @@ import {
 import { alphabetOf, letterOf, sortByName } from './src/modelSort';
 import { initTheme, isDark, themedStyles, useScheme } from './src/theme';
 import { initLanguage, useLanguage } from './src/i18n';
+import { bindMediaGenerationAccount, initMediaGenerations } from './src/mediaGenerations';
+import { resumePendingMediaTasks } from './src/services/mediaTasks';
 import { FusionScreen } from './src/screens/FusionScreen';
 import { MediaStudioScreen } from './src/screens/MediaStudioScreen';
 import { MessagesScreen } from './src/screens/MessagesScreen';
@@ -195,6 +201,21 @@ function AppShell() {
     }
   }, []);
 
+  // AI 创作记录属于当前账号：登录后加载本机记录，并把没跑完的任务接上。
+  // 回到前台再扫一次，防止系统在后台挂起定时器后任务停在「生成中」。
+  const mediaUserId = user?.id;
+  useEffect(() => {
+    if (mediaUserId === undefined) return undefined;
+    void initMediaGenerations()
+      .then(() => bindMediaGenerationAccount(mediaUserId))
+      .then(() => resumePendingMediaTasks())
+      .catch(() => {});
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') resumePendingMediaTasks();
+    });
+    return () => subscription.remove();
+  }, [mediaUserId]);
+
   const tabTransition = useRef(new Animated.Value(1)).current;
   const titleTransition = useRef(new Animated.Value(1)).current;
   const subpageAnim = useRef(new Animated.Value(0)).current;
@@ -283,6 +304,11 @@ function AppShell() {
     setTabBarMinimized(false);
   }, [activeTab]);
 
+  // 令牌页每次进入都重新拉取：网页端新建/删除的令牌不用重启 App 才同步。
+  useEffect(() => {
+    if (activeTab === 'tokens') consoleData.refreshTokens();
+  }, [activeTab, consoleData.refreshTokens]);
+
   const filteredModels = useMemo(() => {
     const q = query.trim().toLowerCase();
     const sorted = sortByName(consoleData.models);
@@ -319,6 +345,8 @@ function AppShell() {
   );
 
   const tasks = consoleData.tasks;
+
+  const unreadMessages = messages.filter((message) => !message.read).length;
 
   // 聊天 / 模型体验 / 模型融合只展示可对话的模型，避免选到图像、音乐、语音等按次模型。
   const chatModelIds = useMemo(
@@ -470,6 +498,18 @@ function AppShell() {
     ]);
   };
 
+  const copyTokenKey = async (token: Token) => {
+    try {
+      const { key } = await fetchTokenKey(Number(token.id));
+      if (!key) throw new Error(t('无法读取密钥'));
+      // 服务端返回的 key 不带 sk- 前缀，网页端展示时也会补上。
+      await Clipboard.setStringAsync(key.startsWith('sk-') ? key : `sk-${key}`);
+      Alert.alert(t('已复制密钥'));
+    } catch (error) {
+      Alert.alert(t('复制失败'), error instanceof Error ? error.message : t('请稍后重试'));
+    }
+  };
+
   const readMessage = (id: string) => {
     setReadMessageIds((current) => (current.includes(id) ? current : [...current, id]));
   };
@@ -550,6 +590,23 @@ function AppShell() {
         <View style={styles.appShell}>
         <View style={styles.header}>
           <Animated.Text style={[styles.title, titleStyle]}>{activeTab === 'chat' ? t('聊天') : currentTitle}</Animated.Text>
+          {activeTab === 'account' ? (
+            <Animated.View style={[styles.headerAction, titleStyle]}>
+              <GlassIconButton
+                icon="bell"
+                label={t('消息')}
+                onPress={() => setSubpage('messages')}
+                size={36}
+              />
+              {unreadMessages > 0 ? (
+                <View style={styles.headerBadge} pointerEvents="none">
+                  <Text style={styles.headerBadgeText}>
+                    {unreadMessages > 99 ? '99+' : unreadMessages}
+                  </Text>
+                </View>
+              ) : null}
+            </Animated.View>
+          ) : null}
         </View>
 
         <Animated.View style={[styles.content, sceneStyle]}>
@@ -576,7 +633,6 @@ function AppShell() {
               onOpenTokens={() => setActiveTab('tokens')}
               onOpenLogs={() => setSubpage('logs')}
               onOpenTasks={() => setSubpage('tasks')}
-              onOpenMessages={() => setSubpage('messages')}
               onOpenMedia={() => setSubpage('media')}
               onOpenExperience={() => setSubpage('experience')}
               onOpenFusion={() => setSubpage('fusion')}
@@ -620,6 +676,7 @@ function AppShell() {
           token={selectedToken}
           quotaPerUnit={quotaPerUnit}
           onClose={() => setSelectedToken(null)}
+          onCopyKey={copyTokenKey}
           onEdit={openEditToken}
           onDelete={deleteToken}
         />
@@ -662,7 +719,6 @@ function Overview({
   onOpenTokens,
   onOpenLogs,
   onOpenTasks,
-  onOpenMessages,
   onOpenMedia,
   onOpenExperience,
   onOpenFusion,
@@ -681,7 +737,6 @@ function Overview({
   onOpenTokens: () => void;
   onOpenLogs: () => void;
   onOpenTasks: () => void;
-  onOpenMessages: () => void;
   onOpenMedia: () => void;
   onOpenExperience: () => void;
   onOpenFusion: () => void;
@@ -777,7 +832,7 @@ function Overview({
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{t('用量与消息')}</Text>
+          <Text style={styles.sectionTitle}>{t('用量与任务')}</Text>
         </View>
         <View style={styles.actionList}>
           <QuickAction
@@ -791,12 +846,6 @@ function Overview({
             icon="◫"
             title={t("任务")}
             onPress={onOpenTasks}
-          />
-          <QuickAction
-            symbol="bell"
-            icon="✉"
-            title={t("消息")}
-            onPress={onOpenMessages}
           />
         </View>
         </>
@@ -856,10 +905,9 @@ function Overview({
             <Row title={t("模型广场")} icon="square.grid.2x2" chevron onPress={onOpenPricing} />
           </Group>
 
-          <Group header={t("用量与消息")} style={styles.overviewGroup}>
+          <Group header={t("用量与任务")} style={styles.overviewGroup}>
             <Row title={t("用量日志")} icon="doc.text.magnifyingglass" chevron onPress={onOpenLogs} />
             <Row title={t("任务")} icon="square.stack.3d.up" chevron onPress={onOpenTasks} />
-            <Row title={t("消息")} icon="bell" chevron onPress={onOpenMessages} />
           </Group>
         </>
       )}
@@ -1068,63 +1116,65 @@ function TokensView({
   onScroll: TabScrollHandler;
 }) {
   return (
-    <ScrollView
-      contentContainerStyle={styles.scrollContent}
-
-      onScroll={onScroll}
-      scrollEventThrottle={16}
-    >
+    <View style={styles.tokensPane}>
+      <ScrollView
+        contentContainerStyle={[styles.scrollContent, styles.tokensScrollContent]}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+      >
+        {tokens.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>{t('暂无令牌')}</Text>
+          </View>
+        ) : null}
+        {tokens.map((token) => {
+          const percent = Math.min(100, Math.round((token.usage / token.quota) * 100));
+          return (
+            <View key={token.id} style={styles.tokenCard}>
+              <Pressable onPress={() => onOpen(token)} style={styles.tokenMain}>
+                <View style={styles.tokenHeader}>
+                  <View>
+                    <Text style={styles.tokenTitle}>{token.name}</Text>
+                    <Text style={styles.modelVendor}>{t('令牌 #')}{token.id}</Text>
+                  </View>
+                  <Text style={[styles.statusText, { color: statusColor[token.status] }]}>
+                    {tokenStatusLabel(token.status)}
+                  </Text>
+                </View>
+                <Text style={styles.scopeText}>{token.scope}</Text>
+                <View style={styles.progressTrackCompact}>
+                  <View style={[styles.progressFillCompact, { width: `${percent}%` }]} />
+                </View>
+                <View style={styles.metricRow}>
+                  <Text style={styles.mutedText}>
+                    {token.unlimited ? t('不限额度') : tf('{0}% 已使用', percent)}
+                  </Text>
+                  <Text style={styles.mutedText}>{token.lastUsed}</Text>
+                </View>
+              </Pressable>
+              <Pressable
+                onPress={() => onToggle(token.id)}
+                disabled={token.status === 'expired'}
+                style={[styles.secondaryButton, token.status === 'expired' ? styles.buttonDisabled : null]}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {token.status === 'active' ? t('暂停') : token.status === 'paused' ? t('启用') : t('不可用')}
+                </Text>
+              </Pressable>
+            </View>
+          );
+        })}
+      </ScrollView>
+      {/* 新建入口悬浮在右下角：列表再长也不用回到顶部去找。 */}
       <Pressable
         accessibilityRole="button"
+        accessibilityLabel={t('新建令牌')}
         onPress={onCreate}
-        style={({ pressed }) => [styles.primaryButton, pressed ? pressedDim : null]}
+        style={({ pressed }) => [styles.fab, pressed ? styles.fabPressed : null]}
       >
-        <Text style={styles.primaryButtonIcon}>＋</Text>
-        <Text style={styles.primaryButtonText}>{t('新建令牌')}</Text>
+        <AppIcon name="plus" size={26} color={palette.onAccent} />
       </Pressable>
-      {tokens.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>{t('暂无令牌')}</Text>
-        </View>
-      ) : null}
-      {tokens.map((token) => {
-        const percent = Math.min(100, Math.round((token.usage / token.quota) * 100));
-        return (
-          <View key={token.id} style={styles.tokenCard}>
-            <Pressable onPress={() => onOpen(token)} style={styles.tokenMain}>
-              <View style={styles.tokenHeader}>
-                <View>
-                  <Text style={styles.tokenTitle}>{token.name}</Text>
-                  <Text style={styles.modelVendor}>{t('令牌 #')}{token.id}</Text>
-                </View>
-                <Text style={[styles.statusText, { color: statusColor[token.status] }]}>
-                  {tokenStatusLabel(token.status)}
-                </Text>
-              </View>
-              <Text style={styles.scopeText}>{token.scope}</Text>
-              <View style={styles.progressTrackCompact}>
-                <View style={[styles.progressFillCompact, { width: `${percent}%` }]} />
-              </View>
-              <View style={styles.metricRow}>
-                <Text style={styles.mutedText}>
-                  {token.unlimited ? t('不限额度') : tf('{0}% 已使用', percent)}
-                </Text>
-                <Text style={styles.mutedText}>{token.lastUsed}</Text>
-              </View>
-            </Pressable>
-            <Pressable
-              onPress={() => onToggle(token.id)}
-              disabled={token.status === 'expired'}
-              style={[styles.secondaryButton, token.status === 'expired' ? styles.buttonDisabled : null]}
-            >
-              <Text style={styles.secondaryButtonText}>
-                {token.status === 'active' ? t('暂停') : token.status === 'paused' ? t('启用') : t('不可用')}
-              </Text>
-            </Pressable>
-          </View>
-        );
-      })}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -1141,7 +1191,6 @@ function AccountView({
 }) {
   const { user } = useAuth();
   const displayName = user?.display_name || user?.username || t('未登录');
-  const initial = displayName.trim().charAt(0).toUpperCase() || '·';
   const roleLabel = user?.role === 1 ? t('普通用户') : tf('角色 {0}', user?.role ?? '—');
   return (
     <ScrollView
@@ -1155,9 +1204,7 @@ function AccountView({
         onPress={onOpenPersonal}
         style={({ pressed }) => [styles.accountHeader, pressed ? styles.accountHeaderPressed : null]}
       >
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initial}</Text>
-        </View>
+        <UserAvatar userId={user?.id} name={displayName} size={56} />
         <View style={styles.accountHeaderMain}>
           <Text style={styles.accountName} numberOfLines={1}>
             {displayName}
@@ -1194,12 +1241,14 @@ function TokenModal({
   token,
   quotaPerUnit,
   onClose,
+  onCopyKey,
   onEdit,
   onDelete,
 }: {
   token: Token | null;
   quotaPerUnit: number;
   onClose: () => void;
+  onCopyKey: (token: Token) => void;
   onEdit: (token: Token) => void;
   onDelete: (token: Token) => void;
 }) {
@@ -1210,6 +1259,12 @@ function TokenModal({
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalBackdrop}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t('关闭令牌详情')}
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+        />
         <View style={styles.modalSheet}>
           <View style={styles.modalHandle} />
           <View style={styles.detailHeader}>
@@ -1236,6 +1291,21 @@ function TokenModal({
           </View>
           <SettingsRow label={t("分组")} value={token.scope} />
           <SettingsRow label={t("最后使用")} value={token.lastUsed} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("复制密钥")}
+            onPress={() => onCopyKey(token)}
+            style={({ pressed }) => [
+              styles.settingsRow,
+              pressed ? { backgroundColor: palette.cardMuted } : null,
+            ]}
+          >
+            <Text style={styles.settingsLabel}>{t("复制密钥")}</Text>
+            <View style={styles.copyKeyValue}>
+              <Text style={styles.copyKeyMask}>sk-••••••••</Text>
+              <AppIcon name="doc.on.doc" size={18} color={palette.blue} />
+            </View>
+          </Pressable>
 
           <View style={styles.modalActions}>
             <Pressable
@@ -1458,6 +1528,13 @@ function TokenFormModal({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={styles.modalBackdrop}>
+        {/* 点面板上方空白区域返回上一层：选择页回到表单，表单回到令牌列表。 */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t('取消')}
+          onPress={pickerMode === 'none' ? onCancel : closePicker}
+          style={StyleSheet.absoluteFill}
+        />
         <View
           style={[
             styles.modalSheet,
@@ -1935,6 +2012,28 @@ function makeBaseStyles() {
     fontWeight: '600',
     letterSpacing: -0.3,
   },
+  headerAction: {
+    // 标题是 30pt 文本、按钮 36pt，稍微上抬让两者视觉居中而不是贴底。
+    marginBottom: ios ? 2 : 4,
+  },
+  headerBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: palette.red,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
   content: {
     flex: 1,
   },
@@ -1942,6 +2041,28 @@ function makeBaseStyles() {
     paddingHorizontal: 20,
     paddingBottom: 96,
     gap: 16,
+  },
+  tokensPane: {
+    flex: 1,
+  },
+  // 右下角悬浮按钮会盖住列表末条，多留一屏滚动余量。
+  tokensScrollContent: {
+    paddingBottom: 176,
+  },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    // 悬浮导航栏顶边距内容底边 70pt（dock paddingTop 6 + bar 64），再留 14pt 间距。
+    bottom: 84,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: m3.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fabPressed: {
+    opacity: 0.82,
   },
   rangeSwitch: {
     minHeight: 48,
@@ -2333,28 +2454,6 @@ function makeBaseStyles() {
     fontSize: 12,
     fontWeight: '500',
   },
-  primaryButton: {
-    minHeight: 56,
-    borderRadius: shape.full,
-    backgroundColor: m3.primary,
-    overflow: 'hidden',
-    paddingHorizontal: 24,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    ...elevation.level1,
-  },
-  primaryButtonIcon: {
-    color: '#FFFFFF',
-    fontSize: 22,
-    fontWeight: '500',
-  },
-  primaryButtonText: {
-    color: m3.onPrimary,
-    fontSize: 16,
-    fontWeight: '600',
-  },
   primaryActionText: {
     color: palette.onSolidButton,
     fontSize: 16,
@@ -2452,19 +2551,6 @@ function makeBaseStyles() {
   },
   accountChevron: { width: 8, height: 14 },
   accountChevronText: { color: palette.tertiaryLabel, fontSize: 18 },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: m3.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    color: '#FFFFFF',
-    fontSize: 24,
-    fontWeight: '900',
-  },
   accountName: {
     color: palette.strongLabel,
     fontSize: 18,
@@ -2492,6 +2578,17 @@ function makeBaseStyles() {
     fontSize: 14,
     fontWeight: '800',
     textAlign: 'right',
+  },
+  copyKeyValue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  copyKeyMask: {
+    color: palette.subtleLabel,
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   modalBackdrop: {
     flex: 1,
@@ -2809,8 +2906,21 @@ function makeIosStyles() {
   groupOptionDesc: { color: palette.subtleLabel, fontSize: 13 },
   groupOptionRatio: { color: palette.subtleLabel, fontSize: 13, fontVariant: ['tabular-nums'] },
   groupEmpty: { color: palette.subtleLabel, fontSize: 15, paddingVertical: 20, textAlign: 'center' },
-  primaryButton: { minHeight: 50, borderRadius: 12, backgroundColor: palette.blue, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  primaryButtonText: { color: palette.onAccent, fontSize: 17, fontWeight: '600' },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 84,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: palette.blue,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+  },
   primaryActionText: { color: palette.onAccent, fontSize: 17, fontWeight: '600' },
   primaryActionButton: { flex: 1, height: 46, borderRadius: 12, backgroundColor: palette.blue, alignItems: 'center', justifyContent: 'center' },
   secondaryActionButton: { flex: 1, height: 46, borderRadius: 12, borderWidth: 1, borderColor: palette.separator, alignItems: 'center', justifyContent: 'center' },
@@ -2831,15 +2941,6 @@ function makeIosStyles() {
   accountHeaderPressed: { backgroundColor: palette.fillMuted },
   accountName: { color: palette.strongLabel, fontSize: 20, fontWeight: '600' },
   accountBalance: { color: palette.strongLabel, fontSize: 17, fontWeight: '600' },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: palette.blue,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { color: '#FFFFFF', fontSize: 23, fontWeight: '600' },
   settingsList: {
     borderRadius: 12,
     borderCurve: 'continuous',

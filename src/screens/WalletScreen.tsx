@@ -1,10 +1,12 @@
 import * as Clipboard from 'expo-clipboard';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { fetchAffCode } from '../api/endpoints';
 import { formatQuota } from '../api/format';
 import { useAuth } from '../auth/AuthProvider';
+import { AppIcon } from '../components/AppIcon';
 import { pressedSurface } from '../material';
 import { Group, Row, Subpage, palette } from '../ui';
 import { themedStyles } from '../theme';
@@ -22,8 +24,34 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
     refreshUser();
   }, [refreshUser]);
 
-  const affCode = user?.aff_code || '';
+  // /api/user/self 可能还没生成邀请码，和网页端一样在缺失时补一次。
+  const [fetchedAffCode, setFetchedAffCode] = useState('');
+  useEffect(() => {
+    if (user?.aff_code) {
+      setFetchedAffCode('');
+      return;
+    }
+    let active = true;
+    fetchAffCode()
+      .then((code) => {
+        if (active && code) setFetchedAffCode(code);
+      })
+      .catch(() => {
+        // 邀请码生成失败不影响页面其它内容。
+      });
+    return () => {
+      active = false;
+    };
+  }, [user?.aff_code]);
+
+  const affCode = user?.aff_code || fetchedAffCode;
   const inviteLink = affCode ? `${REGISTER_HOST}/register?aff=${affCode}` : '';
+
+  const copyCode = async () => {
+    if (!affCode) return;
+    await Clipboard.setStringAsync(affCode);
+    Alert.alert(t('已复制邀请码'));
+  };
 
   const copyInvite = async () => {
     if (!inviteLink) return;
@@ -72,12 +100,17 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
               <Text style={styles.inviteLabel}>{t('邀请人数')}</Text>
             </View>
           </View>
-          <View style={styles.linkBox}>
-            <Text style={styles.linkLabel}>{t('邀请码')}</Text>
-            <Text selectable style={styles.linkText}>
-              {affCode || '—'}
-            </Text>
-          </View>
+          <Row
+            title={t('邀请码')}
+            onPress={affCode ? copyCode : undefined}
+            accessibilityLabel={affCode ? t('复制邀请码') : undefined}
+            accessory={
+              <View style={styles.codeGroup}>
+                <Text style={styles.codeText}>{affCode || '—'}</Text>
+                {affCode ? <AppIcon name="doc.on.doc" size={16} color={palette.blue} /> : null}
+              </View>
+            }
+          />
           {inviteLink ? (
             <Pressable
               accessibilityRole="button"
@@ -159,22 +192,15 @@ const styles = themedStyles(() => StyleSheet.create({
     color: palette.secondaryLabel,
     fontSize: 12,
   },
-  linkBox: {
-    marginHorizontal: 16,
-    padding: ios ? 12 : 14,
-    borderRadius: ios ? 10 : 16,
-    backgroundColor: palette.fill,
-    gap: 4,
+  codeGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  linkLabel: {
+  codeText: {
     color: palette.secondaryLabel,
-    fontSize: 12,
-  },
-  linkText: {
-    color: palette.label,
-    fontSize: 15,
-    fontWeight: '600',
-    letterSpacing: 1,
+    fontSize: ios ? 17 : 14,
+    fontFamily: ios ? 'Menlo' : 'monospace',
   },
   copyRow: {
     minHeight: ios ? 44 : 48,

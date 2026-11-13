@@ -1,10 +1,16 @@
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import * as Clipboard from 'expo-clipboard';
+import { File, Paths } from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
+import * as Sharing from 'expo-sharing';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
+  Easing,
+  Image,
   KeyboardAvoidingView,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -33,11 +39,7 @@ import { themedStyles, isDark } from '../theme';
 import { useKeyboardInsets } from '../useKeyboardInsets';
 
 import {
-  fetchAudioTask,
-  fetchMusicTask,
-  fetchMusicV3Task,
   fetchVideoCapabilities,
-  fetchVideoTask,
   fetchVoices,
   generateImageSync,
   submitMusicTask,
@@ -47,15 +49,14 @@ import {
 import { speechToFile, writeBase64Audio } from '../api/client';
 import type { PricingPayload } from '../api/types';
 import type { MediaGeneration, MediaKind, Model, TaskKind } from '../types';
+import { ModelLogo } from '../components/ModelLogo';
+import { modelsForKind, priceLabelOf, firstMediaUrl, taskIdOf } from '../services/mediaModels';
+import { waitForMediaTask } from '../services/mediaTasks';
 import {
-  firstMediaUrl,
-  modelsForKind,
-  priceLabelOf,
-  taskErrorOf,
-  taskIdOf,
-  taskProgressOf,
-  taskStateOf,
-} from '../services/mediaModels';
+  addMediaGeneration,
+  updateMediaGeneration,
+  useMediaGenerations,
+} from '../mediaGenerations';
 import { t, tf } from '../i18n';
 
 const ios = Platform.OS === 'ios';
@@ -125,11 +126,134 @@ const initialPrompts: Record<MediaKind, string> = {
   voice: '',
 };
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+// 记录会跨天保留：当天只显示时间，更早的补上月/日。
+function timeLabel(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  if (date.toDateString() === new Date().toDateString()) return time;
+  return tf('{0}/{1} {2}', date.getMonth() + 1, date.getDate(), time);
+}
 
 function errorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
   return t('生成失败，请稍后重试');
+}
+
+// 同步接口拿不到真实百分比，用 30 秒缓慢走到 90% 的不确定进度；
+// 视频/音乐任务返回 progress 后切换为精确值。
+function GenerationProgress({ progress }: { progress?: number }) {
+  const animated = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (progress !== undefined) return;
+    animated.setValue(0);
+    const animation = Animated.timing(animated, {
+      toValue: 100,
+      duration: 30000,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [animated, progress]);
+
+  const width =
+    progress === undefined
+      ? animated.interpolate({ inputRange: [0, 100], outputRange: ['0%', '90%'] })
+      : `${Math.max(2, Math.min(100, progress))}%`;
+
+  return (
+    <View style={styles.progressTrack}>
+      <Animated.View style={[styles.progressFill, { width }]} />
+    </View>
+  );
+}
+
+const MEDIA_EXTENSION = /\.(png|jpe?g|webp|gif|mp4|webm|mov|m4v|mp3|wav|m4a|aac)(?:[?#]|$)/i;
+
+function mediaExtension(item: MediaGeneration) {
+  const match = item.url?.match(MEDIA_EXTENSION);
+  if (match) return match[1].toLowerCase();
+  return item.kind === 'image' ? 'jpg' : item.kind === 'video' ? 'mp4' : 'mp3';
+}
+
+function mediaMime(item: MediaGeneration) {
+  const extension = mediaExtension(item);
+  if (extension === 'png') return 'image/png';
+  if (['jpg', 'jpeg', 'webp', 'gif'].includes(extension)) {
+    return `image/${extension === 'jpg' ? 'jpeg' : extension}`;
+  }
+  if (['mp4', 'm4v'].includes(extension)) return 'video/mp4';
+  if (extension === 'webm') return 'video/webm';
+  if (extension === 'mov') return 'video/quicktime';
+  if (extension === 'wav') return 'audio/wav';
+  if (extension === 'm4a') return 'audio/mp4';
+  return 'audio/mpeg';
+}
+
+// iOS 分享面板按 UTI 决定「存储到文件」等动作，安卓只用 mime。
+function mediaUti(item: MediaGeneration) {
+  const extension = mediaExtension(item);
+  const map: Record<string, string> = {
+    png: 'public.png',
+    jpg: 'public.jpeg',
+    jpeg: 'public.jpeg',
+    webp: 'org.webmproject.webp',
+    gif: 'com.compuserve.gif',
+    mp4: 'public.mpeg-4',
+    m4v: 'public.mpeg-4',
+    mov: 'com.apple.quicktime-movie',
+    webm: 'org.webmproject.webm',
+    mp3: 'public.mp3',
+    wav: 'com.microsoft.waveform-audio',
+    m4a: 'public.mpeg-4-audio',
+    aac: 'public.aac-audio',
+  };
+  return map[extension] ?? 'public.data';
+}
+
+// 远端结果先落到缓存；语音/音乐 base64 结果本身就是 file://。
+async function localMediaFile(item: MediaGeneration) {
+  if (!item.url) throw new Error(t('结果还没有生成'));
+  if (item.url.startsWith('file://')) return new File(item.url);
+  const destination = new File(
+    Paths.cache,
+    `qmszai-${item.id}-${Date.now()}.${mediaExtension(item)}`,
+  );
+  return File.downloadFileAsync(item.url, destination, { idempotent: true });
+}
+
+function VideoPreview({ uri }: { uri: string }) {
+  const player = useVideoPlayer(uri, (instance) => {
+    instance.loop = false;
+  });
+
+  return (
+    <VideoView
+      style={styles.previewVideo}
+      player={player}
+      nativeControls
+      contentFit="contain"
+      fullscreenOptions={{ enable: true }}
+    />
+  );
+}
+
+function GeneratedPreview({ item }: { item: MediaGeneration }) {
+  if (item.status !== 'succeeded' || !item.url) return null;
+  if (item.kind === 'image') {
+    return (
+      <Image
+        source={{ uri: item.url }}
+        style={styles.previewImage}
+        resizeMode="contain"
+        accessibilityLabel={t('生成结果')}
+      />
+    );
+  }
+  if (item.kind === 'video') return <VideoPreview uri={item.url} />;
+  return null;
 }
 
 export function MediaStudioScreen({
@@ -163,8 +287,9 @@ export function MediaStudioScreen({
     label: string;
     options: string[];
   } | null>(null);
-  const [generations, setGenerations] = useState<MediaGeneration[]>([]);
-  const [selected, setSelected] = useState<MediaGeneration | null>(null);
+  const generations = useMediaGenerations();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [voices, setVoices] = useState<Array<{ label: string; value: string }>>([]);
   const [capabilities, setCapabilities] = useState<{
@@ -359,52 +484,18 @@ export function MediaStudioScreen({
     return currentValues.音色 ? tf('音色 {0}', currentValues.音色) : t('默认音色');
   };
 
-  // 记录按当前类型展示，避免图片记录混进视频/音乐列表。
-  const visibleGenerations = generations.filter((item) => item.kind === kind);
+  // 记录不再按当前类型过滤：否则切到别的类型或重新进入页面后，
+  // 刚生成的记录看起来就像丢了。每行都带类型标签，混合展示也能分清。
+  const visibleGenerations = generations;
+  const selected = selectedId ? generations.find((item) => item.id === selectedId) ?? null : null;
 
   const updateRecord = (id: string, patch: Partial<MediaGeneration>) => {
-    if (!mounted.current) return;
-    setGenerations((current) =>
-      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    );
-    setSelected((current) => (current && current.id === id ? { ...current, ...patch } : current));
+    void updateMediaGeneration(id, patch);
   };
 
-  const waitForTask = async (
-    taskKind: 'video' | 'music' | 'voice',
-    taskId: string,
-    recordId: string,
-    baseSummary: string,
-    overrideFetch?: (id: string) => Promise<unknown>,
-  ) => {
-    const fetchTask =
-      overrideFetch ??
-      (taskKind === 'video' ? fetchVideoTask : taskKind === 'music' ? fetchMusicTask : fetchAudioTask);
-    for (let attempt = 0; attempt < 75; attempt += 1) {
-      await sleep(4000);
-      if (!mounted.current) return;
-      const task = await fetchTask(taskId);
-      const state = taskStateOf(task);
-      if (state === 'failed') {
-        throw new Error(taskErrorOf(task) || t('上游任务失败'));
-      }
-      if (state === 'succeeded') {
-        const url = firstMediaUrl(task);
-        updateRecord(recordId, {
-          status: 'succeeded',
-          url: url ?? undefined,
-          summary: baseSummary,
-          error: url ? undefined : t('任务已完成，但未找到媒体地址'),
-        });
-        return;
-      }
-      const progress = taskProgressOf(task);
-      if (progress !== null) {
-        updateRecord(recordId, { summary: `${baseSummary} · ${Math.round(progress)}%` });
-      }
-    }
-    throw new Error(t('任务超时，请稍后在任务页查看结果'));
-  };
+  // 中断的记录没有具体错误信息，统一显示为「生成已中断」。
+  const errorText = (item: MediaGeneration) =>
+    item.interrupted && !item.error ? t('生成已中断') : item.error;
 
   const submit = async () => {
     const text = prompt.trim();
@@ -414,9 +505,7 @@ export function MediaStudioScreen({
       return;
     }
 
-    const id = `gen-${++sequence.current}`;
-    const now = new Date();
-    const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const id = `gen-${Date.now().toString(36)}-${++sequence.current}`;
     const baseSummary = summary();
     const record: MediaGeneration = {
       id,
@@ -424,10 +513,10 @@ export function MediaStudioScreen({
       prompt: text,
       model,
       status: 'running',
-      createdAt: time,
+      createdAt: new Date().toISOString(),
       summary: baseSummary,
     };
-    setGenerations((current) => [record, ...current]);
+    await addMediaGeneration(record);
     setBusy(true);
 
     try {
@@ -451,7 +540,9 @@ export function MediaStudioScreen({
         });
         const taskId = taskIdOf(task);
         if (!taskId) throw new Error(t('未返回任务号'));
-        await waitForTask('video', taskId, id, baseSummary);
+        // 先落任务号再轮询：记录里有了它，离开页面或重启 App 都能接着查。
+        updateRecord(id, { taskId, taskMode: 'video' });
+        await waitForMediaTask(id, taskId, 'video');
       } else if (kind === 'music') {
         const duration = Number.parseInt(currentValues.时长, 10) || undefined;
         if (model.startsWith('music-3')) {
@@ -473,7 +564,8 @@ export function MediaStudioScreen({
           } else {
             const taskId = taskIdOf(result);
             if (!taskId) throw new Error(t('未返回音频'));
-            await waitForTask('music', taskId, id, baseSummary, fetchMusicV3Task);
+            updateRecord(id, { taskId, taskMode: 'music3' });
+            await waitForMediaTask(id, taskId, 'music3');
           }
         } else {
           const task = await submitMusicTask({
@@ -483,7 +575,8 @@ export function MediaStudioScreen({
           });
           const taskId = taskIdOf(task);
           if (!taskId) throw new Error(t('未返回任务号'));
-          await waitForTask('music', taskId, id, baseSummary);
+          updateRecord(id, { taskId, taskMode: 'music' });
+          await waitForMediaTask(id, taskId, 'music');
         }
       } else {
         const audio = await speechToFile({
@@ -506,17 +599,41 @@ export function MediaStudioScreen({
     failed: { label: t('失败'), tone: 'danger' },
   };
 
-  const openUrl = async (url: string) => {
-    try {
-      await Linking.openURL(url);
-    } catch {
-      Alert.alert(t('无法打开链接'));
-    }
-  };
-
   const copyUrl = async (url: string) => {
     await Clipboard.setStringAsync(url);
     Alert.alert(t('已复制链接'));
+  };
+
+  // 图片/视频优先写入系统相册；音频或相册权限不可用时回退到系统分享面板。
+  const saveResult = async (item: MediaGeneration) => {
+    if (!item.url || downloading) return;
+    setDownloading(true);
+    try {
+      const file = await localMediaFile(item);
+      if (item.kind === 'image' || item.kind === 'video') {
+        try {
+          const permission = await MediaLibrary.requestPermissionsAsync(true, [
+            item.kind === 'image' ? 'photo' : 'video',
+          ]);
+          if (!permission.granted) throw new Error(t('没有相册权限'));
+          await MediaLibrary.Asset.create(file.uri);
+          Alert.alert(t('已保存到相册'));
+          return;
+        } catch {
+          // 权限被拒或写入失败时继续走分享面板，用户仍可存到文件。
+        }
+      }
+      if (!(await Sharing.isAvailableAsync())) throw new Error(t('当前设备不支持保存'));
+      await Sharing.shareAsync(file.uri, {
+        mimeType: mediaMime(item),
+        dialogTitle: t('保存或分享'),
+        UTI: mediaUti(item),
+      });
+    } catch (error) {
+      Alert.alert(t('下载失败'), errorMessage(error));
+    } finally {
+      setDownloading(false);
+    }
   };
 
   const canSubmit = prompt.trim().length > 0 && !busy && Boolean(model);
@@ -625,7 +742,7 @@ export function MediaStudioScreen({
           </Group>
 
           <View style={styles.historyHeader}>
-            <Text style={styles.sectionTitle}>{t('本次生成记录')}</Text>
+            <Text style={styles.sectionTitle}>{t('生成记录')}</Text>
             {visibleGenerations.length > 0 ? (
               <Text style={styles.sectionMeta}>{visibleGenerations.length} {t('条')}</Text>
             ) : null}
@@ -639,7 +756,7 @@ export function MediaStudioScreen({
                 <Pressable
                   key={item.id}
                   accessibilityRole="button"
-                  onPress={() => setSelected(item)}
+                  onPress={() => setSelectedId(item.id)}
                   style={({ pressed }) => [styles.genRow, pressed ? styles.genRowPressed : null]}
                 >
                   <View style={styles.genTop}>
@@ -652,11 +769,21 @@ export function MediaStudioScreen({
                     />
                   </View>
                   <Text style={styles.genMeta}>
-                    {configs[item.kind].label} · {item.model} · {item.createdAt}
+                    {configs[item.kind].label} · {item.model} · {timeLabel(item.createdAt)}
                   </Text>
+                  {item.status === 'running' ? (
+                    <View style={styles.genProgressRow}>
+                      <View style={styles.genProgressTrack}>
+                        <GenerationProgress progress={item.progress} />
+                      </View>
+                      {item.progress !== undefined ? (
+                        <Text style={styles.genProgressValue}>{Math.round(item.progress)}%</Text>
+                      ) : null}
+                    </View>
+                  ) : null}
                   <View style={styles.genBottom}>
                     <Text style={styles.genSummary} numberOfLines={1}>
-                      {item.error || item.summary}
+                      {errorText(item) || item.summary}
                     </Text>
                     <Text style={styles.genCost}>{item.url ? t('查看') : ''}</Text>
                   </View>
@@ -696,6 +823,9 @@ export function MediaStudioScreen({
               <Row
                 key={option}
                 title={option}
+                leading={
+                  picker.key === t('模型') ? <ModelLogo name={option} size={24} /> : undefined
+                }
                 value={
                   picker.key === t('模型')
                     ? model === option
@@ -719,7 +849,29 @@ export function MediaStudioScreen({
         ) : null}
       </Sheet>
 
-      <Sheet visible={selected !== null} title={t("生成详情")} onClose={() => setSelected(null)}>
+      <Sheet
+        visible={selectedId !== null}
+        title={t("生成详情")}
+        onClose={() => setSelectedId(null)}
+        footer={
+          selected?.status === 'succeeded' && selected.url ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={downloading}
+              onPress={() => saveResult(selected)}
+              style={({ pressed }) => [
+                styles.downloadButton,
+                downloading ? styles.submitDisabled : null,
+                pressed ? pressedDim : null,
+              ]}
+            >
+              <Text style={styles.downloadText}>
+                {downloading ? t('下载中…') : t('下载')}
+              </Text>
+            </Pressable>
+          ) : undefined
+        }
+      >
         {selected ? (
           <>
             <View style={styles.detailHeading}>
@@ -729,25 +881,32 @@ export function MediaStudioScreen({
                 tone={statusMeta[selected.status].tone}
               />
             </View>
+            {selected.status === 'running' ? (
+              <View style={styles.detailProgress}>
+                <GenerationProgress progress={selected.progress} />
+                {selected.progress !== undefined ? (
+                  <Text style={styles.genProgressValue}>{Math.round(selected.progress)}%</Text>
+                ) : null}
+              </View>
+            ) : null}
+            <GeneratedPreview item={selected} />
             <Group>
               <Row title={t("类型")} value={configs[selected.kind].label} />
               <Row title={t("模型")} value={selected.model} />
               <Row title={t("参数")} value={selected.summary} />
-              <Row title={t("提交时间")} value={selected.createdAt} />
-              {selected.error ? <Row title={t("错误")} value={selected.error} /> : null}
+              <Row title={t("提交时间")} value={timeLabel(selected.createdAt)} />
+              {errorText(selected) ? <Row title={t("错误")} value={errorText(selected)} /> : null}
             </Group>
-            {selected.url ? (
+            {selected.url && selected.status === 'succeeded' ? (
               <Group>
                 {selected.kind === 'voice' ? (
                   <Row title={t("播放语音")} chevron onPress={() => playAudio(selected.url!)} />
                 ) : selected.kind === 'music' ? (
                   <Row title={t("播放音乐")} chevron onPress={() => playAudio(selected.url!)} />
-                ) : (
-                  <>
-                    <Row title={t("打开结果")} chevron onPress={() => openUrl(selected.url!)} />
-                    <Row title={t("复制链接")} onPress={() => copyUrl(selected.url!)} />
-                  </>
-                )}
+                ) : null}
+                {selected.url.startsWith('http') ? (
+                  <Row title={t("复制链接")} onPress={() => copyUrl(selected.url!)} />
+                ) : null}
               </Group>
             ) : null}
           </>
@@ -866,6 +1025,40 @@ const styles = themedStyles(() => StyleSheet.create({
     color: palette.secondaryLabel,
     fontSize: 12,
   },
+  genProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 1,
+  },
+  genProgressTrack: {
+    flex: 1,
+  },
+  genProgressValue: {
+    minWidth: 32,
+    color: palette.secondaryLabel,
+    fontSize: 11,
+    fontVariant: ['tabular-nums'],
+    textAlign: 'right',
+  },
+  progressTrack: {
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+    backgroundColor: palette.fill,
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 2,
+    backgroundColor: palette.blue,
+  },
+  detailProgress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 4,
+    marginTop: -2,
+  },
   genBottom: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -920,6 +1113,19 @@ const styles = themedStyles(() => StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
   },
+  downloadButton: {
+    width: '100%',
+    minHeight: ios ? 48 : 52,
+    borderRadius: ios ? 12 : 26,
+    backgroundColor: palette.blue,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  downloadText: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '600',
+  },
   detailHeading: {
     alignItems: 'flex-start',
     gap: 8,
@@ -936,5 +1142,18 @@ const styles = themedStyles(() => StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     paddingHorizontal: 4,
+  },
+  previewImage: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: ios ? 12 : 16,
+    backgroundColor: palette.fill,
+  },
+  previewVideo: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    overflow: 'hidden',
+    borderRadius: ios ? 12 : 16,
+    backgroundColor: '#000000',
   },
 }));

@@ -15,6 +15,7 @@ const androidIcons: Record<string, IoniconName> = {
   'arrow.up': 'arrow-up',
   'arrow.up.right': 'arrow-up-outline',
   bell: 'notifications-outline',
+  camera: 'camera-outline',
   'bubble.left.and.bubble.right': 'chatbubbles-outline',
   'chart.bar': 'stats-chart-outline',
   checkmark: 'checkmark',

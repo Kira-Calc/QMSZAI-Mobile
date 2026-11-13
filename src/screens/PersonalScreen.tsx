@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { fetchCheckin, submitCheckin, updateSelf } from '../api/endpoints';
 import type { CheckinStatus } from '../api/types';
 import { formatQuota, formatQuotaSmart } from '../api/format';
 import { useAuth } from '../auth/AuthProvider';
+import { removeAvatar, saveAvatar, useAvatar } from '../avatar';
 import { cardSurface, m3, pressedDim } from '../material';
 import { Group, Row, Sheet, Subpage, palette } from '../ui';
 import { AppIcon } from '../components/AppIcon';
+import { UserAvatar } from '../components/UserAvatar';
 import { isDark, setMode, themedStyles, useThemeMode } from '../theme';
 import type { ThemeMode } from '../theme';
 import { setLanguage, t, tf, useLanguage, useLanguageSetting } from '../i18n';
@@ -59,7 +62,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
   }, [loadCheckin, refreshUser]);
 
   const displayNameValue = user?.display_name || user?.username || '';
-  const initial = displayNameValue.trim().charAt(0).toUpperCase() || '·';
+  const avatarUri = useAvatar(user?.id);
   const checkedIn = checkin?.stats?.checked_in_today ?? false;
   const checkinEnabled = checkin?.enabled ?? Boolean(siteStatus?.checkin_enabled);
 
@@ -127,6 +130,32 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
     }
   };
 
+  const pickAvatar = async () => {
+    if (!user?.id) return;
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+      const asset = result.canceled ? null : result.assets?.[0];
+      if (!asset) return;
+      await saveAvatar(user.id, asset.uri);
+    } catch (error) {
+      Alert.alert(t('无法打开相册'), error instanceof Error ? error.message : t('请稍后重试'));
+    }
+  };
+
+  // 点头像直接进相册，避免安卓三按钮弹窗把长文案挤在一行。
+  const confirmRemoveAvatar = () => {
+    if (!user?.id) return;
+    Alert.alert(t('移除头像？'), undefined, [
+      { text: t('取消'), style: 'cancel' },
+      { text: t('移除'), style: 'destructive', onPress: () => void removeAvatar(user.id) },
+    ]);
+  };
+
   const confirmSignOut = () => {
     Alert.alert(t('退出登录？'), t('退出后需要重新输入账号密码。'), [
       { text: t('取消'), style: 'cancel' },
@@ -138,9 +167,17 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
     <Subpage title={t("个人设置")} onBack={onBack}>
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}>
         <View style={styles.profile}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initial}</Text>
-          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('更换头像')}
+            onPress={() => void pickAvatar()}
+            style={({ pressed }) => [styles.avatarButton, pressed ? pressedDim : null]}
+          >
+            <UserAvatar userId={user?.id} name={displayNameValue} size={56} />
+            <View style={styles.avatarBadge}>
+              <AppIcon name="camera" size={11} color="#FFFFFF" />
+            </View>
+          </Pressable>
           <View style={styles.profileMain}>
             <Text style={styles.name}>{displayNameValue || t('未登录')}</Text>
             <Text style={styles.role}>
@@ -204,6 +241,9 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
           <Row title={t("用户名")} value={user?.username || '—'} />
           <Row title={t("显示名称")} value={user?.display_name || '—'} chevron onPress={openProfile} />
           <Row title={t("登录密码")} value={user?.has_password ? t('已设置') : t('未设置')} chevron onPress={openPassword} />
+          {avatarUri ? (
+            <Row title={t("移除头像")} destructive onPress={confirmRemoveAvatar} />
+          ) : null}
         </Group>
 
         <Group header={t("外观")}>
@@ -314,18 +354,23 @@ const styles = themedStyles(() => StyleSheet.create({
     marginTop: 4,
     ...cardSurface,
   },
-  avatar: {
+  avatarButton: {
     width: 56,
     height: 56,
     borderRadius: 28,
+  },
+  avatarBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: palette.card,
     backgroundColor: palette.blue,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  avatarText: {
-    color: '#FFFFFF',
-    fontSize: 24,
-    fontWeight: '600',
   },
   profileMain: {
     flex: 1,

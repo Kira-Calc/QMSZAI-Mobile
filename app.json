@@ -24,7 +24,23 @@
     "plugins": [
       "expo-secure-store",
       "expo-audio",
-      "expo-localization"
+      "expo-localization",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允许访问相册，用于设置头像。"
+        }
+      ],
+      "expo-video",
+      "expo-sharing",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "允许访问相册，用于查看和保存生成的图片、视频。",
+          "savePhotosPermission": "允许把生成的图片、视频保存到相册。",
+          "granularPermissions": ["photo", "video"]
+        }
+      ]
     ]
   }
 }
