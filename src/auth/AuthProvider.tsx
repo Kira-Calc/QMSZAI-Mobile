@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { ApiError, clearSession, getSession, restoreSession } from '../api/client';
+import { ApiError, clearSession, getSession, onUnauthorized, restoreSession } from '../api/client';
 import {
   fetchPublicStatus,
   fetchSelf,
@@ -105,6 +105,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 保持现有状态，由调用方决定是否提示
     }
   }, [loadUser]);
+
+  // 任意接口 401 → 清掉会话并直接回到登录页（不弹提示框）。
+  useEffect(
+    () =>
+      onUnauthorized(() => {
+        void clearSession();
+        setUser(null);
+        setSiteStatus(null);
+        setStatus('signedOut');
+      }),
+    [],
+  );
 
   const signIn = useCallback(
     async (username: string, password: string): Promise<SignInOutcome> => {

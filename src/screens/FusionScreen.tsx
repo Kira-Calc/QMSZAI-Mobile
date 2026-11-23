@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { chatOnce } from '../api/client';
+import { chatOnce, isUnauthorized } from '../api/client';
 import { ModelLogo } from '../components/ModelLogo';
 import { cardSurface, pressedDim } from '../material';
 import { Badge, GlassPillButton, Group, Row, Sheet, Subpage, palette } from '../ui';
@@ -201,6 +201,7 @@ export function FusionScreen({ onBack, models }: { onBack: () => void; models: s
       ]);
       setPrompt('');
     } catch (error) {
+      if (isUnauthorized(error)) return;
       Alert.alert(t('融合失败'), error instanceof Error ? error.message : t('请稍后重试'));
     } finally {
       setBusy(false);

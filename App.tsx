@@ -7,7 +7,7 @@ import { AppIcon } from './src/components/AppIcon';
 import { cardSurface, elevation, m3, pressedSurface, ripple, shape, type as typeScale } from './src/material';
 import { ChatWorkspace } from './src/ChatWorkspace';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useCallback, useMemo, useRef, useState, type ComponentProps, type ComponentRef, type ComponentType, type ReactElement } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useState, type ComponentProps, type ComponentRef, type ComponentType, type ReactElement, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -48,6 +48,7 @@ import {
   setTokenStatus,
   updateToken,
 } from './src/api/endpoints';
+import { isUnauthorized } from './src/api/client';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { useConsoleData } from './src/services/useConsoleData';
 import { useKeyboardInsets } from './src/useKeyboardInsets';
@@ -79,7 +80,6 @@ import { WalletScreen } from './src/screens/WalletScreen';
 import type {
   AccountSummary,
   Model,
-  ModelStatus,
   NewTokenDraft,
   OverviewMetrics,
   TabKey,
@@ -102,12 +102,6 @@ type SubpageKey =
 
 type TabScrollHandler = (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
 
-const statusLabel = (status: ModelStatus) => {
-  if (status === 'stable') return t('可用');
-  if (status === 'watch') return t('观察');
-  return t('限流');
-};
-
 const tokenStatusLabel = (status: TokenStatus) => {
   if (status === 'active') return t('启用');
   if (status === 'paused') return t('暂停');
@@ -122,16 +116,7 @@ const MaskedView = NativeMaskedView as unknown as ComponentType<ViewProps & {
 }>;
 
 // 状态色随主题变化：读取时再取 palette，避免模块加载时把浅色固化。
-const statusColor: Record<ModelStatus | TokenStatus, string> = {
-  get stable() {
-    return palette.successText;
-  },
-  get watch() {
-    return palette.warningText;
-  },
-  get limited() {
-    return palette.destructive;
-  },
+const statusColor: Record<TokenStatus, string> = {
   get active() {
     return palette.successText;
   },
@@ -316,7 +301,7 @@ function AppShell() {
       return sorted;
     }
     return sorted.filter((model) => {
-      return [model.name, model.vendor, model.context, model.route, ...model.tags]
+      return [model.name, model.vendor, model.route, ...model.tags]
         .join(' ')
         .toLowerCase()
         .includes(q);
@@ -418,6 +403,7 @@ function AppShell() {
       await setTokenStatus(Number(id), nextStatus);
       await consoleData.refreshTokens();
     } catch (error) {
+      if (isUnauthorized(error)) return;
       Alert.alert(t('操作失败'), error instanceof Error ? error.message : t('请稍后重试'));
     }
   };
@@ -475,6 +461,7 @@ function AppShell() {
       setEditingToken(null);
       await consoleData.refreshTokens();
     } catch (error) {
+      if (isUnauthorized(error)) return;
       Alert.alert(t('保存失败'), error instanceof Error ? error.message : t('请稍后重试'));
     }
   };
@@ -491,6 +478,7 @@ function AppShell() {
             await removeToken(Number(token.id));
             await consoleData.refreshTokens();
           } catch (error) {
+            if (isUnauthorized(error)) return;
             Alert.alert(t('删除失败'), error instanceof Error ? error.message : t('请稍后重试'));
           }
         },
@@ -506,6 +494,7 @@ function AppShell() {
       await Clipboard.setStringAsync(key.startsWith('sk-') ? key : `sk-${key}`);
       Alert.alert(t('已复制密钥'));
     } catch (error) {
+      if (isUnauthorized(error)) return;
       Alert.alert(t('复制失败'), error instanceof Error ? error.message : t('请稍后重试'));
     }
   };
@@ -1004,23 +993,11 @@ function ModelsView({
               ]}
             >
               <View style={styles.modelRowIdentity}>
-                <ModelLogo name={model.name} size={30} />
+                <ModelLogo name={model.name} vendor={model.vendor} size={30} />
                 <View style={styles.modelRowMain}>
                   <Text style={styles.modelName}>{model.name}</Text>
                   <Text style={styles.modelVendor}>{model.vendor}</Text>
                 </View>
-              </View>
-              <View
-                style={[
-                  styles.pill,
-                  ios
-                    ? { borderColor: statusColor[model.status] }
-                    : { backgroundColor: `${statusColor[model.status]}1F` },
-                ]}
-              >
-                <Text style={[styles.pillText, { color: statusColor[model.status] }]}>
-                  {statusLabel(model.status)}
-                </Text>
               </View>
             </Pressable>
           );
@@ -1075,20 +1052,12 @@ function ModelDetail({ model }: { model: Model }) {
           <Text style={styles.detailTitle}>{model.name}</Text>
           <Text style={styles.modelVendor}>{model.vendor}</Text>
         </View>
-        <Text style={[styles.statusText, { color: statusColor[model.status] }]}>
-          {statusLabel(model.status)}
-        </Text>
-      </View>
-      <View style={styles.detailStats}>
-        <MiniStat label={t("上下文")} value={model.context} />
-        <MiniStat label={t("延迟")} value={model.latency} />
-        <MiniStat label={t("成本")} value={model.price} />
       </View>
       <View style={styles.billingGrid}>
         <SettingsRow label={t("路由")} value={model.route} />
         <SettingsRow label={t("输入费率")} value={model.inputRate} />
         <SettingsRow label={t("输出费率")} value={model.outputRate} />
-        <SettingsRow label={t("健康检查")} value={model.updatedAt} />
+        <SettingsRow label={t("计费方式")} value={model.updatedAt} />
       </View>
       <Text style={styles.detailNote}>{model.note}</Text>
       <View style={styles.tagRow}>
@@ -1237,6 +1206,80 @@ function AccountView({
   );
 }
 
+// 底部弹层的统一容器：背板淡入、面板单独上滑。
+// 之前用 Modal animationType="slide"，灰色背板会和面板一起从屏幕底部推上来，
+// iOS 上看起来像一块灰布刷上去，很突兀；现在背板只做透明度过渡。
+function SheetModal({
+  visible,
+  onClose,
+  backdropLabel,
+  children,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  backdropLabel: string;
+  children: ReactNode;
+}) {
+  const { height } = useWindowDimensions();
+  const [mounted, setMounted] = useState(visible);
+  const progress = useRef(new Animated.Value(visible ? 1 : 0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      Animated.timing(progress, {
+        toValue: 1,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
+    if (!mounted) return;
+    // 关闭时等动画播完再卸载，否则面板会瞬间消失。
+    Animated.timing(progress, {
+      toValue: 0,
+      duration: 200,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setMounted(false);
+    });
+  }, [visible, mounted, progress]);
+
+  if (!mounted) return null;
+
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <View style={styles.sheetModalRoot}>
+        <Animated.View style={[StyleSheet.absoluteFill, { opacity: progress }]}>
+          <View style={[StyleSheet.absoluteFill, styles.sheetModalScrim]} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={backdropLabel}
+            onPress={onClose}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
+        <Animated.View
+          style={{
+            transform: [
+              {
+                translateY: progress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [height, 0],
+                }),
+              },
+            ],
+          }}
+        >
+          {children}
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
 function TokenModal({
   token,
   quotaPerUnit,
@@ -1252,25 +1295,22 @@ function TokenModal({
   onEdit: (token: Token) => void;
   onDelete: (token: Token) => void;
 }) {
-  if (!token) {
-    return null;
-  }
+  // 关闭动画期间面板还要显示内容，所以记住最后一次展示的令牌。
+  const [lastToken, setLastToken] = useState<Token | null>(token);
+  useEffect(() => {
+    if (token) setLastToken(token);
+  }, [token]);
+  const current = token ?? lastToken;
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalBackdrop}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t('关闭令牌详情')}
-          onPress={onClose}
-          style={StyleSheet.absoluteFill}
-        />
+    <SheetModal visible={token !== null} onClose={onClose} backdropLabel={t('关闭令牌详情')}>
+      {current ? (
         <View style={styles.modalSheet}>
           <View style={styles.modalHandle} />
           <View style={styles.detailHeader}>
             <View>
-              <Text style={styles.detailTitle}>{token.name}</Text>
-              <Text style={styles.modelVendor}>{token.scope}</Text>
+              <Text style={styles.detailTitle}>{current.name}</Text>
+              <Text style={styles.modelVendor}>{current.scope}</Text>
             </View>
             <GlassIconButton
               icon="xmark"
@@ -1282,19 +1322,19 @@ function TokenModal({
             />
           </View>
           <View style={styles.detailStats}>
-            <MiniStat label={t("用量")} value={formatQuota(token.usage, quotaPerUnit)} />
+            <MiniStat label={t("用量")} value={formatQuota(current.usage, quotaPerUnit)} />
             <MiniStat
               label={t("限额")}
-              value={token.unlimited ? t('不限') : formatQuota(token.remainQuota ?? token.quota, quotaPerUnit)}
+              value={current.unlimited ? t('不限') : formatQuota(current.remainQuota ?? current.quota, quotaPerUnit)}
             />
-            <MiniStat label={t("状态")} value={tokenStatusLabel(token.status)} />
+            <MiniStat label={t("状态")} value={tokenStatusLabel(current.status)} />
           </View>
-          <SettingsRow label={t("分组")} value={token.scope} />
-          <SettingsRow label={t("最后使用")} value={token.lastUsed} />
+          <SettingsRow label={t("分组")} value={current.scope} />
+          <SettingsRow label={t("最后使用")} value={current.lastUsed} />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={t("复制密钥")}
-            onPress={() => onCopyKey(token)}
+            onPress={() => onCopyKey(current)}
             style={({ pressed }) => [
               styles.settingsRow,
               pressed ? { backgroundColor: palette.cardMuted } : null,
@@ -1310,22 +1350,22 @@ function TokenModal({
           <View style={styles.modalActions}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => onDelete(token)}
+              onPress={() => onDelete(current)}
               style={[styles.secondaryActionButton, styles.destructiveOutline]}
             >
               <Text style={[styles.secondaryButtonText, styles.destructiveText]}>{t('删除')}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              onPress={() => onEdit(token)}
+              onPress={() => onEdit(current)}
               style={styles.primaryActionButton}
             >
               <Text style={styles.primaryActionText}>{t('编辑')}</Text>
             </Pressable>
           </View>
         </View>
-      </View>
-    </Modal>
+      ) : null}
+    </SheetModal>
   );
 }
 
@@ -1526,15 +1566,12 @@ function TokenFormModal({
   const pickerSearch = pickerMode === 'models' ? modelQuery : groupQuery;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
-      <View style={styles.modalBackdrop}>
-        {/* 点面板上方空白区域返回上一层：选择页回到表单，表单回到令牌列表。 */}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t('取消')}
-          onPress={pickerMode === 'none' ? onCancel : closePicker}
-          style={StyleSheet.absoluteFill}
-        />
+    <SheetModal
+      visible={visible}
+      // 点面板上方空白区域返回上一层：选择页回到表单，表单回到令牌列表。
+      onClose={pickerMode === 'none' ? onCancel : closePicker}
+      backdropLabel={t('取消')}
+    >
         <View
           style={[
             styles.modalSheet,
@@ -1866,8 +1903,7 @@ function TokenFormModal({
             </>
           )}
         </View>
-      </View>
-    </Modal>
+    </SheetModal>
   );
 }
 
@@ -2373,19 +2409,6 @@ function makeBaseStyles() {
     fontWeight: '400',
     lineHeight: 18,
   },
-  pill: {
-    minWidth: 58,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-  },
-  pillText: {
-    fontSize: 12,
-    fontWeight: '500',
-    letterSpacing: 0.2,
-  },
   detailSheetContent: { padding: 16, paddingBottom: 40 },
   detailPanel: {
     borderRadius: shape.xl,
@@ -2590,10 +2613,12 @@ function makeBaseStyles() {
     fontWeight: '700',
     letterSpacing: 0.5,
   },
-  modalBackdrop: {
+  sheetModalRoot: {
     flex: 1,
-    backgroundColor: palette.backdrop,
     justifyContent: 'flex-end',
+  },
+  sheetModalScrim: {
+    backgroundColor: palette.backdrop,
   },
   modalSheet: {
     borderTopLeftRadius: 8,
@@ -2924,7 +2949,20 @@ function makeIosStyles() {
   primaryActionText: { color: palette.onAccent, fontSize: 17, fontWeight: '600' },
   primaryActionButton: { flex: 1, height: 46, borderRadius: 12, backgroundColor: palette.blue, alignItems: 'center', justifyContent: 'center' },
   secondaryActionButton: { flex: 1, height: 46, borderRadius: 12, borderWidth: 1, borderColor: palette.separator, alignItems: 'center', justifyContent: 'center' },
-  modalSheet: { borderTopLeftRadius: 16, borderTopRightRadius: 16, overflow: 'hidden', backgroundColor: palette.card, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 30 },
+  modalSheet: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: palette.card,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 30,
+    // 遮罩压得很轻，靠面板自身投影和底下的页面分开。
+    shadowColor: '#000000',
+    shadowOpacity: 0.1,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: -4 },
+  },
   settingsLabel: { fontSize: 17, color: palette.label, fontWeight: '400' },
   settingsValue: { flex: 1, fontSize: 17, color: palette.subtleLabel, textAlign: 'right' },
   accountHeader: {
@@ -3027,7 +3065,6 @@ function makeIosStyles() {
     justifyContent: 'center',
     paddingHorizontal: 10,
   },
-  pillText: { fontSize: 12, fontWeight: '800' },
   modelVendor: { color: palette.subtleLabel, fontSize: 13, fontWeight: '600', lineHeight: 18 },
   chevron: { color: palette.subtleLabel, fontSize: 32, fontWeight: '300' },
   tag: {

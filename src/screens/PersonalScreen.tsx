@@ -3,6 +3,7 @@ import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, Vi
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { isUnauthorized } from '../api/client';
 import { fetchCheckin, submitCheckin, updateSelf } from '../api/endpoints';
 import type { CheckinStatus } from '../api/types';
 import { formatQuota, formatQuotaSmart } from '../api/format';
@@ -74,6 +75,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
       Alert.alert(t('签到成功'), tf('获得 {0} 额度', formatQuotaSmart(result.quota_awarded ?? 0, quotaPerUnit)));
       await Promise.all([loadCheckin(), refreshUser()]);
     } catch (error) {
+      if (isUnauthorized(error)) return;
       Alert.alert(t('签到失败'), error instanceof Error ? error.message : t('请稍后重试'));
     } finally {
       setCheckinBusy(false);
@@ -102,6 +104,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
       await refreshUser();
       setSheet(null);
     } catch (error) {
+      if (isUnauthorized(error)) return;
       Alert.alert(t('保存失败'), error instanceof Error ? error.message : t('请稍后重试'));
     } finally {
       setBusy(false);
@@ -124,6 +127,7 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
       setSheet(null);
       Alert.alert(t('密码已更新'));
     } catch (error) {
+      if (isUnauthorized(error)) return;
       Alert.alert(t('修改失败'), error instanceof Error ? error.message : t('请稍后重试'));
     } finally {
       setBusy(false);

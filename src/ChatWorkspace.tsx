@@ -32,7 +32,7 @@ import {
   fetchConversationMessages,
   fetchConversations,
 } from './api/endpoints';
-import { streamChat } from './api/client';
+import { isUnauthorized, streamChat } from './api/client';
 import type { ChatConversation } from './api/types';
 import type { Model } from './types';
 import { AlphabetRail, GlassIconButton, GlassSurface, SheetHeader, palette } from './ui';
@@ -77,10 +77,6 @@ const fallbackModel: Model = {
   id: '',
   name: t('选择模型'),
   vendor: '',
-  context: '—',
-  latency: '—',
-  price: '—',
-  status: 'stable',
   tags: [],
   note: '',
   route: '—',
@@ -515,6 +511,8 @@ export function ChatWorkspace({
         return;
       }
       setBusy(false);
+      // 401 已经自动回到登录页，不再弹错误框。
+      if (isUnauthorized(error)) return;
       Alert.alert(t('发送失败'), error instanceof Error ? error.message : t('请稍后重试'));
       if (conversationId !== null) {
         const target = conversationId;
@@ -610,7 +608,7 @@ export function ChatWorkspace({
             style={({ pressed }) => [styles.modelButton, pressed ? styles.pressed : null]}
           >
             <GlassSurface radius={18} interactive style={styles.modelGlass}>
-              <ModelLogo name={currentModel.name} size={22} />
+              <ModelLogo name={currentModel.name} vendor={currentModel.vendor} size={22} />
               <Text numberOfLines={1} style={styles.modelButtonText}>
                 {currentModel.name}
               </Text>
@@ -943,7 +941,7 @@ export function ChatWorkspace({
                   pressed ? styles.popoverRowPressed : null,
                 ]}
               >
-                <ModelLogo name={model.name} size={30} />
+                <ModelLogo name={model.name} vendor={model.vendor} size={30} />
                 <View style={styles.popoverMain}>
                   <Text style={styles.popoverName}>{model.name}</Text>
                   <Text style={styles.popoverVendor}>{model.vendor}</Text>
@@ -1020,7 +1018,7 @@ export function ChatWorkspace({
                           pressed ? styles.pressed : null,
                         ]}
                       >
-                        <ModelLogo name={model.name} size={30} />
+                        <ModelLogo name={model.name} vendor={model.vendor} size={30} />
                         <View style={styles.modelMain}>
                           <Text style={styles.modelName}>{model.name}</Text>
                           <Text style={styles.modelVendor}>{model.vendor}</Text>

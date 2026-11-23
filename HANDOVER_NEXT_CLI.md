@@ -1,6 +1,6 @@
 # QMSZAI Mobile：CLI 接手文档
 
-更新日期：2026-11-12。以本文和实际代码为准。本轮已由「全部本地模拟数据」改为按《APP 测试环境 API 接口文档》接真实接口；旧交接里“未接真实业务接口”的描述已失效，键盘避让与阴影方案仍以本文为准。
+更新日期：2026-11-17。以本文和实际代码为准；**需求来源与开发过程记录在 `DEV_RECORD.md`**（提示词档案、开发顺序、目录结构、设计规范、按日开发日志），本文只写接手需要的代码事实与命令。旧交接里“未接真实业务接口”的描述已失效，键盘避让与阴影方案仍以本文为准。
 
 ## 项目与授权
 
@@ -419,3 +419,45 @@ iOS 登录页右上角齿轮是 Expo Go 悬浮按钮，不是应用 UI。恢复�
 - **无障碍**：背板按钮分别给了 `accessibilityLabel`：详情弹层「关闭令牌详情」、表单「取消」。
 - **验证**：iOS 模拟器 ① 新建令牌表单点上方空白 → 关闭；② 点表单内输入框 → 正常聚焦、不关闭；③ 分组选择页点上方空白 → 回到表单，再点空白 → 关闭；④ 令牌详情点空白 → 关闭。安卓 `qmszai_pixel` 同样验证表单背板点击可关闭。`npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过，未提交、未推送。
 - 安卓验证同样通过临时注入会话完成（`src/api/client.ts` 已 `git checkout` 还原，无 diff）。
+
+## 底部弹层改为背板淡入 + 面板上滑，iOS 遮罩压轻（2026-11-16）
+
+- **问题**：iOS 上令牌详情 / 新建令牌卡片弹出时「有一块明显的灰色遮罩刷上来」，很突兀。根因不是颜色，是 `Modal animationType="slide"` 把背板（`View modalBackdrop`，整屏 `backgroundColor: palette.backdrop`）和面板一起从屏幕底部推上来，动画过程中灰色从下往上漫，观感像刷了一层灰布。
+- **做法**：新增统一容器 `SheetModal`（`<TokenModal>` 前），`animationType="none"`，内部一个 `Animated.Value progress`：
+  - 背板 `Animated.View{opacity: progress}`，里面 `sheetModalScrim`（原来的 backdrop 颜色）+ 一个 `Pressable absoluteFill`（点空白关闭，`backdropLabel` 传无障碍名）。
+  - 面板 `Animated.View` 只做 `translateY: height → 0`（`progress.interpolate`）。
+  - 打开 280ms `Easing.out(cubic)`，关闭 200ms `Easing.in(cubic)`，关闭动画播完（`finished`）再 `setMounted(false)` 卸载；因此 `TokenModal` 加了 `lastToken` 记住最后展示的令牌，面板在关闭动画期间仍有内容（`current = token ?? lastToken`，`visible={token !== null}`），末尾 `{current ? … : null}`。
+  - 原来 `modalBackdrop` 样式删除，换成 `sheetModalRoot`（flex 1 + `justifyContent: 'flex-end'`）与 `sheetModalScrim`（只保留背景色）。
+- **遮罩权重**（`src/theme.ts`，只动 iOS 两套）：`iosLight.backdrop` 0.35 → 0.10，`iosDark.backdrop` 0.62 → 0.40；安卓 `androidLight/androidDark.backdrop` 保持 0.35 / 0.62 不变。iOS 深色页面底色是 `#000000`，遮罩叠在纯黑上无论 0.62 还是 0.40 结果都接近黑，深色观感没有变化。
+- **面板自身投影**：`styles.modalSheet` 加 `shadowColor '#000'`、`shadowOpacity 0.1`、`shadowRadius 18`、`shadowOffset {0,-4}`，遮罩压轻后靠面板投影和底下页面分层（`overflow: 'hidden'` 在 iOS 上不影响本层阴影绘制，截图中面板上沿有柔和投影）。
+- **实测取样**（`#F2F2F7` 页面底色上取像素）：0.35 → `(186,…)`、0.18 → `(201,202,207)`、0.12 → `(215,215,220)`、0.10 → `(219,219,224)`，最终取 0.10。
+- **验证**：iOS 按正常速度截图确认面板停在底部、上沿投影柔和、背景只轻微压暗；点空白关闭正常（动画播完才卸载）。`npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过，未提交、未推送。
+- **踩坑记录**：调动画时长做中间帧截图时，`xcrun simctl io <udid> recordVideo` 一直报 `Host recording is already in progress`（上一次录屏进程残留），`pkill -f recordVideo` 后仍占用；截图耗时 > 动画时长也抓不到中间帧，最终只靠代码审阅 + 最终态截图确认。调试时临时把 `progress` 的 `duration` 改成 1200/1500/3000 做过观感检查，已全部改回 280（`AppShell` 里 `titleTransition` 的 280 未受影响）。
+
+## 登录失效自动回到登录页（2026-11-23）
+
+- **问题**：会话过期后点发送，弹「发送失败 / 登录状态已失效，请重新登录」，用户需要手动确认且停在原地。
+- **机制**：`src/api/client.ts` 新增 `onUnauthorized(listener)` 广播与 `isUnauthorized(error)` 判断。`rawRequest`（XHR）与 4 处 `expoFetch`（`speechToFile`、`pgPostJson`、`chatOnce`、`streamChat`）在 `status === 401` 时调用内部 `notifyUnauthorized`；只在 `session` 存在时广播，所以登录页输错密码不会误触发。
+- **订阅方**：`src/auth/AuthProvider.tsx` 里 `useEffect` 订阅 → `clearSession()`、清 `user` / `siteStatus`、`setStatus('signedOut')`，`App` 顶层直接渲染 `LoginScreen`（无弹窗、无过渡）。
+- **配套**：所有「API 失败 → `Alert`」的位置先 `if (isUnauthorized(error)) return;`，否则会在跳转前弹一个残留提示框。涉及 `ChatWorkspace`（发送）、`ModelExperienceScreen`（发送）、`FusionScreen`（融合）、`PersonalScreen`（签到 / 资料 / 密码）、`App.tsx`（令牌启停 / 保存 / 删除 / 复制密钥）。
+- **注意**：`fetchSelf` 在启动恢复阶段的 401 原本就会 `clearSession`，行为不变；新机制只补上「运行中任意接口 401」这一条路径。风控 403（额度/权限）不跳登录页。
+- **验证状态**：2026-11-23 已实机验证。临时把 `streamChat` 改成 `notifyUnauthorized(401)` + 抛 401、并临时注释 `clearSession()` 保留会话，点发送后无弹框、直接切到登录页；验证后已还原（可 `grep TEMP-401-TEST` 确认为空），App 自动恢复登录态。`npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过，未提交、未推送。
+
+## 模型图标按厂商对应（2026-11-23）
+
+- **文件**：`src/components/ModelLogo.tsx`（重写）、`src/services/liveConsole.ts`（`VENDOR_MAP`）。
+- **品牌表**：20 个 `ModelBrand`，矢量取 `@lobehub/icons-static-svg@1.106.0`（网页端同源）＋ Simple Icons：`openai` `claude` `qwen` `gemini` `deepseek` `meta` `mistral` `kimi` `xai` `doubao` `wenxin` `minimax` `zhipu` `iflytek` `hunyuan` `baichuan` `stepfun` `vidu` `suno` `longcat`。
+- **数据结构**：`brandArt[brand] = { layers: [{ d, fill }], gradients? }`。`fill` 为 `'#RRGGBB'`、`'@0'`（引用 `gradients[0]`）或 `'currentColor'`（按主题取 `#111111` / `#F5F5F7`）。渐变按原稿保留 `objectBoundingBox` / `userSpaceOnUse`。新增品牌时把 lobehub 的 path 追加进来即可。
+- **判定顺序**（`modelBrand(name, vendor?)`）：`NAME_PREFIX_RULES`（模型名前缀）→ `VENDOR_RULES`（站点厂商名，中英文都覆盖）→ `NAME_CONTAINS_RULES`（名称包含）→ 返回 `null` 渲染首字 monogram。**不要**再给未知品牌加 Gemini 兜底。
+- **为什么先看名称**：`deepseek-r1-distill-qwen-*` 的 vendor 是「阿里巴巴」，但用户预期是 DeepSeek；`speech-01-hd` 名称不含厂商，靠 vendor 得到 MiniMax 才是对的。
+- **主题**：单色品牌用 `useScheme()`（应用内主题）而非 `useColorScheme()`（系统外观），否则「应用深色 + 系统浅色」会画出黑图标。
+- **调用点**：`App.tsx`（模型目录）、`ChatWorkspace.tsx`（当前模型 / 选择器 / 历史）、`ModelMarketplaceScreen.tsx`（列表 / 详情）都传 `vendor`；`ModelExperienceScreen` / `FusionScreen` / `MediaStudioScreen` 只有模型名，靠前缀规则判定。
+- **monogram**：未知厂商（JoyAI、Jev 等）渲染彩色圆角方块 + 首字，颜色由厂商名 hash 决定。小米（`mimo-*`）已单独建品牌：橙色 squircle + 挖空「mi」（Simple Icons 的 `Xiaomi`），不要再让它落进 monogram。
+
+## 模型状态胶囊移除（2026-11-23）
+
+- **结论**：模型列表每行的「可用」原来是 `liveConsole.mapModels` 里写死的 `status: 'stable'`，后端没有逐模型状态字段——`/api/pricing` 无 status，`GET /api/model_status` 404，`/api/user/models` 只返回名字数组。**不要再把 `Model.status` 加回来。**
+- **改动**：`Model` 类型删掉 `status` 与 `ModelStatus`；`App.tsx` 删掉 `statusLabel`、列表行与详情头部的状态胶囊、`pill`/`pillText` 样式，`statusColor` 只保留 `TokenStatus` 三种；词典删 `可用`/`观察`/`限流`。
+- **顺带**：详情页 `健康检查` 行实际显示计费方式（`updatedAt`），已改名 `计费方式`（`Billing`）。
+- **占位格子已移除（2026-11-23，用户要求「去掉」）**：详情页原来的「上下文」「延迟」（后端无字段，恒显 `—`）与「成本」（按输入费率分档推算）三格已删除，`Model` 去掉 `context`/`latency`/`price`、`MarketModel` 去掉 `context`、`liveConsole` 删掉 `priceTier()`；模型目录行副标题只显示厂商。**不要再加回推算值**。
+- **真实字段清单**（模型目录/详情）：模型名 `/api/user/models`、厂商 `vendor_id`、输入与输出费率 `model_ratio`/`completion_ratio` × 分组倍率、标签 `quota_type`/`supported_endpoint_types`/`is_foreign`、路由 `enable_groups`、说明 `description`。

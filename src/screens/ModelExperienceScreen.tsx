@@ -27,7 +27,7 @@ const ios = Platform.OS === 'ios';
 
 import { GlassPillButton, Group, Sheet, Subpage, palette } from '../ui';
 import { themedStyles, isDark } from '../theme';
-import { streamChat } from '../api/client';
+import { isUnauthorized, streamChat } from '../api/client';
 import { t, tf } from '../i18n';
 
 type ChatMessage = { id: number; role: 'user' | 'assistant'; text: string; createdAt?: number };
@@ -133,6 +133,7 @@ export function ModelExperienceScreen({ onBack, models }: { onBack: () => void; 
         if (generation.current !== generationId) return;
         setBusy(false);
         if (error instanceof Error && error.name === 'AbortError') return;
+        if (isUnauthorized(error)) return;
         Alert.alert(t('发送失败'), error instanceof Error ? error.message : t('请稍后重试'));
       });
   };

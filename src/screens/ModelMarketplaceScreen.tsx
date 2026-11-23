@@ -175,7 +175,7 @@ export function ModelMarketplaceScreen({
                 style={({ pressed }) => [styles.modelRow, pressed ? styles.modelRowPressed : null]}
               >
                 <View style={styles.modelLogo}>
-                  <ModelLogo name={model.name} size={26} />
+                  <ModelLogo name={model.name} vendor={model.vendor} size={26} />
                 </View>
                 <View style={styles.modelBody}>
                 <View style={styles.modelTop}>
@@ -187,9 +187,7 @@ export function ModelMarketplaceScreen({
                     tone={model.category === 'free' ? 'success' : 'neutral'}
                   />
                 </View>
-                <Text style={styles.modelVendor}>
-                  {model.context === '—' ? model.vendor : tf('{0} · 上下文 {1}', model.vendor, model.context)}
-                </Text>
+                <Text style={styles.modelVendor}>{model.vendor}</Text>
                 <View style={styles.modelBottom}>
                   <View style={styles.tags}>
                     {model.tags.map((tag) => (
@@ -221,7 +219,7 @@ export function ModelMarketplaceScreen({
         {selected ? (
           <>
             <View style={styles.sheetHeading}>
-              <ModelLogo name={selected.name} size={34} />
+              <ModelLogo name={selected.name} vendor={selected.vendor} size={34} />
               <View style={styles.sheetTitleBlock}>
                 <Text style={styles.sheetTitle}>{selected.name}</Text>
                 <Text style={styles.sheetVendor}>{selected.vendor}</Text>

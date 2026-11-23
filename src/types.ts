@@ -1,5 +1,4 @@
 export type TabKey = 'overview' | 'chat' | 'models' | 'tokens' | 'account';
-export type ModelStatus = 'stable' | 'watch' | 'limited';
 export type TokenStatus = 'active' | 'paused' | 'expired';
 export type UsageRange = '24h' | '7d' | '30d';
 
@@ -7,10 +6,6 @@ export type Model = {
   id: string;
   name: string;
   vendor: string;
-  context: string;
-  latency: string;
-  price: string;
-  status: ModelStatus;
   tags: string[];
   note: string;
   route: string;
@@ -128,7 +123,6 @@ export type MarketModel = {
   vendor: string;
   group: string;
   category: 'chat' | 'image' | 'video' | 'audio' | 'free';
-  context: string;
   inputPrice: number;
   outputPrice: number;
   cachePrice?: number;

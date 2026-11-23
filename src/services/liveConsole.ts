@@ -28,7 +28,7 @@ const VENDOR_MAP: Array<[RegExp, string]> = [
   [/^claude/i, 'Anthropic'],
   [/^gemini|^gemma|^imagen|^veo/i, 'Google'],
   [/^deepseek/i, 'DeepSeek'],
-  [/^qwen|^qwq|^wanx|^qwen-image/i, '通义千问'],
+  [/^qwen|^qwq|^qvq|^wanx|^wand|^qwen-image|^gte/i, '通义千问'],
   [/^glm|^cogview|^cogvideo/i, '智谱'],
   [/^moonshot|^kimi/i, 'Moonshot'],
   [/^doubao|^seed/i, '豆包'],
@@ -37,9 +37,14 @@ const VENDOR_MAP: Array<[RegExp, string]> = [
   [/^grok/i, 'xAI'],
   [/^midjourney|^mj/i, 'Midjourney'],
   [/^suno|^chirp/i, 'Suno'],
-  [/^minimax|^abab|^hailuo/i, 'MiniMax'],
+  [/^minimax|^abab|^hailuo|^speech|^asr|^music-/i, 'MiniMax'],
   [/^ernie/i, '百度'],
-  [/^hunyuan/i, '腾讯'],
+  [/^hunyuan|^hy[-\d]/i, '腾讯'],
+  [/^baichuan/i, '百川'],
+  [/^longcat/i, '美团'],
+  [/^mimo/i, '小米'],
+  [/^joyai/i, '京东'],
+  [/^vidu/i, 'Vidu'],
   [/^spark/i, '讯飞'],
   [/^step/i, '阶跃星辰'],
   [/^yi-/i, '零一万物'],
@@ -79,13 +84,6 @@ function unitPrice(item: PricingItem, ratio: number, completion = false) {
   return completion ? base * (item.completion_ratio || 1) : base;
 }
 
-function priceTier(price: number) {
-  if (price <= 0) return t('免费');
-  if (price < 2) return t('低');
-  if (price < 10) return t('中');
-  return t('高');
-}
-
 export function mapModels(
   playgroundModels: string[],
   pricing: PricingPayload | null,
@@ -109,10 +107,6 @@ export function mapModels(
       id: name,
       name,
       vendor: vendorNameOf(pricing, item, name),
-      context: '—',
-      latency: '—',
-      price: priceTier(input),
-      status: 'stable',
       tags,
       note: item?.description ?? '',
       route: item?.enable_groups?.slice(0, 2).join(' / ') || group || 'default',
@@ -147,7 +141,6 @@ export function mapMarketModels(
       vendor: vendorNameOf(pricing, item, name),
       group: item?.enable_groups?.[0] ?? group ?? 'default',
       category: isVideo ? 'video' : isImage ? 'image' : isAudio ? 'audio' : 'chat',
-      context: '—',
       inputPrice: input,
       outputPrice: output,
       cachePrice: !perCall && item?.cache_ratio ? input * item.cache_ratio : undefined,

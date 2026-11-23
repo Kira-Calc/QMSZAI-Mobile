@@ -38,6 +38,30 @@ export function setSession(next: Session | null) {
   session = next;
 }
 
+// 任何接口返回 401 都说明会话已经失效：通知上层直接回到登录页，不再由各页面弹错误框。
+// 只在已有会话时通知，避免登录页输错密码（也是 401）被误判成掉线。
+type UnauthorizedListener = () => void;
+const unauthorizedListeners = new Set<UnauthorizedListener>();
+
+export function onUnauthorized(listener: UnauthorizedListener): () => void {
+  unauthorizedListeners.add(listener);
+  return () => {
+    unauthorizedListeners.delete(listener);
+  };
+}
+
+export function isUnauthorized(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
+function notifyUnauthorized(status: number, path = '') {
+  if (status !== 401 || !session) return;
+  // 登录 / 2FA 校验失败也走这条路径，但那时用户本来就在登录页，
+  // 不能把它当成掉线（否则 2FA 输错一次就要重新输账号密码）。
+  if (path.startsWith('/api/user/login')) return;
+  for (const listener of unauthorizedListeners) listener();
+}
+
 export async function restoreSession(): Promise<Session | null> {
   if (session) return session;
   if (restoring) return restoring;
@@ -140,6 +164,7 @@ export function rawRequest(path: string, options: RequestOptions = {}): Promise<
 
     xhr.onload = () => {
       const headers = xhr.getAllResponseHeaders() ?? '';
+      notifyUnauthorized(xhr.status, path);
       resolve({
         status: xhr.status,
         text: xhr.responseText ?? '',
@@ -272,6 +297,7 @@ export async function speechToFile(body: {
 
   if (!response.ok) {
     const text = await response.text().catch(() => '');
+    notifyUnauthorized(response.status);
     throw new ApiError(extractError('', response.status, text), response.status);
   }
 
@@ -335,6 +361,7 @@ export async function pgPostJson<T>(
     });
     const text = await response.text();
     if (!response.ok) {
+      notifyUnauthorized(response.status);
       throw new ApiError(extractError('', response.status, text), response.status);
     }
     const parsed = JSON.parse(text) as { data?: T; error?: { message?: string } };
@@ -372,6 +399,7 @@ export async function chatOnce(
 
   const text = await response.text().catch(() => '');
   if (!response.ok) {
+    notifyUnauthorized(response.status);
     throw new ApiError(extractError('', response.status, text), response.status);
   }
   try {
@@ -406,6 +434,7 @@ export async function streamChat(
 
   if (!response.ok) {
     const text = await response.text().catch(() => '');
+    notifyUnauthorized(response.status);
     throw new ApiError(extractError('', response.status, text), response.status);
   }
   if (!response.body) {
