@@ -4,10 +4,10 @@ import NativeMaskedView from '@react-native-masked-view/masked-view';
 import { SymbolView } from 'expo-symbols';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 import { AppIcon } from './src/components/AppIcon';
-import { cardSurface, elevation, m3, pressedSurface, ripple, shape, type as typeScale } from './src/material';
+import { elevation, m3, pressedSurface, shape, type as typeScale } from './src/material';
 import { ChatWorkspace } from './src/ChatWorkspace';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useCallback, useMemo, useRef, useState, type ComponentProps, type ComponentRef, type ComponentType, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useState, type ComponentRef, type ComponentType, type ReactElement, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -33,7 +33,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { formatQuota, formatQuotaSmart } from './src/api/format';
+import { formatInt, formatQuota, formatQuotaSmart } from './src/api/format';
 import { usageRangeOptions } from './src/data/mockConsole';
 import { ModelLogo } from './src/components/ModelLogo';
 import { UserAvatar } from './src/components/UserAvatar';
@@ -77,6 +77,7 @@ import { PersonalScreen } from './src/screens/PersonalScreen';
 import { TasksScreen } from './src/screens/TasksScreen';
 import { UsageLogsScreen } from './src/screens/UsageLogsScreen';
 import { WalletScreen } from './src/screens/WalletScreen';
+import type { FreeDailyModelUsage } from './src/api/types';
 import type {
   AccountSummary,
   Model,
@@ -301,7 +302,7 @@ function AppShell() {
       return sorted;
     }
     return sorted.filter((model) => {
-      return [model.name, model.vendor, model.route, ...model.tags]
+      return [model.name, model.vendor, model.groupLabel, ...model.tags]
         .join(' ')
         .toLowerCase()
         .includes(q);
@@ -311,12 +312,8 @@ function AppShell() {
   const activeTokens = consoleData.tokens.filter((token) => token.status === 'active').length;
   const metrics = consoleData.metricsByRange[usageRange];
   const availableModels = `${consoleData.models.length}`;
-  // 进度条表示区间消耗占「已消耗 + 账户余额」的比例。
-  const usagePercent = Math.max(
-    0,
-    Math.min(100, Math.round((metrics.totalUsage / Math.max(metrics.totalUsage + (user?.quota ?? 0), 1)) * 100)),
-  );
-  const spentLabel = formatQuotaSmart(metrics.totalUsage, quotaPerUnit);
+  const requestCount = formatInt(user?.request_count ?? 0);
+  const historyUsed = formatQuotaSmart(user?.used_quota ?? 0, quotaPerUnit);
 
   const messages = useMemo(
     () =>
@@ -612,9 +609,10 @@ function AppShell() {
               activeTokens={activeTokens}
               metrics={metrics}
               availableModels={availableModels}
-              usagePercent={usagePercent}
-              spent={spentLabel}
+              requestCount={requestCount}
+              historyUsed={historyUsed}
               balance={consoleData.account?.balance ?? '¥0.00'}
+              freeDaily={consoleData.freeDaily}
               usageRange={usageRange}
               onRangeChange={setUsageRange}
               onScroll={handleTabScroll}
@@ -661,23 +659,17 @@ function AppShell() {
         </Animated.View>
         </View>
 
-        <TokenModal
+        <TokenSheets
           token={selectedToken}
+          formVisible={tokenFormVisible}
+          formKey={`${editingToken?.id ?? 'new'}-${tokenFormSession}`}
+          initial={editingToken}
           quotaPerUnit={quotaPerUnit}
-          onClose={() => setSelectedToken(null)}
+          onCloseDetail={() => setSelectedToken(null)}
           onCopyKey={copyTokenKey}
           onEdit={openEditToken}
           onDelete={deleteToken}
-        />
-        <TokenFormModal
-          key={`${editingToken?.id ?? 'new'}-${tokenFormSession}`}
-          visible={tokenFormVisible}
-          initial={editingToken}
-          quotaPerUnit={quotaPerUnit}
-          onCancel={() => {
-            setTokenFormVisible(false);
-            setEditingToken(null);
-          }}
+          onCancelForm={() => setTokenFormVisible(false)}
           onSubmit={submitToken}
         />
         </SafeAreaView>
@@ -698,9 +690,10 @@ function Overview({
   activeTokens,
   metrics,
   availableModels,
-  usagePercent,
-  spent,
+  requestCount,
+  historyUsed,
   balance,
+  freeDaily,
   usageRange,
   onRangeChange,
   onScroll,
@@ -716,9 +709,10 @@ function Overview({
   activeTokens: number;
   metrics: OverviewMetrics;
   availableModels: string;
-  usagePercent: number;
-  spent: string;
+  requestCount: string;
+  historyUsed: string;
   balance: string;
+  freeDaily: FreeDailyModelUsage | null;
   usageRange: UsageRange;
   onRangeChange: (range: UsageRange) => void;
   onScroll: TabScrollHandler;
@@ -748,95 +742,54 @@ function Overview({
             onRangeChange(usageRangeOptions[index].key);
           }}
         />
-        <View style={styles.heroPanel}>
-          <View style={styles.heroTopRow}>
-            <View>
-              <Text style={styles.panelLabel}>{t('请求次数')}</Text>
-              <Text style={styles.heroMetric}>{metrics.requests}</Text>
-            </View>
-            <Text style={styles.mutedText}>{t('成功率')} {metrics.reliability}</Text>
-          </View>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${usagePercent}%` }]} />
-          </View>
-          <View style={styles.metricRow}>
-            <Text style={styles.mutedText}>{spent} {t('已使用')}</Text>
-            <Text style={styles.mutedText}>{balance} {t('余额')}</Text>
-          </View>
-        </View>
+        {/* 账户 / 统计 / 资源 / 性能四组与网页端「数据看板」一一对应；统计类跟随上方区间。 */}
+        <Group header={t('账户数据')}>
+          <Row title={t("当前余额")} value={balance} />
+          <Row title={t("历史消耗")} value={historyUsed} />
+          {freeDaily && freeDaily.enabled && freeDaily.limit > 0 ? (
+            <Row title={t("今日免费模型")} value={`${freeDaily.used}/${freeDaily.limit}`} />
+          ) : null}
+        </Group>
 
-        <View style={styles.gridTwo}>
-          <StatBlock label={t("可用模型")} value={availableModels} tone="blue" />
-          <StatBlock label={t("启用令牌")} value={`${activeTokens}`} tone="green" />
-          <StatBlock label={t("平均延迟")} value={metrics.averageLatency} tone="amber" />
-          <StatBlock label={t("异常队列")} value={`${metrics.issueCount}`} tone="rose" />
-        </View>
+        <Group header={t('使用统计')}>
+          <Row title={t("请求次数")} value={requestCount} />
+          <Row title={t("统计次数")} value={metrics.times} />
+        </Group>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{t('快捷访问')}</Text>
-        </View>
-        <View style={styles.actionList}>
-          <QuickAction
-            symbol="square.stack.3d.up"
-            icon="▦"
-            title={t("模型目录")}
-            onPress={onOpenModels}
-          />
-          <QuickAction
-            symbol="key"
-            icon="◇"
-            title={t("API 令牌")}
-            onPress={onOpenTokens}
-          />
-        </View>
+        <Group header={t('资源消耗')}>
+          <Row title={t("统计额度")} value={metrics.quotaLabel} />
+          <Row title={t("统计Tokens")} value={metrics.tokensLabel} />
+        </Group>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{t('AI 功能')}</Text>
-        </View>
-        <View style={styles.actionList}>
-          <QuickAction
-            symbol="sparkles"
-            icon="✦"
-            title={t("AI 创作")}
-            onPress={onOpenMedia}
-          />
-          <QuickAction
-            symbol="text.bubble"
-            icon="◇"
-            title={t("模型体验")}
-            onPress={onOpenExperience}
-          />
-          <QuickAction
-            symbol="arrow.triangle.merge"
-            icon="◈"
-            title={t("模型融合")}
-            onPress={onOpenFusion}
-          />
-          <QuickAction
-            symbol="square.grid.2x2"
-            icon="▦"
-            title={t("模型广场")}
-            onPress={onOpenPricing}
-          />
-        </View>
+        <Group header={t('性能指标')}>
+          <Row title={t("平均RPM")} value={metrics.rpm} />
+          <Row title={t("平均TPM")} value={metrics.tpm} />
+        </Group>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{t('用量与任务')}</Text>
-        </View>
-        <View style={styles.actionList}>
-          <QuickAction
-            symbol="doc.text.magnifyingglass"
-            icon="▤"
-            title={t("用量日志")}
-            onPress={onOpenLogs}
-          />
-          <QuickAction
-            symbol="square.stack.3d.up"
-            icon="◫"
-            title={t("任务")}
-            onPress={onOpenTasks}
-          />
-        </View>
+        <Group header={t('站点状态')}>
+          <Row title={t("可用模型")} value={availableModels} />
+          <Row title={t("启用令牌")} value={`${activeTokens}`} />
+          <Row title={t("平均延迟")} value={metrics.averageLatency} />
+          <Row title={t("异常队列")} value={`${metrics.issueCount}`} />
+        </Group>
+
+        {/* 与账户页保持同一套 Group / Row，行高、图标、分隔线与箭头都一致。 */}
+        <Group header={t('快捷访问')}>
+          <Row title={t("模型目录")} icon="square.stack.3d.up" chevron onPress={onOpenModels} />
+          <Row title={t("API 令牌")} icon="key" chevron onPress={onOpenTokens} />
+        </Group>
+
+        <Group header={t('AI 功能')}>
+          <Row title={t("AI 创作")} icon="sparkles" chevron onPress={onOpenMedia} />
+          <Row title={t("模型体验")} icon="text.bubble" chevron onPress={onOpenExperience} />
+          <Row title={t("模型融合")} icon="arrow.triangle.merge" chevron onPress={onOpenFusion} />
+          <Row title={t("模型广场")} icon="square.grid.2x2" chevron onPress={onOpenPricing} />
+        </Group>
+
+        <Group header={t('用量与任务')}>
+          <Row title={t("用量日志")} icon="doc.text.magnifyingglass" chevron onPress={onOpenLogs} />
+          <Row title={t("任务")} icon="checklist" chevron onPress={onOpenTasks} />
+        </Group>
         </>
       ) : (
         <>
@@ -849,27 +802,41 @@ function Overview({
             }}
           />
 
-          <View style={styles.heroCard}>
-            <View style={styles.heroCardTop}>
-              <View style={styles.heroCardMain}>
-                <Text style={styles.heroCardLabel}>{t('请求次数')}</Text>
-                <Text style={styles.heroCardValue}>{metrics.requests}</Text>
-              </View>
-              <View style={styles.heroCardAside}>
-                <Text style={styles.heroCardAsideLabel}>{t('成功率')}</Text>
-                <Text style={styles.heroCardAsideValue}>{metrics.reliability}</Text>
-              </View>
-            </View>
-            <View style={styles.heroCardTrack}>
-              <View style={[styles.heroCardFill, { width: `${usagePercent}%` }]} />
-            </View>
-            <View style={styles.heroCardMetaRow}>
-              <Text style={styles.heroCardMeta}>{spent} {t('已使用')}</Text>
-              <Text style={styles.heroCardMeta}>{balance} {t('余额')}</Text>
-            </View>
-          </View>
+          <Group header={t("账户数据")} style={styles.overviewGroup}>
+            <Row title={t("当前余额")} accessory={<Text style={styles.overviewStatValue}>{balance}</Text>} />
+            <Row title={t("历史消耗")} accessory={<Text style={styles.overviewStatValue}>{historyUsed}</Text>} />
+            {freeDaily && freeDaily.enabled && freeDaily.limit > 0 ? (
+              <Row
+                title={t("今日免费模型")}
+                accessory={
+                  <Text style={styles.overviewStatValue}>{`${freeDaily.used}/${freeDaily.limit}`}</Text>
+                }
+              />
+            ) : null}
+          </Group>
 
-          <Group style={styles.overviewGroup}>
+          <Group header={t("使用统计")} style={styles.overviewGroup}>
+            <Row title={t("请求次数")} accessory={<Text style={styles.overviewStatValue}>{requestCount}</Text>} />
+            <Row title={t("统计次数")} accessory={<Text style={styles.overviewStatValue}>{metrics.times}</Text>} />
+          </Group>
+
+          <Group header={t("资源消耗")} style={styles.overviewGroup}>
+            <Row
+              title={t("统计额度")}
+              accessory={<Text style={styles.overviewStatValue}>{metrics.quotaLabel}</Text>}
+            />
+            <Row
+              title={t("统计Tokens")}
+              accessory={<Text style={styles.overviewStatValue}>{metrics.tokensLabel}</Text>}
+            />
+          </Group>
+
+          <Group header={t("性能指标")} style={styles.overviewGroup}>
+            <Row title={t("平均RPM")} accessory={<Text style={styles.overviewStatValue}>{metrics.rpm}</Text>} />
+            <Row title={t("平均TPM")} accessory={<Text style={styles.overviewStatValue}>{metrics.tpm}</Text>} />
+          </Group>
+
+          <Group header={t("站点状态")} style={styles.overviewGroup}>
             <Row title={t("可用模型")} accessory={<Text style={styles.overviewStatValue}>{availableModels}</Text>} />
             <Row title={t("启用令牌")} accessory={<Text style={styles.overviewStatValue}>{activeTokens}</Text>} />
             <Row
@@ -1045,16 +1012,55 @@ function ModelsView({
 }
 
 function ModelDetail({ model }: { model: Model }) {
+  const [groupsOpen, setGroupsOpen] = useState(false);
+  const [copiedGroup, setCopiedGroup] = useState<string | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    };
+  }, []);
+
+  // 分组可能一个都没配，此时列表退回展示那一行折叠后的文案，保证点开有东西可复制。
+  const groups = model.groups.length > 0 ? model.groups : [model.groupLabel];
+
+  const copyGroup = async (group: string) => {
+    await Clipboard.setStringAsync(group);
+    setCopiedGroup(group);
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopiedGroup(null), 1600);
+  };
+
+  const closeGroups = () => {
+    setGroupsOpen(false);
+    setCopiedGroup(null);
+  };
+
   return (
     <View style={styles.detailPanel}>
       <View style={styles.detailHeader}>
-        <View>
+        <View style={styles.detailHeaderMain}>
           <Text style={styles.detailTitle}>{model.name}</Text>
           <Text style={styles.modelVendor}>{model.vendor}</Text>
         </View>
       </View>
       <View style={styles.billingGrid}>
-        <SettingsRow label={t("路由")} value={model.route} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={tf('分组 {0}，点按可复制', model.groupLabel)}
+          onPress={() => setGroupsOpen(true)}
+          style={({ pressed }) => [
+            styles.settingsRow,
+            pressed ? styles.settingsRowPressed : null,
+          ]}
+        >
+          <Text style={styles.settingsLabel}>{t('分组')}</Text>
+          <View style={styles.groupValueRow}>
+            <Text style={styles.groupValueText} numberOfLines={1}>{model.groupLabel}</Text>
+            <AppIcon name="doc.on.doc" size={16} color={palette.blue} />
+          </View>
+        </Pressable>
         <SettingsRow label={t("输入费率")} value={model.inputRate} />
         <SettingsRow label={t("输出费率")} value={model.outputRate} />
         <SettingsRow label={t("计费方式")} value={model.updatedAt} />
@@ -1067,6 +1073,65 @@ function ModelDetail({ model }: { model: Model }) {
           </Text>
         ))}
       </View>
+
+      <SheetModal
+        visible={groupsOpen}
+        onClose={closeGroups}
+        backdropLabel={t('关闭分组列表')}
+      >
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHandle} />
+          <View style={styles.detailHeader}>
+            <View style={styles.detailHeaderMain}>
+              <Text style={styles.detailTitle}>{t('分组')}</Text>
+              <Text style={styles.modelVendor}>{model.name}</Text>
+            </View>
+            <GlassIconButton
+              icon="xmark"
+              fallback="×"
+              label={t('关闭分组列表')}
+              onPress={closeGroups}
+              size={32}
+              tint={palette.secondaryLabel}
+            />
+          </View>
+          <ScrollView
+            style={styles.groupPickerList}
+            contentContainerStyle={styles.groupPickerListContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {groups.map((group) => {
+              const copied = copiedGroup === group;
+              return (
+                <Pressable
+                  key={group}
+                  accessibilityRole="button"
+                  accessibilityLabel={copied ? t('已复制') : tf('复制 {0}', group)}
+                  onPress={() => {
+                    void copyGroup(group);
+                  }}
+                  style={({ pressed }) => [
+                    styles.groupOption,
+                    pressed ? styles.groupOptionPressed : null,
+                  ]}
+                >
+                  <View style={styles.groupOptionMain}>
+                    <Text style={styles.groupOptionName} numberOfLines={1}>{group}</Text>
+                  </View>
+                  {copied ? (
+                    <>
+                      <Text style={styles.groupCopiedLabel}>{t('已复制')}</Text>
+                      <AppIcon name="checkmark" size={16} color={palette.blue} />
+                    </>
+                  ) : (
+                    <AppIcon name="doc.on.doc" size={16} color={palette.blue} />
+                  )}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </SheetModal>
     </View>
   );
 }
@@ -1124,11 +1189,25 @@ function TokensView({
               <Pressable
                 onPress={() => onToggle(token.id)}
                 disabled={token.status === 'expired'}
-                style={[styles.secondaryButton, token.status === 'expired' ? styles.buttonDisabled : null]}
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  // 暂停是中断服务的动作：文字用红色，按住时整块变红底白字。
+                  token.status === 'active' && pressed ? styles.secondaryButtonDangerPressed : null,
+                  token.status === 'paused' && pressed ? styles.secondaryButtonPressed : null,
+                  token.status === 'expired' ? styles.buttonDisabled : null,
+                ]}
               >
-                <Text style={styles.secondaryButtonText}>
-                  {token.status === 'active' ? t('暂停') : token.status === 'paused' ? t('启用') : t('不可用')}
-                </Text>
+                {({ pressed }) => (
+                  <Text
+                    style={[
+                      styles.secondaryButtonText,
+                      token.status === 'active' ? styles.secondaryButtonTextDanger : null,
+                      token.status === 'active' && pressed ? styles.secondaryButtonTextOnDanger : null,
+                    ]}
+                  >
+                    {token.status === 'active' ? t('暂停') : token.status === 'paused' ? t('启用') : t('不可用')}
+                  </Text>
+                )}
               </Pressable>
             </View>
           );
@@ -1245,6 +1324,10 @@ function SheetModal({
     }).start(({ finished }) => {
       if (finished) setMounted(false);
     });
+    // 兜底：动画回调万一没有触发（例如被系统打断），也要把 Modal 卸掉，
+    // 否则它会以完全透明的样子留在屏幕最上层，把点击全部吃掉。
+    const fallback = setTimeout(() => setMounted(false), 400);
+    return () => clearTimeout(fallback);
   }, [visible, mounted, progress]);
 
   if (!mounted) return null;
@@ -1280,7 +1363,7 @@ function SheetModal({
   );
 }
 
-function TokenModal({
+function TokenDetailPanel({
   token,
   quotaPerUnit,
   onClose,
@@ -1288,101 +1371,97 @@ function TokenModal({
   onEdit,
   onDelete,
 }: {
-  token: Token | null;
+  token: Token;
   quotaPerUnit: number;
   onClose: () => void;
   onCopyKey: (token: Token) => void;
   onEdit: (token: Token) => void;
   onDelete: (token: Token) => void;
 }) {
-  // 关闭动画期间面板还要显示内容，所以记住最后一次展示的令牌。
-  const [lastToken, setLastToken] = useState<Token | null>(token);
-  useEffect(() => {
-    if (token) setLastToken(token);
-  }, [token]);
-  const current = token ?? lastToken;
+  const current = token;
 
   return (
-    <SheetModal visible={token !== null} onClose={onClose} backdropLabel={t('关闭令牌详情')}>
-      {current ? (
-        <View style={styles.modalSheet}>
-          <View style={styles.modalHandle} />
-          <View style={styles.detailHeader}>
-            <View>
-              <Text style={styles.detailTitle}>{current.name}</Text>
-              <Text style={styles.modelVendor}>{current.scope}</Text>
-            </View>
-            <GlassIconButton
-              icon="xmark"
-              fallback="×"
-              label={t("关闭令牌详情")}
-              onPress={onClose}
-              size={32}
-              tint={palette.secondaryLabel}
-            />
-          </View>
-          <View style={styles.detailStats}>
-            <MiniStat label={t("用量")} value={formatQuota(current.usage, quotaPerUnit)} />
-            <MiniStat
-              label={t("限额")}
-              value={current.unlimited ? t('不限') : formatQuota(current.remainQuota ?? current.quota, quotaPerUnit)}
-            />
-            <MiniStat label={t("状态")} value={tokenStatusLabel(current.status)} />
-          </View>
-          <SettingsRow label={t("分组")} value={current.scope} />
-          <SettingsRow label={t("最后使用")} value={current.lastUsed} />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("复制密钥")}
-            onPress={() => onCopyKey(current)}
-            style={({ pressed }) => [
-              styles.settingsRow,
-              pressed ? { backgroundColor: palette.cardMuted } : null,
-            ]}
-          >
-            <Text style={styles.settingsLabel}>{t("复制密钥")}</Text>
-            <View style={styles.copyKeyValue}>
-              <Text style={styles.copyKeyMask}>sk-••••••••</Text>
-              <AppIcon name="doc.on.doc" size={18} color={palette.blue} />
-            </View>
-          </Pressable>
-
-          <View style={styles.modalActions}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => onDelete(current)}
-              style={[styles.secondaryActionButton, styles.destructiveOutline]}
-            >
-              <Text style={[styles.secondaryButtonText, styles.destructiveText]}>{t('删除')}</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => onEdit(current)}
-              style={styles.primaryActionButton}
-            >
-              <Text style={styles.primaryActionText}>{t('编辑')}</Text>
-            </Pressable>
-          </View>
+    <View style={styles.modalSheet}>
+      <View style={styles.modalHandle} />
+      <View style={styles.detailHeader}>
+        <View>
+          <Text style={styles.detailTitle}>{current.name}</Text>
+          <Text style={styles.modelVendor}>{current.scope}</Text>
         </View>
-      ) : null}
-    </SheetModal>
+        <GlassIconButton
+          icon="xmark"
+          fallback="×"
+          label={t("关闭令牌详情")}
+          onPress={onClose}
+          size={32}
+          tint={palette.secondaryLabel}
+        />
+      </View>
+      <View style={styles.detailStats}>
+        <MiniStat label={t("用量")} value={formatQuota(current.usage, quotaPerUnit)} />
+        <MiniStat
+          label={t("限额")}
+          value={current.unlimited ? t('不限') : formatQuota(current.remainQuota ?? current.quota, quotaPerUnit)}
+        />
+        <MiniStat label={t("状态")} value={tokenStatusLabel(current.status)} />
+      </View>
+      <SettingsRow label={t("分组")} value={current.scope} />
+      <SettingsRow label={t("最后使用")} value={current.lastUsed} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={t("复制密钥")}
+        onPress={() => onCopyKey(current)}
+        style={({ pressed }) => [
+          styles.settingsRow,
+          pressed ? { backgroundColor: palette.cardMuted } : null,
+        ]}
+      >
+        <Text style={styles.settingsLabel}>{t("复制密钥")}</Text>
+        <View style={styles.copyKeyValue}>
+          <Text style={styles.copyKeyMask}>sk-••••••••</Text>
+          <AppIcon name="doc.on.doc" size={18} color={palette.blue} />
+        </View>
+      </Pressable>
+
+      <View style={styles.modalActions}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => onDelete(current)}
+          style={[styles.secondaryActionButton, styles.destructiveOutline]}
+        >
+          <Text style={[styles.secondaryButtonText, styles.destructiveText]}>{t('删除')}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => onEdit(current)}
+          style={styles.primaryActionButton}
+        >
+          <Text style={styles.primaryActionText}>{t('编辑')}</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
-function TokenFormModal({
+function TokenFormPanel({
   visible,
   initial,
   quotaPerUnit,
   onCancel,
   onSubmit,
+  closeRef,
 }: {
   visible: boolean;
   initial: Token | null;
   quotaPerUnit: number;
   onCancel: () => void;
   onSubmit: (draft: NewTokenDraft) => void;
+  // 共用的 SheetModal 需要知道点空白处该收起哪一层。
+  closeRef: { current: () => void };
 }) {
   const { height: windowHeight } = useWindowDimensions();
+  // 面板在关闭动画期间仍然挂载，此时 initial 可能已被父级清空；用挂载时的值决定按钮文案。
+  const [editing] = useState(Boolean(initial));
   const [name, setName] = useState(initial?.name ?? 'Mobile client');
   // 与网页端一致：新建默认无限额度；关闭后才需要填金额。
   const [unlimited, setUnlimited] = useState(initial ? Boolean(initial.unlimited) : true);
@@ -1542,6 +1621,11 @@ function TokenFormModal({
     setModelQuery('');
   };
 
+  // 供共用 SheetModal 调用：选择页回到表单，表单直接取消。
+  useEffect(() => {
+    closeRef.current = () => (pickerMode === 'none' ? onCancel() : closePicker());
+  });
+
   const submit = () => {
     if (!canSubmit) {
       return;
@@ -1566,343 +1650,412 @@ function TokenFormModal({
   const pickerSearch = pickerMode === 'models' ? modelQuery : groupQuery;
 
   return (
-    <SheetModal
-      visible={visible}
-      // 点面板上方空白区域返回上一层：选择页回到表单，表单回到令牌列表。
-      onClose={pickerMode === 'none' ? onCancel : closePicker}
-      backdropLabel={t('取消')}
+    <View
+      style={[
+        styles.modalSheet,
+        { paddingBottom: sheetPaddingBottom },
+        pickerSheetHeight ? { height: pickerSheetHeight } : null,
+      ]}
     >
-        <View
-          style={[
-            styles.modalSheet,
-            { paddingBottom: sheetPaddingBottom },
-            pickerSheetHeight ? { height: pickerSheetHeight } : null,
-          ]}
-        >
-          <View style={styles.modalHandle} />
-          {pickerMode !== 'none' ? (
-            <>
-              <View style={styles.pickerNav}>
-                <GlassPillButton
-                  icon="chevron.left"
-                  label={t("返回")}
-                  tint={palette.blue}
-                  onPress={closePicker}
-                />
-                <Text style={styles.pickerTitle} pointerEvents="none">
-                  {pickerTitle}
-                </Text>
-                <GlassPillButton label={t("完成")} tint={palette.blue} onPress={closePicker} />
-              </View>
-              <View style={styles.groupSearch}>
-                <AppIcon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
-                <TextInput
-                  keyboardAppearance={isDark() ? 'dark' : 'light'}
-                  accessibilityLabel={pickerMode === 'models' ? t('搜索模型') : t('搜索分组')}
-                  value={pickerSearch}
-                  onChangeText={pickerMode === 'models' ? setModelQuery : setGroupQuery}
-                  placeholder={pickerMode === 'models' ? t('搜索模型') : t('搜索分组')}
-                  placeholderTextColor={palette.tertiaryLabel}
-                  autoCorrect={false}
-                  style={styles.groupSearchInput}
-                />
-                {pickerSearch ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={pickerMode === 'models' ? t('清除模型搜索') : t('清除分组搜索')}
-                    onPress={() => (pickerMode === 'models' ? setModelQuery('') : setGroupQuery(''))}
-                    hitSlop={10}
-                  >
-                    <AppIcon name="xmark" size={14} color={palette.secondaryLabel} />
-                  </Pressable>
-                ) : null}
-              </View>
-              {pickerMode === 'groups' ? (
-                <ScrollView
-                  style={[styles.groupPickerList, pickerSheetHeight ? styles.groupPickerListFlex : null]}
-                  contentContainerStyle={styles.groupPickerListContent}
-                  keyboardShouldPersistTaps="handled"
-                >
-                  {groups === null ? (
-                    <Text style={styles.groupEmpty}>{t('正在加载分组…')}</Text>
-                  ) : filteredGroups.length === 0 ? (
-                    <Text style={styles.groupEmpty}>{t('没有匹配的分组')}</Text>
-                  ) : (
-                    filteredGroups.map((option) => {
-                      const order = selectedGroups.indexOf(option.name);
-                      const selected = order >= 0;
-                      return (
-                        <Pressable
-                          key={option.name}
-                          accessibilityRole="button"
-                          accessibilityState={{ selected }}
-                          accessibilityLabel={`${option.name}${selected ? tf('，第 {0} 优先', order + 1) : ''}`}
-                          onPress={() => toggleGroup(option.name)}
-                          style={({ pressed }) => [
-                            styles.groupOption,
-                            selected ? styles.groupOptionSelected : null,
-                            pressed ? styles.groupOptionPressed : null,
-                          ]}
-                        >
-                          <View
-                            style={[
-                              styles.groupOptionOrder,
-                              selected ? styles.groupOptionOrderActive : null,
-                            ]}
-                          >
-                            {selected ? (
-                              <Text style={styles.groupOptionOrderText}>{order + 1}</Text>
-                            ) : null}
-                          </View>
-                          <View style={styles.groupOptionMain}>
-                            <Text style={styles.groupOptionName} numberOfLines={1}>
-                              {option.name}
-                            </Text>
-                            {option.desc && option.desc !== option.name ? (
-                              <Text style={styles.groupOptionDesc} numberOfLines={1}>
-                                {option.desc}
-                              </Text>
-                            ) : null}
-                          </View>
-                          <Text style={styles.groupOptionRatio}>
-                            {tf('{0}x 倍率', Number(option.ratio.toFixed(5)))}
-                          </Text>
-                        </Pressable>
-                      );
-                    })
-                  )}
-                </ScrollView>
+      <View style={styles.modalHandle} />
+      {pickerMode !== 'none' ? (
+        <>
+          <View style={styles.pickerNav}>
+            <GlassPillButton
+              icon="chevron.left"
+              label={t("返回")}
+              tint={palette.blue}
+              onPress={closePicker}
+            />
+            <Text style={styles.pickerTitle} pointerEvents="none">
+              {pickerTitle}
+            </Text>
+            <GlassPillButton label={t("完成")} tint={palette.blue} onPress={closePicker} />
+          </View>
+          <View style={styles.groupSearch}>
+            <AppIcon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
+            <TextInput
+              keyboardAppearance={isDark() ? 'dark' : 'light'}
+              accessibilityLabel={pickerMode === 'models' ? t('搜索模型') : t('搜索分组')}
+              value={pickerSearch}
+              onChangeText={pickerMode === 'models' ? setModelQuery : setGroupQuery}
+              placeholder={pickerMode === 'models' ? t('搜索模型') : t('搜索分组')}
+              placeholderTextColor={palette.tertiaryLabel}
+              autoCorrect={false}
+              style={styles.groupSearchInput}
+            />
+            {pickerSearch ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={pickerMode === 'models' ? t('清除模型搜索') : t('清除分组搜索')}
+                onPress={() => (pickerMode === 'models' ? setModelQuery('') : setGroupQuery(''))}
+                hitSlop={10}
+              >
+                <AppIcon name="xmark" size={14} color={palette.secondaryLabel} />
+              </Pressable>
+            ) : null}
+          </View>
+          {pickerMode === 'groups' ? (
+            <ScrollView
+              style={[styles.groupPickerList, pickerSheetHeight ? styles.groupPickerListFlex : null]}
+              contentContainerStyle={styles.groupPickerListContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {groups === null ? (
+                <Text style={styles.groupEmpty}>{t('正在加载分组…')}</Text>
+              ) : filteredGroups.length === 0 ? (
+                <Text style={styles.groupEmpty}>{t('没有匹配的分组')}</Text>
               ) : (
-                <FlatList
-                  data={filteredModels}
-                  keyExtractor={(item) => item}
-                  style={[styles.groupPickerList, pickerSheetHeight ? styles.groupPickerListFlex : null]}
-                  contentContainerStyle={styles.groupPickerListContent}
-                  keyboardShouldPersistTaps="handled"
-                  initialNumToRender={14}
-                  windowSize={9}
-                  ListEmptyComponent={
-                    <Text style={styles.groupEmpty}>
-                      {models === null ? t('正在加载模型…') : t('没有匹配的模型')}
-                    </Text>
-                  }
-                  renderItem={({ item }) => {
-                    const selected = modelLimits.includes(item);
-                    return (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityState={{ selected }}
-                        accessibilityLabel={`${item}${selected ? t('，已选择') : ''}`}
-                        onPress={() => toggleModelLimit(item)}
-                        style={({ pressed }) => [
-                          styles.groupOption,
-                          selected ? styles.groupOptionSelected : null,
-                          pressed ? styles.groupOptionPressed : null,
+                filteredGroups.map((option) => {
+                  const order = selectedGroups.indexOf(option.name);
+                  const selected = order >= 0;
+                  return (
+                    <Pressable
+                      key={option.name}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={`${option.name}${selected ? tf('，第 {0} 优先', order + 1) : ''}`}
+                      onPress={() => toggleGroup(option.name)}
+                      style={({ pressed }) => [
+                        styles.groupOption,
+                        selected ? styles.groupOptionSelected : null,
+                        pressed ? styles.groupOptionPressed : null,
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.groupOptionOrder,
+                          selected ? styles.groupOptionOrderActive : null,
                         ]}
                       >
-                        <View
-                          style={[
-                            styles.groupOptionOrder,
-                            selected ? styles.groupOptionOrderActive : null,
-                          ]}
-                        >
-                          {selected ? (
-                            <AppIcon name="checkmark" size={12} color={palette.onAccent} />
-                          ) : null}
-                        </View>
-                        <ModelLogo name={item} size={24} />
-                        <View style={styles.groupOptionMain}>
-                          <Text style={styles.groupOptionName} numberOfLines={1}>
-                            {item}
+                        {selected ? (
+                          <Text style={styles.groupOptionOrderText}>{order + 1}</Text>
+                        ) : null}
+                      </View>
+                      <View style={styles.groupOptionMain}>
+                        <Text style={styles.groupOptionName} numberOfLines={1}>
+                          {option.name}
+                        </Text>
+                        {option.desc && option.desc !== option.name ? (
+                          <Text style={styles.groupOptionDesc} numberOfLines={1}>
+                            {option.desc}
                           </Text>
-                        </View>
-                      </Pressable>
-                    );
-                  }}
-                />
-              )}
-            </>
-          ) : (
-            <>
-              <View style={styles.detailHeader}>
-                <View>
-                  <Text style={styles.detailTitle}>{initial ? t('编辑令牌') : t('新建令牌')}</Text>
-                  <Text style={styles.modelVendor}>
-                    {initial ? t('修改名称与限额') : t('创建后可用于调用 API')}
-                  </Text>
-                </View>
-                <GlassIconButton
-                  icon="xmark"
-                  fallback="×"
-                  label={t("关闭令牌编辑")}
-                  onPress={onCancel}
-                  size={32}
-                  tint={palette.secondaryLabel}
-                />
-              </View>
-
-              <ScrollView
-                ref={formRef}
-                style={formMaxHeight ? { maxHeight: formMaxHeight } : undefined}
-                contentContainerStyle={styles.formStack}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={formMaxHeight ? true : false}
-              >
-                <View
-                  onLayout={(event) => {
-                    fieldOffsets.current.name = event.nativeEvent.layout.y;
-                  }}
-                >
-                  <FieldInput
-                    label={t("名称")}
-                    value={name}
-                    onChangeText={setName}
-                    onFocus={() => {
-                      setFocusedField('name');
-                      scrollFieldIntoView('name');
-                    }}
-                  />
-                </View>
-
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.formLabel}>{t('分组优先选择')}</Text>
-                  {groups && groups.length === 0 ? (
-                    <TextInput
-                      keyboardAppearance={isDark() ? 'dark' : 'light'}
-                      value={freeGroup}
-                      onChangeText={setFreeGroup}
-                      placeholder={t("输入分组名，留空使用默认分组")}
-                      placeholderTextColor={palette.placeholder}
-                      autoCorrect={false}
-                      style={styles.formInput}
-                    />
-                  ) : (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={t("选择分组")}
-                      onPress={() => openPicker('groups')}
-                      style={({ pressed }) => [
-                        styles.groupField,
-                        pressed ? styles.groupFieldPressed : null,
-                      ]}
-                    >
-                      {selectedGroups.length === 0 ? (
-                        <Text style={styles.groupPlaceholder}>{t('选择分组，可多选，顺序即优先级')}</Text>
-                      ) : (
-                        <View style={styles.groupChips}>
-                          {selectedGroups.map((groupName, index) => (
-                            <View key={groupName} style={styles.groupChip}>
-                              <Text style={styles.groupChipIndex}>{index + 1}</Text>
-                              <Text style={styles.groupChipText} numberOfLines={1}>
-                                {groupName}
-                              </Text>
-                            </View>
-                          ))}
-                        </View>
-                      )}
-                      <AppIcon name="chevron.down" size={14} color={palette.placeholder} />
-                    </Pressable>
-                  )}
-                </View>
-
-                <View style={styles.switchRow}>
-                  <Text style={styles.formLabel}>{t('无限额度')}</Text>
-                  <Switch
-                    accessibilityLabel={t("无限额度")}
-                    value={unlimited}
-                    onValueChange={setUnlimited}
-                    // iOS 原生 Switch 默认 alignSelf: 'flex-start'，会贴住行顶，这里强制居中。
-                    style={styles.switchControl}
-                  />
-                </View>
-
-                {unlimited ? null : (
-                  <View
-                    onLayout={(event) => {
-                      fieldOffsets.current.amount = event.nativeEvent.layout.y;
-                    }}
-                  >
-                    <FieldInput
-                      label={t("金额（元）")}
-                      value={amount}
-                      onChangeText={setAmount}
-                      keyboardType="decimal-pad"
-                      placeholder="0.00"
-                      onFocus={() => {
-                        setFocusedField('amount');
-                        scrollFieldIntoView('amount');
-                      }}
-                    />
-                  </View>
-                )}
-
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.formLabel}>{t('模型限制列表')}</Text>
-                  {models && models.length === 0 ? (
-                    <Text style={styles.groupPlaceholder}>{t('模型列表不可用')}</Text>
-                  ) : (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={t("选择模型限制")}
-                      onPress={() => openPicker('models')}
-                      style={({ pressed }) => [
-                        styles.groupField,
-                        pressed ? styles.groupFieldPressed : null,
-                      ]}
-                    >
-                      <Text
-                        style={modelLimits.length === 0 ? styles.groupPlaceholder : styles.limitSummary}
-                        numberOfLines={1}
-                      >
-                        {modelLimits.length === 0 ? t('留空支持所有模型') : limitSummary}
+                        ) : null}
+                      </View>
+                      <Text style={styles.groupOptionRatio}>
+                        {tf('{0}x 倍率', Number(option.ratio.toFixed(5)))}
                       </Text>
-                      <AppIcon name="chevron.down" size={14} color={palette.placeholder} />
                     </Pressable>
-                  )}
-                </View>
+                  );
+                })
+              )}
+            </ScrollView>
+          ) : (
+            <FlatList
+              data={filteredModels}
+              keyExtractor={(item) => item}
+              style={[styles.groupPickerList, pickerSheetHeight ? styles.groupPickerListFlex : null]}
+              contentContainerStyle={styles.groupPickerListContent}
+              keyboardShouldPersistTaps="handled"
+              initialNumToRender={14}
+              windowSize={9}
+              ListEmptyComponent={
+                <Text style={styles.groupEmpty}>
+                  {models === null ? t('正在加载模型…') : t('没有匹配的模型')}
+                </Text>
+              }
+              renderItem={({ item }) => {
+                const selected = modelLimits.includes(item);
+                return (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`${item}${selected ? t('，已选择') : ''}`}
+                    onPress={() => toggleModelLimit(item)}
+                    style={({ pressed }) => [
+                      styles.groupOption,
+                      selected ? styles.groupOptionSelected : null,
+                      pressed ? styles.groupOptionPressed : null,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.groupOptionOrder,
+                        selected ? styles.groupOptionOrderActive : null,
+                      ]}
+                    >
+                      {selected ? (
+                        <AppIcon name="checkmark" size={12} color={palette.onAccent} />
+                      ) : null}
+                    </View>
+                    <ModelLogo name={item} size={24} />
+                    <View style={styles.groupOptionMain}>
+                      <Text style={styles.groupOptionName} numberOfLines={1}>
+                        {item}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              }}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <View style={styles.detailHeader}>
+            <View>
+              <Text style={styles.detailTitle}>{initial ? t('编辑令牌') : t('新建令牌')}</Text>
+              <Text style={styles.modelVendor}>
+                {initial ? t('修改名称与限额') : t('创建后可用于调用 API')}
+              </Text>
+            </View>
+            <GlassIconButton
+              icon="xmark"
+              fallback="×"
+              label={t("关闭令牌编辑")}
+              onPress={onCancel}
+              size={32}
+              tint={palette.secondaryLabel}
+            />
+          </View>
 
-                <View
-                  style={styles.fieldGroup}
-                  onLayout={(event) => {
-                    fieldOffsets.current.allowIps = event.nativeEvent.layout.y;
-                  }}
-                >
-                  <Text style={styles.formLabel}>{t('IP 白名单')}</Text>
-                  <TextInput
-                    keyboardAppearance={isDark() ? 'dark' : 'light'}
-                    accessibilityLabel={t("IP 白名单")}
-                    value={allowIps}
-                    onChangeText={setAllowIps}
-                    placeholder={t("允许的 IP，一行一个，留空不限制")}
-                    placeholderTextColor={palette.placeholder}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    multiline
-                    onFocus={() => {
-                      setFocusedField('allowIps');
-                      scrollFieldIntoView('allowIps');
-                    }}
-                    style={[styles.formInput, styles.formTextarea]}
-                  />
-                </View>
-              </ScrollView>
+          <ScrollView
+            ref={formRef}
+            style={formMaxHeight ? { maxHeight: formMaxHeight } : undefined}
+            contentContainerStyle={styles.formStack}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={formMaxHeight ? true : false}
+          >
+            <View
+              onLayout={(event) => {
+                fieldOffsets.current.name = event.nativeEvent.layout.y;
+              }}
+            >
+              <FieldInput
+                label={t("名称")}
+                value={name}
+                onChangeText={setName}
+                onFocus={() => {
+                  setFocusedField('name');
+                  scrollFieldIntoView('name');
+                }}
+              />
+            </View>
 
-              <View style={styles.modalActions}>
-                <Pressable accessibilityRole="button" onPress={onCancel} style={styles.secondaryActionButton}>
-                  <Text style={styles.secondaryButtonText}>{t('取消')}</Text>
-                </Pressable>
+            <View style={styles.fieldGroup}>
+              <Text style={styles.formLabel}>{t('分组优先选择')}</Text>
+              {groups && groups.length === 0 ? (
+                <TextInput
+                  keyboardAppearance={isDark() ? 'dark' : 'light'}
+                  value={freeGroup}
+                  onChangeText={setFreeGroup}
+                  placeholder={t("输入分组名，留空使用默认分组")}
+                  placeholderTextColor={palette.placeholder}
+                  autoCorrect={false}
+                  style={styles.formInput}
+                />
+              ) : (
                 <Pressable
                   accessibilityRole="button"
-                  disabled={!canSubmit}
-                  onPress={submit}
-                  style={[styles.primaryActionButton, !canSubmit ? styles.buttonDisabled : null]}
+                  accessibilityLabel={t("选择分组")}
+                  onPress={() => openPicker('groups')}
+                  style={({ pressed }) => [
+                    styles.groupField,
+                    pressed ? styles.groupFieldPressed : null,
+                  ]}
                 >
-                  <Text style={styles.primaryActionText}>{initial ? t('保存') : t('创建')}</Text>
+                  {selectedGroups.length === 0 ? (
+                    <Text style={styles.groupPlaceholder}>{t('选择分组，可多选，顺序即优先级')}</Text>
+                  ) : (
+                    <View style={styles.groupChips}>
+                      {selectedGroups.map((groupName, index) => (
+                        <View key={groupName} style={styles.groupChip}>
+                          <Text style={styles.groupChipIndex}>{index + 1}</Text>
+                          <Text style={styles.groupChipText} numberOfLines={1}>
+                            {groupName}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                  <AppIcon name="chevron.down" size={14} color={palette.placeholder} />
                 </Pressable>
+              )}
+            </View>
+
+            <View style={styles.switchRow}>
+              <Text style={styles.formLabel}>{t('无限额度')}</Text>
+              <Switch
+                accessibilityLabel={t("无限额度")}
+                value={unlimited}
+                onValueChange={setUnlimited}
+                // iOS 原生 Switch 默认 alignSelf: 'flex-start'，会贴住行顶，这里强制居中。
+                style={styles.switchControl}
+              />
+            </View>
+
+            {unlimited ? null : (
+              <View
+                onLayout={(event) => {
+                  fieldOffsets.current.amount = event.nativeEvent.layout.y;
+                }}
+              >
+                <FieldInput
+                  label={t("金额（元）")}
+                  value={amount}
+                  onChangeText={setAmount}
+                  keyboardType="decimal-pad"
+                  placeholder="0.00"
+                  onFocus={() => {
+                    setFocusedField('amount');
+                    scrollFieldIntoView('amount');
+                  }}
+                />
               </View>
-            </>
-          )}
-        </View>
+            )}
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.formLabel}>{t('模型限制列表')}</Text>
+              {models && models.length === 0 ? (
+                <Text style={styles.groupPlaceholder}>{t('模型列表不可用')}</Text>
+              ) : (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t("选择模型限制")}
+                  onPress={() => openPicker('models')}
+                  style={({ pressed }) => [
+                    styles.groupField,
+                    pressed ? styles.groupFieldPressed : null,
+                  ]}
+                >
+                  <Text
+                    style={modelLimits.length === 0 ? styles.groupPlaceholder : styles.limitSummary}
+                    numberOfLines={1}
+                  >
+                    {modelLimits.length === 0 ? t('留空支持所有模型') : limitSummary}
+                  </Text>
+                  <AppIcon name="chevron.down" size={14} color={palette.placeholder} />
+                </Pressable>
+              )}
+            </View>
+
+            <View
+              style={styles.fieldGroup}
+              onLayout={(event) => {
+                fieldOffsets.current.allowIps = event.nativeEvent.layout.y;
+              }}
+            >
+              <Text style={styles.formLabel}>{t('IP 白名单')}</Text>
+              <TextInput
+                keyboardAppearance={isDark() ? 'dark' : 'light'}
+                accessibilityLabel={t("IP 白名单")}
+                value={allowIps}
+                onChangeText={setAllowIps}
+                placeholder={t("允许的 IP，一行一个，留空不限制")}
+                placeholderTextColor={palette.placeholder}
+                autoCapitalize="none"
+                autoCorrect={false}
+                multiline
+                onFocus={() => {
+                  setFocusedField('allowIps');
+                  scrollFieldIntoView('allowIps');
+                }}
+                style={[styles.formInput, styles.formTextarea]}
+              />
+            </View>
+          </ScrollView>
+
+          <View style={styles.modalActions}>
+            <Pressable accessibilityRole="button" onPress={onCancel} style={styles.secondaryActionButton}>
+              <Text style={styles.secondaryButtonText}>{t('取消')}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              disabled={!canSubmit}
+              onPress={submit}
+              style={[styles.primaryActionButton, !canSubmit ? styles.buttonDisabled : null]}
+            >
+              <Text style={styles.primaryActionText}>{editing ? t('保存') : t('创建')}</Text>
+            </Pressable>
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
+
+// 令牌详情与新建 / 编辑表单共用同一个 Modal。
+// iOS 上如果同时「关闭一个 Modal、又打开另一个 Modal」，正在关闭的那个会卡在
+// 关闭动画里，之后所有 Modal 都弹不出来（点令牌卡片、点新建按钮都没反应，
+// 表现就是“卡死”）。所以这里始终只保留一个 Modal，内部切换详情 / 表单两页。
+function TokenSheets({
+  token,
+  formVisible,
+  formKey,
+  initial,
+  quotaPerUnit,
+  onCloseDetail,
+  onCopyKey,
+  onEdit,
+  onDelete,
+  onCancelForm,
+  onSubmit,
+}: {
+  token: Token | null;
+  formVisible: boolean;
+  formKey: string;
+  initial: Token | null;
+  quotaPerUnit: number;
+  onCloseDetail: () => void;
+  onCopyKey: (token: Token) => void;
+  onEdit: (token: Token) => void;
+  onDelete: (token: Token) => void;
+  onCancelForm: () => void;
+  onSubmit: (draft: NewTokenDraft) => void;
+}) {
+  // 关闭动画期间面板还要显示内容，所以记住最后一次展示的令牌和最后显示的是哪一页。
+  const [lastToken, setLastToken] = useState<Token | null>(token);
+  const [mode, setMode] = useState<'detail' | 'form'>(formVisible ? 'form' : 'detail');
+  const closeHandler = useRef<() => void>(onCancelForm);
+
+  useEffect(() => {
+    if (token) setLastToken(token);
+  }, [token]);
+
+  useEffect(() => {
+    if (formVisible) setMode('form');
+    else if (token) setMode('detail');
+  }, [formVisible, token]);
+
+  const current = token ?? lastToken;
+
+  return (
+    <SheetModal
+      visible={formVisible || token !== null}
+      // 点面板上方空白区域返回上一层：表单回到令牌列表，详情直接关闭。
+      onClose={() => (mode === 'form' ? closeHandler.current() : onCloseDetail())}
+      backdropLabel={mode === 'form' ? t('取消') : t('关闭令牌详情')}
+    >
+      {mode === 'form' ? (
+        <TokenFormPanel
+          key={formKey}
+          visible={formVisible}
+          initial={initial}
+          quotaPerUnit={quotaPerUnit}
+          onCancel={onCancelForm}
+          onSubmit={onSubmit}
+          closeRef={closeHandler}
+        />
+      ) : current ? (
+        <TokenDetailPanel
+          token={current}
+          quotaPerUnit={quotaPerUnit}
+          onClose={onCloseDetail}
+          onCopyKey={onCopyKey}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
+      ) : null}
     </SheetModal>
   );
 }
@@ -1938,41 +2091,6 @@ function FieldInput({
         style={styles.formInput}
       />
     </View>
-  );
-}
-
-function StatBlock({ label, value, tone }: { label: string; value: string; tone: 'blue' | 'green' | 'amber' | 'rose' }) {
-  return (
-    <View style={[styles.statBlock, styles[`statBlock_${tone}`]]}>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text style={styles.statValue}>{value}</Text>
-    </View>
-  );
-}
-
-function QuickAction({
-  icon,
-  symbol,
-  title,
-  onPress,
-}: {
-  icon: string;
-  symbol: ComponentProps<typeof SymbolView>['name'];
-  title: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable onPress={onPress} android_ripple={ripple()} style={styles.quickAction}>
-      {Platform.OS === 'ios' ? (
-        <SymbolView name={symbol} tintColor={palette.blue} style={styles.quickSymbol} />
-      ) : (
-        <AppIcon name={symbol} size={24} color={palette.blue} style={{ marginRight: 12 }} />
-      )}
-      <View style={styles.quickBody}>
-        <Text style={styles.quickTitle}>{title}</Text>
-      </View>
-      <Text style={styles.chevron}>›</Text>
-    </Pressable>
   );
 }
 
@@ -2127,50 +2245,6 @@ function makeBaseStyles() {
     ...typeScale.labelLarge,
     fontWeight: '600',
   },
-  heroPanel: {
-    borderRadius: shape.xl,
-    padding: 20,
-    backgroundColor: palette.heroBackground,
-    ...elevation.level2,
-  },
-  heroTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  panelLabel: {
-    color: palette.heroLabel,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  heroMetric: {
-    color: palette.heroValue,
-    fontSize: 44,
-    fontWeight: '600',
-    letterSpacing: -1,
-    marginTop: 2,
-  },
-  scoreRing: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    borderWidth: 6,
-    borderColor: palette.heroAccent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  progressTrack: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: palette.heroTrack,
-    overflow: 'hidden',
-    marginTop: 18,
-  },
-  progressFill: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: palette.heroAccent,
-  },
   metricRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2181,30 +2255,6 @@ function makeBaseStyles() {
     color: palette.subtleLabel,
     fontSize: 12,
     fontWeight: '600',
-  },
-  gridTwo: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  statBlock: {
-    width: '48.2%',
-    minHeight: 104,
-    borderRadius: shape.lg,
-    padding: 16,
-    justifyContent: 'space-between',
-  },
-  statBlock_blue: {
-    backgroundColor: palette.tintBlue,
-  },
-  statBlock_green: {
-    backgroundColor: palette.tintGreen,
-  },
-  statBlock_amber: {
-    backgroundColor: palette.tintAmber,
-  },
-  statBlock_rose: {
-    backgroundColor: palette.tintRose,
   },
   statLabel: {
     color: m3.onSurfaceVariant,
@@ -2217,80 +2267,6 @@ function makeBaseStyles() {
     fontWeight: '600',
     letterSpacing: -0.5,
   },
-  sectionHeader: {
-    marginTop: 2,
-  },
-  sectionTitle: {
-    color: m3.onSurface,
-    fontSize: 20,
-    fontWeight: '600',
-    letterSpacing: -0.2,
-  },
-  // 安卓概览：单张白色数据卡 + 分组列表，信息层级与 iOS 版一致。
-  heroCard: {
-    backgroundColor: m3.surfaceContainerLowest,
-    padding: 20,
-    gap: 16,
-    ...cardSurface,
-  },
-  heroCardTop: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 16,
-  },
-  heroCardMain: {
-    flex: 1,
-    gap: 2,
-  },
-  heroCardLabel: {
-    color: m3.onSurfaceVariant,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  heroCardValue: {
-    color: m3.onSurface,
-    fontSize: 40,
-    fontWeight: '600',
-    letterSpacing: -1,
-    fontVariant: ['tabular-nums'],
-  },
-  heroCardAside: {
-    alignItems: 'flex-end',
-    gap: 2,
-    paddingTop: 2,
-  },
-  heroCardAsideLabel: {
-    color: m3.onSurfaceVariant,
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  heroCardAsideValue: {
-    color: m3.onSurface,
-    fontSize: 16,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-  },
-  heroCardTrack: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: m3.surfaceContainerHighest,
-    overflow: 'hidden',
-  },
-  heroCardFill: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: m3.primary,
-  },
-  heroCardMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  heroCardMeta: {
-    color: m3.onSurfaceVariant,
-    fontSize: 12,
-  },
   overviewGroup: {
     marginTop: 0,
   },
@@ -2299,35 +2275,6 @@ function makeBaseStyles() {
     fontSize: 16,
     fontWeight: '500',
     fontVariant: ['tabular-nums'],
-  },
-  actionList: {
-    gap: 10,
-  },
-  quickAction: {
-    minHeight: 64,
-    borderRadius: shape.xl,
-    backgroundColor: m3.surfaceContainerLowest,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    ...elevation.level1,
-  },
-  quickSymbol: {
-    width: 34,
-    height: 26,
-  },
-  quickBody: {
-    flex: 1,
-  },
-  quickTitle: {
-    color: m3.onSurface,
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  chevron: {
-    color: m3.outline,
-    fontSize: 32,
-    fontWeight: '300',
   },
   splitContent: {
     flex: 1,
@@ -2443,6 +2390,24 @@ function makeBaseStyles() {
     overflow: 'hidden',
     marginTop: 14,
   },
+  detailHeaderMain: { flex: 1 },
+  settingsRowPressed: { backgroundColor: palette.cardMuted },
+  // 值后面还要跟一个复制图标：外层撑满剩余宽度并右对齐，里面的文字才不会被图标挤出卡片。
+  groupValueRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  groupValueText: {
+    flexShrink: 1,
+    color: palette.strongLabel,
+    fontSize: 14,
+    fontWeight: '800',
+    textAlign: 'right',
+  },
+  groupCopiedLabel: { color: palette.blue, fontSize: 13, fontWeight: '600' },
   miniStat: {
     flex: 1,
     minHeight: 70,
@@ -2549,6 +2514,14 @@ function makeBaseStyles() {
     fontSize: 14,
     fontWeight: '600',
   },
+  // 暂停 = 中断服务的动作：红色文字，按住时红底白字。
+  secondaryButtonTextDanger: { color: palette.destructive },
+  secondaryButtonTextOnDanger: { color: palette.onAccent },
+  secondaryButtonDangerPressed: {
+    backgroundColor: palette.destructiveFill,
+    borderColor: palette.destructiveFill,
+  },
+  secondaryButtonPressed: { backgroundColor: palette.pressedFill },
   accountHeader: {
     borderRadius: shape.xl,
     backgroundColor: m3.surfaceContainerLowest,
@@ -2883,22 +2856,8 @@ function makeIosStyles() {
   return StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: palette.groupedBackground },
   title: { color: palette.label, fontSize: 34, fontWeight: '700', letterSpacing: 0.3 },
-  heroPanel: { backgroundColor: palette.card, borderRadius: 12, borderCurve: 'continuous', padding: 16 },
-  panelLabel: { color: palette.deepLabel, fontSize: 15 },
-  heroMetric: { color: palette.label, fontSize: 34, fontWeight: '600', marginTop: 4 },
   heroCopy: { color: palette.subtleLabel, fontSize: 13, lineHeight: 19, marginTop: 8 },
-  progressTrack: { height: 4, borderRadius: 2, backgroundColor: palette.fill, overflow: 'hidden', marginTop: 16 },
-  progressFill: { height: 4, backgroundColor: palette.blue },
-  gridTwo: { backgroundColor: palette.card, borderRadius: 12, borderCurve: 'continuous', overflow: 'hidden' },
-  statBlock: { minHeight: 48, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.separator },
-  statBlock_blue: {}, statBlock_green: {}, statBlock_amber: {}, statBlock_rose: {},
   statLabel: { color: palette.label, fontSize: 17 },
-  statValue: { color: palette.subtleLabel, fontSize: 17, fontWeight: '400' },
-  sectionTitle: { color: palette.secondaryLabel, fontSize: 13, fontWeight: '400', marginLeft: 0, marginTop: 8 },
-  actionList: { backgroundColor: palette.card, borderRadius: 12, borderCurve: 'continuous', overflow: 'hidden' },
-  quickAction: { minHeight: 52, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.separatorSoft },
-  quickTitle: { color: palette.label, fontSize: 17, fontWeight: '400' },
-  quickIcon: { width: 34, fontSize: 23, color: palette.blue },
   searchInput: { minHeight: 40, borderRadius: 10, backgroundColor: palette.fill, paddingHorizontal: 12, color: palette.label, fontSize: 17 },
   modelName: { color: palette.label, fontSize: 17, fontWeight: '600', marginBottom: 4 },
   modelRowSelected: { borderColor: palette.blue, backgroundColor: palette.card },
@@ -2965,6 +2924,7 @@ function makeIosStyles() {
   },
   settingsLabel: { fontSize: 17, color: palette.label, fontWeight: '400' },
   settingsValue: { flex: 1, fontSize: 17, color: palette.subtleLabel, textAlign: 'right' },
+  groupValueText: { color: palette.subtleLabel, fontSize: 17, fontWeight: '400' },
   accountHeader: {
     borderRadius: 12,
     borderCurve: 'continuous',
@@ -3031,7 +2991,7 @@ function makeIosStyles() {
     borderRadius: 10,
     borderCurve: 'continuous',
     borderWidth: 0,
-    backgroundColor: palette.fillMuted,
+    backgroundColor: palette.controlFill,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 14,
@@ -3066,7 +3026,6 @@ function makeIosStyles() {
     paddingHorizontal: 10,
   },
   modelVendor: { color: palette.subtleLabel, fontSize: 13, fontWeight: '600', lineHeight: 18 },
-  chevron: { color: palette.subtleLabel, fontSize: 32, fontWeight: '300' },
   tag: {
     borderRadius: 14,
     backgroundColor: palette.fill,

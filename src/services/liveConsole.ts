@@ -7,7 +7,7 @@ import type {
   TaskItem,
   UsageLogItem,
 } from '../api/types';
-import { formatCompact, formatCurrency, formatDuration, formatQuota, formatRelative, formatUnixTime, quotaToCurrency } from '../api/format';
+import { formatCurrency, formatDuration, formatInt, formatQuota, formatQuotaSmart, formatRelative, formatUnixTime, quotaToCurrency } from '../api/format';
 import type {
   AccountSummary,
   MarketModel,
@@ -78,6 +78,17 @@ function groupRatioOf(pricing: PricingPayload | null, group?: string) {
   return typeof first === 'number' ? first : 1;
 }
 
+// 模型「可用分组」（网页端 enable_groups）：没有配置时回落到用户自己的分组。
+function groupListOf(groups: string[] | undefined, userGroup?: string) {
+  return groups?.length ? groups : [userGroup || 'default'];
+}
+
+// 详情页那一行：一两个直接列出，更多折叠成「首个 等 N 个」，避免撑成多行。
+function groupLabelOf(list: string[]) {
+  if (list.length > 2) return tf('{0} 等 {1} 个', list[0], list.length);
+  return list.join(' / ');
+}
+
 // 新 API 计费：1M tokens 价格 = model_ratio × 2 × 分组倍率（货币单位）。
 function unitPrice(item: PricingItem, ratio: number, completion = false) {
   const base = item.model_ratio * 2 * ratio;
@@ -109,7 +120,9 @@ export function mapModels(
       vendor: vendorNameOf(pricing, item, name),
       tags,
       note: item?.description ?? '',
-      route: item?.enable_groups?.slice(0, 2).join(' / ') || group || 'default',
+      // 网页端这一列叫「可用分组」，取 enable_groups；点开详情那一行还能逐个复制。
+      groups: groupListOf(item?.enable_groups, group),
+      groupLabel: groupLabelOf(groupListOf(item?.enable_groups, group)),
       inputRate: item ? `${formatCurrency(input, 2)} ${perCall ? t('/ 次') : '/ 1M'}` : '—',
       outputRate: item && !perCall ? `${formatCurrency(output, 2)} / 1M` : '—',
       updatedAt: perCall ? t('按次计费') : t('按 token 计费'),
@@ -304,11 +317,10 @@ export function pointsFromLogs(items: UsageLogItem[]): DataSelfPoint[] {
 
 export function buildMetrics(input: {
   points: DataSelfPoint[];
-  modelCount: number;
   quotaPerUnit: number;
   range: UsageRange;
 }): OverviewMetrics {
-  const { points, modelCount, range } = input;
+  const { points, range } = input;
   const windowDays = range === '24h' ? 1 : range === '7d' ? 7 : 30;
   const cutoff = new Date();
   cutoff.setHours(0, 0, 0, 0);
@@ -325,15 +337,16 @@ export function buildMetrics(input: {
   const quota = source.reduce((sum, point) => sum + quotaOf(point), 0);
   const tokens = source.reduce((sum, point) => sum + tokenUsedOf(point), 0);
 
+  // 与网页端看板一致：平均 RPM / TPM = 区间总量 ÷ 区间分钟数。
+  const minutes = windowDays * 24 * 60;
   return {
-    requests: formatCompact(requests),
-    reliability: requests > 0 ? '100%' : '—',
-    availableModels: String(modelCount),
+    times: formatInt(requests),
+    quotaLabel: formatQuotaSmart(quota, input.quotaPerUnit),
+    tokensLabel: formatInt(tokens),
+    rpm: (requests / minutes).toFixed(3),
+    tpm: (tokens / minutes).toFixed(3),
     averageLatency: '—',
     issueCount: 0,
-    totalUsage: quota,
-    totalQuota: Math.max(quota, 1),
-    summary: `${formatQuota(quota, input.quotaPerUnit)} · ${formatCompact(tokens)} tokens`,
   };
 }
 

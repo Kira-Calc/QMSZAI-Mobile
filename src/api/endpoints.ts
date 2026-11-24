@@ -15,14 +15,19 @@ import type {
   ChatMessage,
   CheckinStatus,
   DataSelfPoint,
+  FreeDailyModelUsage,
   LogStat,
   LoginResult,
   Paged,
+  PaymentOrder,
+  PaymentState,
   PricingPayload,
   PublicStatus,
   SelfUser,
   SiteStatus,
   TaskPage,
+  TopUpInfo,
+  TopUpOrder,
   UsageLogPage,
 } from './types';
 import { t } from '../i18n';
@@ -308,6 +313,68 @@ export function fetchAffCode() {
   return apiRequest<string>('/api/user/aff', { auth: true });
 }
 
+// ---------- 充值 ----------
+
+export function fetchTopUpInfo() {
+  return apiRequest<TopUpInfo>('/api/user/topup/info', { auth: true });
+}
+
+// 支付宝 / 微信都是「下单拿二维码内容」，再轮询订单状态。
+export function createAlipayOrder(amount: number) {
+  return apiRequest<PaymentOrder>('/api/user/alipay/pay', {
+    auth: true,
+    method: 'POST',
+    body: { amount },
+  });
+}
+
+export function createWechatOrder(amount: number) {
+  return apiRequest<PaymentOrder>('/api/user/wechat/pay', {
+    auth: true,
+    method: 'POST',
+    body: { amount },
+  });
+}
+
+export function fetchAlipayOrderState(tradeNo: string) {
+  return apiRequest<PaymentState>(
+    `/api/user/alipay/status?trade_no=${encodeURIComponent(tradeNo)}`,
+    { auth: true },
+  );
+}
+
+export function fetchWechatOrderState(tradeNo: string) {
+  return apiRequest<PaymentState>(
+    `/api/user/wechat/status?trade_no=${encodeURIComponent(tradeNo)}`,
+    { auth: true },
+  );
+}
+
+// 兑换码：返回本次兑换到的额度（quota）。
+export function redeemTopUpCode(key: string) {
+  return apiRequest<number>('/api/user/topup', {
+    auth: true,
+    method: 'POST',
+    body: { key },
+  });
+}
+
+export function fetchTopUpOrders(page = 1, pageSize = 5) {
+  return apiRequest<Paged<TopUpOrder>>(
+    `/api/user/topup/self?page=${page}&page_size=${pageSize}`,
+    { auth: true },
+  );
+}
+
+// 邀请奖励划转到余额；quota 是原生额度单位，传全额即「全部划转」。
+export function transferAffQuota(quota: number) {
+  return apiRequest<string>('/api/user/aff_transfer', {
+    auth: true,
+    method: 'POST',
+    body: { quota },
+  });
+}
+
 // ---------- 会话历史 ----------
 
 export function fetchConversations(limit = 20, offset = 0) {
@@ -375,8 +442,40 @@ export function fetchTasks(page = 1, pageSize = 20) {
   return apiRequest<TaskPage>(`/api/task/self?p=${page}&page_size=${pageSize}`, { auth: true });
 }
 
-export function fetchDataSelf() {
-  return apiRequest<{ data?: DataSelfPoint[] } | DataSelfPoint[]>('/api/data/self', { auth: true });
+// 必须带 start_timestamp / end_timestamp，否则服务端返回空数组（网页端看板也是这么传的）。
+export function fetchDataSelf(params: { start?: number; end?: number; granularity?: 'day' | 'hour' } = {}) {
+  const query = new URLSearchParams();
+  if (params.start) query.set('start_timestamp', String(params.start));
+  if (params.end) query.set('end_timestamp', String(params.end));
+  if (params.granularity) query.set('default_time', params.granularity);
+  const suffix = query.toString();
+  return apiRequest<{ data?: DataSelfPoint[] } | DataSelfPoint[]>(
+    `/api/data/self${suffix ? `?${suffix}` : ''}`,
+    { auth: true },
+  );
+}
+
+// 每日免费模型额度：enabled / limit / used / remaining 都在响应顶层，没有 data 包裹。
+export async function fetchFreeDailyModelUsage(): Promise<FreeDailyModelUsage> {
+  const response = await rawRequest('/api/user/free_daily_model/remaining', { auth: true });
+  let parsed:
+    | ({ success?: boolean; message?: string; data?: FreeDailyModelUsage | null } & Partial<FreeDailyModelUsage>)
+    | null = null;
+  try {
+    parsed = response.text ? JSON.parse(response.text) : null;
+  } catch {
+    parsed = null;
+  }
+  if (!parsed) throw new Error(t('数据加载失败，请稍后重试'));
+  if (parsed.success === false) throw new Error(localizeMessage(parsed.message || t('数据加载失败，请稍后重试')));
+  // 功能未配置时返回 { success: true, data: null }。
+  const source = parsed.data ?? parsed;
+  return {
+    enabled: Boolean(source.enabled),
+    limit: Number(source.limit ?? 0),
+    used: Number(source.used ?? 0),
+    remaining: Number(source.remaining ?? 0),
+  };
 }
 
 // ---------- API 令牌 ----------

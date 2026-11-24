@@ -23,6 +23,12 @@ export function formatQuotaSmart(quota: number, quotaPerUnit = DEFAULT_QUOTA_PER
   return formatCurrency(value, value > 0 && value < 0.01 ? 4 : 2);
 }
 
+// 千分位整数，与网页端看板一致（2573 → 2,573）。
+export function formatInt(value: number) {
+  if (!Number.isFinite(value)) return '0';
+  return String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
 export function formatCompact(value: number) {
   if (!Number.isFinite(value)) return '0';
   if (isEnglish()) {

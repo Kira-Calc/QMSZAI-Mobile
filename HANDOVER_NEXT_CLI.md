@@ -2,6 +2,17 @@
 
 更新日期：2026-11-17。以本文和实际代码为准；**需求来源与开发过程记录在 `DEV_RECORD.md`**（提示词档案、开发顺序、目录结构、设计规范、按日开发日志），本文只写接手需要的代码事实与命令。旧交接里“未接真实业务接口”的描述已失效，键盘避让与阴影方案仍以本文为准。
 
+> ## ⚠️ 硬性约定：iOS / 安卓的登录态都不要动（2026-11-24，用户明确要求）
+>
+> 用户原话：**「以后不要帮我自动退出登录」**、**「不管是 iOS 还是安卓，都不要动」**。起因是为了把改好的代码送进 App 重载了 iOS 的 Expo Go，`SecureStore` 没读回会话、服务端 session 也已失效，直接掉到登录页；账号 `kira` 的密码只有用户知道，只能请用户手动登录。
+>
+> 因此以后在本项目里，**两个平台一样对待**：
+> - **不要** `xcrun simctl terminate` / `launch` Expo Go（iOS），**不要** `adb shell am force-stop` / 重启 Expo Go 或重装 App（安卓），**不要**重载 App、不要随手 `simctl openurl exp://…` 触发重新加载。
+> - 改代码后先等 Fast Refresh 自动生效（改完停几秒再操作界面）；Fast Refresh 没生效时先问用户「可以重载吗」，不要自行重载。
+> - 不要为了看数据去改 `src/api/client.ts` 的 `restoreSession()` / `clearSession()`，也不要调 `/api/user/logout`，任何可能让服务端 session 失效的操作都要先确认登录态可恢复。
+> - 需要重启模拟器 / 模拟器被关掉时，先告诉用户会掉登录，等用户同意再动；安卓重启后如果必须 `adb reverse tcp:8091 tcp:8091`，也先确认这是不是会触发 Expo Go 重新加载。
+> - 万一掉登录：如实告诉用户，请用户手动输入账号密码，**不要**尝试伪造登录、也不要从浏览器 jar 里取 session 顶上（旧 session 很可能已经 401）。
+
 ## 项目与授权
 
 - **补齐（2026-11-11 iOS 修复，最重要）**：iOS 之前登录后必然 401（界面停在登录页并提示「登录状态已失效，请重新登录」）。根因：iOS 的 NSURLSession 会接管 `Cookie` 请求头，手工 `setRequestHeader('Cookie', …)` 在真实域名的 HTTPS 请求上被原生 Cookie jar 覆盖/丢弃，服务端收不到会话。现在 `src/api/client.ts` 的 `authHeaders()` 在 iOS 只下发 `New-Api-User`，`session` Cookie 交给原生 jar（登录响应的 Set-Cookie 自动入 jar，重启仍有效）；安卓保持手工 Cookie。**不要再在 iOS 上手工设置 Cookie 头**。验证方式：Metro 日志里 `POST /api/user/login` 200 之后 `GET /api/user/self` 必须是 200。
@@ -461,3 +472,99 @@ iOS 登录页右上角齿轮是 Expo Go 悬浮按钮，不是应用 UI。恢复�
 - **顺带**：详情页 `健康检查` 行实际显示计费方式（`updatedAt`），已改名 `计费方式`（`Billing`）。
 - **占位格子已移除（2026-11-23，用户要求「去掉」）**：详情页原来的「上下文」「延迟」（后端无字段，恒显 `—`）与「成本」（按输入费率分档推算）三格已删除，`Model` 去掉 `context`/`latency`/`price`、`MarketModel` 去掉 `context`、`liveConsole` 删掉 `priceTier()`；模型目录行副标题只显示厂商。**不要再加回推算值**。
 - **真实字段清单**（模型目录/详情）：模型名 `/api/user/models`、厂商 `vendor_id`、输入与输出费率 `model_ratio`/`completion_ratio` × 分组倍率、标签 `quota_type`/`supported_endpoint_types`/`is_foreign`、路由 `enable_groups`、说明 `description`。
+
+## 聊天页模型选择器「推荐模型」（2026-11-24）
+
+- **文件**：`src/recommendedModels.ts`（新增）、`src/ChatWorkspace.tsx`（iOS `ChatPopover` 与安卓 `Modal` sheet 两处列表头部）、`src/i18n.en.ts`。
+- **数据**：`recommendedModelPicks` 是固定 6 条 `{ id, tag }`（`kimi-k3_官方` 综合最强 / `qwen3.8-max` 中文旗舰 / `kimi-k2.7-code` 编程最强 / `deepseek-v4-pro-0813` 深度推理 / `glm-5.3-flash` 性价比最高 / `mimo-v2.6-pro-ultraspeed` 响应最快）。DeepSeek 选正式版 `deepseek-v4-pro-0813`，不要换成 `deepseek-v4-pro_官方`（cursor 专用别名）。
+- **gpt-* 目前全线不可用（站点侧）**：2026-11-24 实测 `/pg/chat/completions` 对 `gpt-6-astra`、`gpt-6-sol`、`gpt-5.6-sol`、`gpt-5.5` 等全部返回 404 `Invalid URL (POST /v1/v1/chat/completions)`——站点 OpenAI 渠道的 base_url 多了 `/v1`，new-api 又拼一次。**App 端无需改动**（我们只请求 `/pg/chat/completions`）。修好后可把「综合最强」换回 `gpt-6-astra`。`id` 必须与 `/api/user/models` 返回的模型名完全一致；`pickRecommendedModels(models)` 按 id 匹配实时列表，找不到就跳过。**不要再按名称模糊匹配，也不要在组件里硬编码展示。**
+- **顺序与显隐**：推荐组只在 `modelQuery` 为空时渲染，位于「全部模型」分组之前；搜索时只显示过滤结果。两处平台实现各自渲染（iOS 在同一个玻璃卡片内，安卓是单独卡片 + 「全部模型」标题），文案走 `t()`。
+- **样式**：标签胶囊 `recommendTag` 用 `palette.blue` + `palette.tintBlueSoft`（iOS `#007AFF`、安卓 `#1A73E8`），11pt / 600，挂在厂商名右侧的 `recommendMeta` 行，不挤占模型名（长模型名不会被截断）。
+- **环境坑（重要）**：本机 Expo Go 上，**启动瞬间写 `SecureStore` 会静默不落盘**（写完当次读得到 352，重载后读到 `none`）。要临时注入会话恢复登录，需在启动后约 3 秒再 `persistSession` 一次——已验证这样冷启动能读回（日志 `boot 352 124`），随后 `git checkout` 还原源码不会再掉线。掉线的直接原因是 `restoreSession()` 读不到 key（本轮全程没有 401，不是 cookie 失效）。仍不要随意强杀 / 重载 iOS Expo Go；账号 `kira` 密码未知，安卓目前需要密码才能恢复登录。
+
+## 概览页小组件统一到账户页的 Group / Row（2026-11-24）
+
+- **用户口径**：「这两个页面内的小组件明显不一样，要以账户页这样的为标准」。**账户页 = 唯一标准**：`src/ui.tsx` 的 `Group` + `Row`（行高 47、图标 24、分隔线左缩进 16、卡片圆角 12、箭头 12×18、值右对齐 `palette.secondaryLabel` 17pt）。
+- **已改**：`App.tsx` 的 iOS `Overview` 分支不再自建组件——4 个统计数字（可用模型 / 启用令牌 / 平均延迟 / 异常队列）从 `StatBlock` 2×2 色块改成一张 `Group`（`Row value=...`），快捷访问 / AI 功能 / 用量与任务改成 `Group header + Row icon chevron`。`QuickAction`、`StatBlock` 及配套样式（`sectionHeader` / `sectionTitle` / `actionList` / `quick*` / `chevron` / `gridTwo` / `statBlock*` / `statValue`）已删除；iOS 只保留 `statLabel` 给 `MiniStat`。
+- **图标**：`任务` 从 `square.stack.3d.up`（与「模型目录」重复）换成 `checklist`，安卓映射 `checkbox-outline`（`src/components/AppIcon.tsx`）。
+- **安卓概览不动**：本来就是 `Group` / `Row`，但统计行用偏大的 `accessory` 数字（`overviewStatValue`），属安卓风格，保留。
+- **约定**：以后新增列表页 / 分组项一律用 `Group` / `Row`，不要再写「自己的白色卡片 + 自绘分隔线 + `›` 文本箭头」；`Row` 的箭头是 `SymbolView chevron.right`，用文本 `›` 会和账户页明显不一致。
+- **操作坑（写脚本的同事注意）**：iOS 底部五项标签栏在列表滚动后会自动收起，此时按底部坐标点不到，先滚回顶部再点；`Row` 的 accessibility 值形如 `hdr, 模型目录, Forward`（图标名 + 标题），按标题定位要用这个完整串或直接点坐标。
+
+## 会话列表与网页端同步（2026-11-24）
+
+- **背景**：网页端新建的对话在手机上看不到。原因不是接口，而是 `ChatWorkspace` 的会话列表**只在挂载时拉一次**，聊天页常驻挂载后不再刷新。
+- **改法**：`refreshConversations()`（`useCallback`）在四个时机触发：`active` 变 true（首次挂载 + 切回聊天标签）、`AppState` 回到 `active`、打开对话历史（`openHistory`，顶部「历史」与「查看全部」都用它）。
+- **合并规则（别退回成整体替换）**：以服务端返回为准排序；本地已有会话保留 `messages` / `loaded`；服务端 `UpdatedAt` 更新且不是当前打开的会话 → 清缓存（`loaded: false`），下次打开重新拉消息；服务端没有的会话移除，只保留本地刚新建 20 秒内、列表还没返回的那条（`pendingCreated` 记录 id → 时间）。并发用 `refreshing` 票据丢弃过期结果。
+- **已知遗留（未改）**：`deepseek-fetch` 在模型目录里，但上游 DeepSeek 渠道只认 `deepseek-flash` / `deepseek-v4-pro`，发消息会报 “you passed deepseek-fetch”。App 重载后默认模型是 `models[0]`（名称排序第一个，正是 `deepseek-fetch`），因此重载后新建对话直接发会失败；要么把默认模型改成推荐位第一个，要么把这类不可聊的模型从列表里过滤掉，等产品决定。
+
+## 令牌详情 / 表单共用一个 Modal（2026-11-24）
+
+- **约定（iOS 必守）**：不要在关闭一个 `Modal` 的同时打开另一个 `Modal`。RN 的 `Modal` 走 UIKit present / dismiss，两者重叠时前一个会卡在关闭状态——以全透明的形式留在最上层、把点击全部接走，之后所有 `Modal` 都弹不出来，用户看到的就是「卡死」。同类的快速连点（前一个还在开场动画里就点下一个）也会触发。
+- **现状**：`App.tsx` 的 `TokenSheets` 是令牌详情与新建 / 编辑表单的唯一宿主，内部只有一个 `SheetModal`，按 `mode`（`detail` / `form`）切换内容。`TokenDetailPanel`、`TokenFormPanel` 只返回面板内容（`<View style={styles.modalSheet}>…`），不再自带 `Modal`；表单用 `closeRef` 把「点面板上方空白」的处理交给共用 `SheetModal`（选择页 → 表单 → 关闭）。以后再加面板，优先叠在同一个 `SheetModal` 里换内容，而不是新开一个 `Modal`。
+- **兜底**：`SheetModal` 关闭时若 400ms 内没收到动画完成回调，会强制 `setMounted(false)`，避免留下隐形但仍拦截点击的 `Modal`。
+- **排查提示**：如果又出现「点某处完全没反应、但标签栏还能切」的现象，先怀疑有隐形 `Modal`/全屏遮罩，而不是 JS 卡死；重载一次即可确认是不是这个类问题。
+
+## 令牌卡片的「暂停」按钮（2026-11-24）
+
+- **语义**：暂停 = 中断服务，按 destructive 处理。`TokensView` 里那个切换按钮在 `status === 'active'`（文案「暂停」）时文字为 `palette.destructive`（红），按住时整块变 `palette.destructive` 背景 + `palette.onAccent` 白字；`paused`（文案「启用」）仍是常规蓝色文字，按住只给 `palette.pressedFill`。
+- **写法**：该 `Pressable` 用函数式 `style` 和函数式 children（`{({ pressed }) => <Text …/>}`），靠 `pressed` 切换样式，不要退回到静态 `style`。
+- **样式位置**：`secondaryButtonTextDanger` / `secondaryButtonTextOnDanger` / `secondaryButtonDangerPressed` / `secondaryButtonPressed` 必须在 `makeBaseStyles()`。`styles` 是 `makeBaseStyles()` 与 `makeIosStyles()` 的并集类型，**只加到 iOS 块会过不了 tsc**。
+- **两个相关 token（别改回去）**：按压底色用 `palette.destructiveFill`（深色下 `destructive` 是浅红文字色，当背景会让白字对比不足）；iOS 这个按钮的静止底色用 `palette.controlFill`，因为深色下 `fillMuted` 与 `card` 同为 `#1C1C1E`，按钮会整颗看不见。
+- **怎么验按压态**：WDA 的 `POST /session/{id}/actions` 只发 `pointerDown` 会 500，且整段手势原子执行——中途截图拿不到 `pressed` 帧。改用 `xcrun simctl io <UDID> recordVideo /tmp/press.mp4` 录屏，再用 `ffmpeg -i /tmp/press.mp4 -vf "crop=…" -vsync 0 frames/%03d.png` 抽帧看颜色。点「暂停」会真的把令牌置为 paused，验完记得点回「启用」。
+- **已验证值**：浅色静止 `#B3404A` 红字 / 按压 `#B3404A` 底白字；深色静止 `#FF6961` 红字 / 按压 `#C33842` 底白字。
+
+## 概览页与网页端「数据看板」对齐（2026-11-24）
+
+- **数据来源（别再猜）**：
+  - 账户数据：`/api/user/self` → `quota`（余额）、`used_quota`（历史消耗）、`request_count`（请求次数 = 历史累计）。
+  - 今日免费模型：`/api/user/free_daily_model/remaining`，字段在**响应顶层**（`enabled` / `limit` / `used` / `remaining`），没有 `data` 包装；未配置时 `{success:true,data:null}`。`fetchFreeDailyModelUsage()` 用 `rawRequest` 手动解析两种形态。
+  - 使用统计 / 资源消耗 / 性能指标：`/api/data/self`。**必须带 `start_timestamp` / `end_timestamp`，不带参数返回 `[]`**；`useConsoleData` 固定拉最近 30 天（`default_time=day`），24h / 7d / 30d 在前端按 `created_at` 过滤。统计次数 = `count` 和、统计额度 = `quota` 和、统计Tokens = `token_used` 和。
+  - 平均 RPM / TPM：`区间总量 ÷ 区间分钟数`，`toFixed(3)`，与网页端一致（不是 `/api/log/self/stat` 的 rpm/tpm——那个接口返回 0）。
+- **`OverviewMetrics` 字段已改名**：`requests` → `times`（它是区间次数，网页端的「请求次数」是 `user.request_count`）；`reliability`（假成功率）与 `totalUsage` / `totalQuota` / `summary` 已删除，配套的进度条也删了。新字段是 `times` / `quotaLabel` / `tokensLabel` / `rpm` / `tpm` / `averageLatency` / `issueCount`。
+- **界面**：iOS 和安卓都是 5 个 `Group`：账户数据 / 使用统计 / 资源消耗 / 性能指标 / 站点状态，全部 `Row`。`heroPanel`、`heroCard` 系列样式已删除，不要再加回来。
+
+## 模型详情可复制分组（2026-11-24）
+
+- 分组那一行现在是按钮：点开 `SheetModal` 列出全部分组，点某一行即复制到剪贴板，行内显示「已复制 ✓」（1.6 秒复原），面板不自动关。
+- `Model.groups` 是 `enable_groups` 原样列表（`groupListOf()` 负责回落），`Model.groupLabel` 只是折叠后的展示文案；两者都要在 `mapConsoleModels` 里一起产出。
+- 行样式复用令牌分组选择器的 `groupOption*`，别另起一套；列表 `maxHeight: 300` 可滚动。
+- 分组行不能用 `copyKeyValue` + `settingsValue` 组合：`settingsValue` 自带 `flex: 1`（flexBasis 0），放进不可伸缩的行里宽度会被算成 0，文字向右溢出再被 `billingGrid` 的 `overflow: hidden` 截断（首版就是这个毛病）。现在用 `groupValueRow`（`flex: 1` + 右对齐 + `gap: 8`）套 `groupValueText`（`flexShrink: 1`）。
+- **未实机验证**：改 `types.ts` / `liveConsole.ts` / `i18n.en.ts` 触发整包重载，iOS 掉回登录页（2026-11-24 16:19）；用户重新登录后看到首版错位，布局修正因 HMR 没送到运行中的 App，需 reload 一次后再确认：分组行有蓝色复制图标且右对齐不溢出、点开是底部列表、点行出现「已复制」、10 个分组能滚动、安卓同样可用。
+
+## 模型详情用「分组」（2026-11-24）
+
+- 网页端那一列叫「可用分组」，数据是 `/api/pricing` 的 `enable_groups`；mobile 原来叫「路由」，已改名为「分组」。
+- `Model.route` → `Model.groupLabel`；`src/services/liveConsole.ts` 的 `groupLabelOf()` 负责格式化：0 个回落到用户分组 / `default`，1–2 个列全，>2 个折叠成 `{首个} 等 N 个`。
+- 改这个名字时记得同步 `App.tsx` 的 `ModelDetail` 标签、模型搜索匹配字段、`ChatWorkspace` 的 `fallbackModel`；`i18n.en.ts` 里 `"路由": "Routing"` 已删除。
+- iOS 已实机验证（`Baichuan2-53B` → `default`；`gpt-6.1-sol` → `gpt-codex3 等 10 个`）。
+
+## 模型选择器双端共用一个锚定浮层（2026-11-24）
+
+- 用户要求安卓「切换模型」和 iOS 一样：贴着工具栏、浮在聊天页上的卡片，**不要**整页、也不要底部 sheet（中途试过底部面板已被否掉）。
+- 现状（`src/ChatWorkspace.tsx`）：**没有平台分支**，模型列表统一渲染在 `ChatPopover` 里（`scrollable`、`estimatedHeight = 模型数 × 60 + 16`、A-Z 索引走 `popoverOffsetFor`）。安卓不再出现 `Modal`。
+- 三个关键点别再退回平台判断：
+  - 顶部模型选择框在 `modelPickerVisible` 时变成搜索框（原先是 `Platform.OS === 'ios' && modelPickerVisible`）。
+  - `openModelPicker` 双端都先 `measureInPage(modelButton)` 拿锚点再打开。
+  - 键盘弹起重新量页面尺寸的 effect 不再限定 iOS，浮层随键盘上移。
+- 已被删除、不要再加回来的样式：`modelSheet*`、`sheetSearch*`、`sheetListRow` / `sheetScroll` / `sheetFade`、`modelSearch` / `modelSearchInput`、`modelList` / `modelRow` / `modelMain` / `modelName` / `modelVendor` / `checkCircle`。`sheetRoot` / `sheetContent` 仍归对话历史那个整页 `Modal`。
+- **阴影**：`popoverShadow` 按平台分支，iOS 用 `shadowOpacity 0.18 / radius 24 / offset y 12`；安卓 `shadow*` 无效，用 `elevation: 16` + `backgroundColor: palette.card` + `borderRadius: 20`（elevation 要有圆角底色才投影）。改阴影时两端都要留，别只改一边。
+- iOS 已实机复测通过；安卓模拟器仍无登录态，仅过 `tsc`，登录后需看浮层位置 / 宽度、键盘遮挡、滚动与索引、深色对比。
+
+## 账户充值：支付宝 / 微信 / 兑换码 / 充值记录 / 邀请奖励（2026-11-24）
+
+- 入口：账户中心 → 钱包（`SubpageKey` 仍是 `'wallet'`，`App.tsx` 里 `<WalletScreen onBack=... />`，没有新开 Tab）。页面主体 `src/screens/WalletScreen.tsx`，5 个 `Group`：hero 余额卡 / 账户充值 / 兑换码充值 / 充值记录 / 邀请奖励（另保留原「额度说明」）。
+- 接口（`src/api/endpoints.ts`，类型在 `src/api/types.ts`）：
+  - `fetchTopUpInfo()` → `TopUpInfo`（`amount_options` / `min_topup` / `payment_unit_price` / `discount` / `enable_alipay_topup` / `enable_wechat_topup`；当前站点只开了支付宝与微信，stripe/creem/waffo 全关）。
+  - `createAlipayOrder(amount)` / `createWechatOrder(amount)` → `PaymentOrder {qr_code, trade_no}`；`qr_code` 支付宝是 `https://qr.alipay.com/...`，微信是 `weixin://wxpay/bizpayurl?...`。
+  - `fetchAlipayOrderState(tradeNo)` / `fetchWechatOrderState(tradeNo)` → `PaymentState {status}`（`pending|success|failed`）。
+  - `redeemTopUpCode(key)` → 兑换到的**额度数字**（quota，不是钱）；`fetchTopUpOrders(page, pageSize)` → `Paged<TopUpOrder>`（`create_time` 是 Unix 秒，未支付订单也在里面）；`transferAffQuota(quota)` 传原生额度。
+- 支付流程：下单 → 立刻 `Linking.openURL(qr_code)` 唤起对方 App，同时在应用内弹居中卡片（金额 / 等待支付 + 转圈 / 订单号 / 打开应用 / 复制支付链接 / 关闭），每 3 秒轮询状态，成功即 `refreshUser()` + 重拉订单，100 次（5 分钟）兜底 `timeout`。**不做二维码渲染**（无 QR 依赖，同机扫码也没意义）。
+- 失败路径：`Linking.openURL` 拒绝（没装 App）会弹「无法打开支付应用 / 请复制支付链接后在对应 App 中打开」；支付宝 https 落地页在 iOS 上会先开 Safari 再让用户点「打开支付宝」，是当前已知的多一步。
+- 交互细节：
+  - 充值数量是行内 `TextInput`（`number-pad`），**整行 `onPress` 都聚焦输入框**（`useRef<TextInputInstance>`，`TextInput` 当类型会让 `tsc` 报错）；实付金额 = `数量 × payment_unit_price × discount[数量]`，随输入即时变。
+  - 额度档位是胶囊行（`amount_options`），选中 `tintBlue` 底 + `palette.blue` 字。
+  - 两个输入框的 `accessibilityLabel` 必须和行标题不同（`充值金额，最低 {0}` / `输入兑换码`），否则 VoiceOver / Appium 都只会匹配到行标题文字，点不到输入框。
+  - 支付卡片遮罩用 `palette.overlay`，卡片 `maxWidth: 330`。
+- 验证状态：iOS 已实机走通（档位 / 输入联动 / 微信下单弹窗 + 未安装提示 / 复制支付链接 / 空兑换码提示 / 充值记录出现 pending 订单 / 邀请奖励空态）；真实付款、兑换成功、划转未验证（本机无支付宝微信、无兑换码）。安卓只过 `tsc`，登录后需看一眼卡片居中与遮罩、胶囊换行、键盘遮挡。
+- 环境坑（重要）：本机 Expo Go 的 `SecureStore` 写入返回成功但**重载后读回 `null`**，所以任何整包重载都会掉到登录页；恢复只能靠用户手动登录，或临时把 `binarycookies` 里的 `session` 注入 `restoreSession()`（验完必须 `git checkout -- src/api/client.ts`）。

@@ -35,6 +35,50 @@ export type LoginResult = {
   need_set_password?: boolean;
 };
 
+// 充值页配置：/api/user/topup/info。
+export type TopUpInfo = {
+  amount_options: number[];
+  discount?: Record<string, number>;
+  min_topup: number;
+  payment_unit_price: number;
+  alipay_min_topup?: number;
+  wechat_min_topup?: number;
+  enable_alipay_topup?: boolean;
+  enable_wechat_topup?: boolean;
+  enable_online_topup?: boolean;
+  enable_stripe_topup?: boolean;
+  enable_creem_topup?: boolean;
+  enable_waffo_topup?: boolean;
+};
+
+// 下单返回：二维码内容（支付宝是 https 链接，微信是 weixin:// 深链）与订单号。
+export type PaymentOrder = {
+  qr_code: string;
+  trade_no: string;
+  amount?: string;
+};
+
+export type PaymentState = {
+  status: 'pending' | 'success' | 'failed' | string;
+  trade_no?: string;
+  amount?: number;
+  money?: string;
+};
+
+// 充值记录（账单）。create_time / complete_time 是 Unix 秒。
+export type TopUpOrder = {
+  id: number;
+  amount: number;
+  money: number;
+  trade_no: string;
+  payment_method: string;
+  payment_provider?: string;
+  create_time: number;
+  complete_time: number;
+  status: string;
+  username?: string;
+};
+
 export type SelfUser = {
   id: number;
   username: string;
@@ -201,6 +245,14 @@ export type DataSelfPoint = {
   quota?: number;
   token_used?: number;
   created_at?: number;
+};
+
+// /api/user/free_daily_model/remaining：字段在响应的顶层，没有 data 包装。
+export type FreeDailyModelUsage = {
+  enabled: boolean;
+  limit: number;
+  used: number;
+  remaining: number;
 };
 
 export type ApiToken = {

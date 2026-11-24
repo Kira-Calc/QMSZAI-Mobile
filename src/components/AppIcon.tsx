@@ -18,6 +18,7 @@ const androidIcons: Record<string, IoniconName> = {
   camera: 'camera-outline',
   'bubble.left.and.bubble.right': 'chatbubbles-outline',
   'chart.bar': 'stats-chart-outline',
+  checklist: 'checkbox-outline',
   checkmark: 'checkmark',
   'chevron.down': 'chevron-down',
   'chevron.left': 'chevron-back',

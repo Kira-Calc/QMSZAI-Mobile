@@ -2,10 +2,11 @@ import { BlurView, BlurTargetView } from 'expo-blur';
 import * as Clipboard from 'expo-clipboard';
 import NativeMaskedView from '@react-native-masked-view/masked-view';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactElement, type ComponentProps, type ComponentRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactElement, type ComponentProps, type ComponentRef, type ReactNode } from 'react';
 import {
   Alert,
   Animated,
+  AppState,
   BackHandler,
   Easing,
   Keyboard,
@@ -25,6 +26,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { ModelLogo } from './components/ModelLogo';
+import { pickRecommendedModels } from './recommendedModels';
 import {
   appendMessage,
   createConversation as createConversationRequest,
@@ -79,7 +81,8 @@ const fallbackModel: Model = {
   vendor: '',
   tags: [],
   note: '',
-  route: '—',
+  groups: [],
+  groupLabel: '—',
   inputRate: '—',
   outputRate: '—',
   updatedAt: '—',
@@ -146,9 +149,6 @@ export function ChatWorkspace({
   const [modelQuery, setModelQuery] = useState('');
   // A-Z 索引需要知道每行在滚动内容里的位置，用 onLayout 记录。
   const popoverRowOffsets = useRef<Record<number, number>>({});
-  const modelSheetScroll = useRef<ComponentRef<typeof ScrollView>>(null);
-  const modelSheetListY = useRef(0);
-  const modelSheetRowOffsets = useRef<Record<number, number>>({});
   const [modelAnchor, setModelAnchor] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const [toolsVisible, setToolsVisible] = useState(false);
   const [toolsAnchor, setToolsAnchor] = useState({ x: 111, y: 170, width: 228, height: 36 });
@@ -175,7 +175,7 @@ export function ChatWorkspace({
   // 模型弹层里有搜索框，键盘弹出不能关掉；改成重新量一次页面尺寸让弹层跟着上移。
   useEffect(() => {
     setToolsVisible(false);
-    if (Platform.OS !== 'ios' || !modelPickerVisible) return;
+    if (!modelPickerVisible) return;
     const root = rootRef.current;
     if (!root) return;
     root.measureInWindow((_x, _y, width, height) => setPopoverBounds({ width, height }));
@@ -219,18 +219,15 @@ export function ChatWorkspace({
     [pickerModels],
   );
 
+  // 推荐位固定在列表最顶部；搜索时隐藏，避免和过滤结果混在一起。
+  const recommended = useMemo(() => pickRecommendedModels(models), [models]);
+
   const letterIndex = (letter: string) =>
     pickerModels.findIndex((model) => letterOf(model.name) === letter);
 
   const popoverOffsetFor = (letter: string) => {
     const index = letterIndex(letter);
     return index < 0 ? undefined : popoverRowOffsets.current[index];
-  };
-
-  const sheetOffsetFor = (letter: string) => {
-    const index = letterIndex(letter);
-    if (index < 0) return undefined;
-    return modelSheetListY.current + (modelSheetRowOffsets.current[index] ?? 0);
   };
 
   const stop = () => {
@@ -246,19 +243,77 @@ export function ChatWorkspace({
     setSelectedModelId((current) => (models.some((model) => model.id === current) ? current : models[0].id));
   }, [models]);
 
-  // 首次进入拉取会话列表；会话消息按需加载。
-  useEffect(() => {
-    let active = true;
-    fetchConversations(50, 0)
-      .then((page) => {
-        if (!active) return;
-        setConversations((page.items ?? []).map(toConversation));
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
+  // 会话列表：进入页面、切回聊天标签、App 回到前台、打开历史时都拉一次，
+  // 网页端新建的对话才能出现在这里。只合并，不删本地内容。
+  const selectedRef = useRef<number | null>(null);
+  const refreshing = useRef(0);
+  // 本地刚新建、服务端列表可能还没返回的会话（id -> 创建时间）。
+  const pendingCreated = useRef<Map<number, number>>(new Map());
+
+  const refreshConversations = useCallback(async () => {
+    const ticket = ++refreshing.current;
+    try {
+      const page = await fetchConversations(50, 0);
+      // 期间又发起了新的刷新，丢掉这次的结果。
+      if (refreshing.current !== ticket) return;
+      const incoming = (page.items ?? []).map(toConversation);
+      setConversations((prev) => {
+        const local = new Map(prev.map((item) => [item.id, item]));
+        const merged = incoming.map((item) => {
+          const existing = local.get(item.id);
+          if (!existing) return item;
+          // 其他端改过的会话：清掉本地缓存，打开时重新拉消息；
+          // 当前打开的会话不动，避免把正在显示的回复清空。
+          const changedElsewhere = item.updatedAt > existing.updatedAt && item.id !== selectedRef.current;
+          return {
+            ...item,
+            messages: changedElsewhere ? [] : existing.messages,
+            loaded: changedElsewhere ? false : existing.loaded,
+          };
+        });
+        const seen = new Set(incoming.map((item) => item.id));
+        for (const id of seen) pendingCreated.current.delete(id);
+        // 服务端列表里还没有、但确实是刚在本地新建的会话，先留着；
+        // 其余不在列表里的（例如网页端删掉了）随之移除。
+        const now = Date.now();
+        const pending = prev.filter((item) => {
+          if (seen.has(item.id)) return false;
+          const createdAt = pendingCreated.current.get(item.id);
+          if (createdAt === undefined) return false;
+          if (now - createdAt > 20000) {
+            pendingCreated.current.delete(item.id);
+            return false;
+          }
+          return true;
+        });
+        return [...merged, ...pending];
+      });
+    } catch {
+      // 刷新失败保持现有列表，不影响已加载的对话。
+    }
   }, []);
+
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
+  // 进入聊天页（首次挂载时 active 已经是 true）与从其他标签页切回来。
+  useEffect(() => {
+    if (active) refreshConversations();
+  }, [active, refreshConversations]);
+
+  // App 从后台回到前台（例如在网页端聊完再切回来）。
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshConversations();
+    });
+    return () => subscription.remove();
+  }, [refreshConversations]);
+
+  const openHistory = () => {
+    setHistoryVisible(true);
+    refreshConversations();
+  };
 
   // 切换/新建会话时，消息区淡入并轻微上移，避免内容硬切。
   const playThreadTransition = () => {
@@ -341,10 +396,7 @@ export function ChatWorkspace({
 
   const openModelPicker = () => {
     setModelQuery('');
-    if (Platform.OS !== 'ios') {
-      setModelPickerVisible(true);
-      return;
-    }
+    // 双端都是锚定在选择框下方的浮层，先量位置再打开。
     measureInPage(modelButton.current, (anchor) => {
       setModelAnchor(anchor);
       setModelPickerVisible(true);
@@ -427,6 +479,7 @@ export function ChatWorkspace({
           messages: [userMessage],
           loaded: true,
         };
+        pendingCreated.current.set(created.ID, Date.now());
         setConversations((items) => [newConversation, ...items]);
         setSelected(created.ID);
       } else {
@@ -556,7 +609,7 @@ export function ChatWorkspace({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t("查看对话历史")}
-          onPress={() => setHistoryVisible(true)}
+          onPress={openHistory}
           style={({ pressed }) => [styles.toolButton, pressed ? styles.pressed : null]}
         >
           <GlassSurface radius={18} interactive style={styles.toolGlass}>
@@ -570,7 +623,7 @@ export function ChatWorkspace({
           </GlassSurface>
         </Pressable>
 
-        {Platform.OS === 'ios' && modelPickerVisible ? (
+        {modelPickerVisible ? (
           // 模型列表弹出时，顶部这个选择框直接变成搜索框。
           <View style={styles.modelButton}>
             <GlassSurface radius={18} style={[styles.modelGlass, styles.modelGlassSearch]}>
@@ -692,7 +745,7 @@ export function ChatWorkspace({
             <>
               <View style={styles.recentHeader}>
                 <Text style={styles.recentTitle}>{t('最近对话')}</Text>
-                <Pressable accessibilityRole="button" onPress={() => setHistoryVisible(true)}>
+                <Pressable accessibilityRole="button" onPress={openHistory}>
                   <Text style={styles.link}>{t('查看全部')}</Text>
                 </Pressable>
               </View>
@@ -908,154 +961,89 @@ export function ChatWorkspace({
         </SafeAreaView>
       </Modal>
 
-      {Platform.OS === 'ios' ? (
-        <ChatPopover
-          visible={modelPickerVisible}
-          anchor={modelAnchor}
-          onClose={closeModelPicker}
-          estimatedHeight={pickerModels.length ? pickerModels.length * 60 + 16 : 88}
-          bounds={popoverBounds}
-          scrollable
-          indexLetters={pickerLetters}
-          indexOffsetFor={popoverOffsetFor}
-        >
-          {pickerModels.length === 0 ? (
-            <View style={styles.modelEmpty}>
-              <Text style={styles.modelEmptyText}>{t('没有匹配的模型')}</Text>
-            </View>
-          ) : null}
-          {pickerModels.map((model, index) => {
-            const isSelected = model.id === currentModelId;
-            return (
-              <Pressable
-                key={model.id}
-                accessibilityRole="button"
-                accessibilityState={{ selected: isSelected }}
-                onPress={() => chooseModel(model)}
-                onLayout={(event) => {
-                  popoverRowOffsets.current[index] = event.nativeEvent.layout.y;
-                }}
-                style={({ pressed }) => [
-                  styles.popoverRow,
-                  index < pickerModels.length - 1 ? styles.popoverRowBorder : null,
-                  pressed ? styles.popoverRowPressed : null,
-                ]}
-              >
-                <ModelLogo name={model.name} vendor={model.vendor} size={30} />
-                <View style={styles.popoverMain}>
-                  <Text style={styles.popoverName}>{model.name}</Text>
-                  <Text style={styles.popoverVendor}>{model.vendor}</Text>
-                </View>
-                {isSelected ? (
-                  <Icon name="checkmark" fallback="✓" size={16} color={palette.blue} />
-                ) : null}
-              </Pressable>
-            );
-          })}
-        </ChatPopover>
-      ) : (
-        <Modal
-          visible={modelPickerVisible}
-          animationType="slide"
-          presentationStyle="fullScreen"
-          onRequestClose={closeModelPicker}
-        >
-          <SafeAreaView style={styles.sheetRoot} edges={['top', 'bottom', 'left', 'right']}>
-            <View style={styles.sheetSearchHeader}>
-              <View style={[styles.modelSearch, styles.sheetSearchField]}>
-                <Icon name="magnifyingglass" size={16} color={palette.secondaryLabel} />
-                <TextInput
-                  keyboardAppearance={isDark() ? 'dark' : 'light'}
-                  accessibilityLabel={t("搜索模型")}
-                  value={modelQuery}
-                  onChangeText={setModelQuery}
-                  placeholder={t("搜索模型或厂商")}
-                  placeholderTextColor={palette.tertiaryLabel}
-                  autoCorrect={false}
-                  style={styles.modelSearchInput}
-                />
-                {modelQuery.length > 0 ? (
-                  <Pressable accessibilityRole="button" accessibilityLabel={t("清除搜索")} onPress={() => setModelQuery('')} hitSlop={10}>
-                    <Icon name="xmark" size={15} color={palette.secondaryLabel} />
-                  </Pressable>
-                ) : null}
-              </View>
-              <Pressable accessibilityRole="button" accessibilityLabel={t("完成")} onPress={closeModelPicker} hitSlop={8}>
-                <Text style={styles.sheetSearchDone}>{t('完成')}</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.sheetListRow}>
-            <ScrollView
-              ref={modelSheetScroll}
-              style={styles.sheetScroll}
-              contentContainerStyle={styles.sheetContent}
-              keyboardShouldPersistTaps="handled"
-            >
-              {pickerModels.length === 0 ? (
-                <Text style={styles.modelEmptyText}>{t('没有匹配的模型')}</Text>
-              ) : (
-                <View
-                  style={styles.modelList}
-                  onLayout={(event) => {
-                    modelSheetListY.current = event.nativeEvent.layout.y;
-                  }}
+      <ChatPopover
+        visible={modelPickerVisible}
+        anchor={modelAnchor}
+        onClose={closeModelPicker}
+        estimatedHeight={pickerModels.length ? pickerModels.length * 60 + 16 : 88}
+        bounds={popoverBounds}
+        scrollable
+        indexLetters={pickerLetters}
+        indexOffsetFor={popoverOffsetFor}
+      >
+        {pickerModels.length === 0 ? (
+          <View style={styles.modelEmpty}>
+            <Text style={styles.modelEmptyText}>{t('没有匹配的模型')}</Text>
+          </View>
+        ) : null}
+        {!modelQuery && recommended.length > 0 ? (
+          <>
+            <Text style={styles.recommendHeader}>{t('推荐模型')}</Text>
+            {recommended.map(({ model, tag }, index) => {
+              const isSelected = model.id === currentModelId;
+              return (
+                <Pressable
+                  key={`recommend-${model.id}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
+                  accessibilityHint={t(tag)}
+                  onPress={() => chooseModel(model)}
+                  style={({ pressed }) => [
+                    styles.popoverRow,
+                    index < recommended.length - 1 ? styles.popoverRowBorder : null,
+                    pressed ? styles.popoverRowPressed : null,
+                  ]}
                 >
-                  {pickerModels.map((model, index) => {
-                    const isSelected = model.id === currentModelId;
-                    return (
-                      <Pressable
-                        key={model.id}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: isSelected }}
-                        onPress={() => chooseModel(model)}
-                        onLayout={(event) => {
-                          modelSheetRowOffsets.current[index] = event.nativeEvent.layout.y;
-                        }}
-                        style={({ pressed }) => [
-                          styles.modelRow,
-                          index < pickerModels.length - 1 ? styles.historyRowBorder : null,
-                          pressed ? styles.pressed : null,
-                        ]}
-                      >
-                        <ModelLogo name={model.name} vendor={model.vendor} size={30} />
-                        <View style={styles.modelMain}>
-                          <Text style={styles.modelName}>{model.name}</Text>
-                          <Text style={styles.modelVendor}>{model.vendor}</Text>
-                        </View>
-                        {isSelected ? (
-                          <View style={styles.checkCircle}>
-                            <Icon name="checkmark" fallback="✓" size={14} color="#FFFFFF" />
-                          </View>
-                        ) : null}
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              )}
-            </ScrollView>
-            <AlphabetRail
-              letters={pickerLetters}
-              onSelect={(letter) => {
-                const offset = sheetOffsetFor(letter);
-                if (offset === undefined) return;
-                modelSheetScroll.current?.scrollTo({ y: Math.max(0, offset - 6), animated: true });
+                  <ModelLogo name={model.name} vendor={model.vendor} size={30} />
+                  <View style={styles.popoverMain}>
+                    <Text style={styles.popoverName} numberOfLines={1}>
+                      {model.name}
+                    </Text>
+                    <View style={styles.recommendMeta}>
+                      <Text style={styles.popoverVendor} numberOfLines={1}>
+                        {model.vendor}
+                      </Text>
+                      <Text style={styles.recommendTag}>{t(tag)}</Text>
+                    </View>
+                  </View>
+                  {isSelected ? (
+                    <Icon name="checkmark" fallback="✓" size={16} color={palette.blue} />
+                  ) : null}
+                </Pressable>
+              );
+            })}
+            <Text style={styles.recommendHeaderSpaced}>{t('全部模型')}</Text>
+          </>
+        ) : null}
+        {pickerModels.map((model, index) => {
+          const isSelected = model.id === currentModelId;
+          return (
+            <Pressable
+              key={model.id}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected }}
+              onPress={() => chooseModel(model)}
+              onLayout={(event) => {
+                popoverRowOffsets.current[index] = event.nativeEvent.layout.y;
               }}
-            />
-            {/* 底部渐隐：滚动时列表在底边淡出，避免被切成直角硬边。 */}
-            <Svg pointerEvents="none" style={styles.sheetFade} width="100%" height={32}>
-              <Defs>
-                <SvgLinearGradient id="sheetPickerFade" x1="0" y1="0" x2="0" y2="1">
-                  <Stop offset="0" stopColor={palette.groupedBackground} stopOpacity="0" />
-                  <Stop offset="1" stopColor={palette.groupedBackground} stopOpacity="1" />
-                </SvgLinearGradient>
-              </Defs>
-              <Rect width="100%" height="100%" fill="url(#sheetPickerFade)" />
-            </Svg>
-            </View>
-          </SafeAreaView>
-        </Modal>
-      )}
+              style={({ pressed }) => [
+                styles.popoverRow,
+                index < pickerModels.length - 1 ? styles.popoverRowBorder : null,
+                pressed ? styles.popoverRowPressed : null,
+              ]}
+            >
+              <ModelLogo name={model.name} vendor={model.vendor} size={30} />
+              <View style={styles.popoverMain}>
+                <Text style={styles.popoverName}>{model.name}</Text>
+                <Text style={styles.popoverVendor}>{model.vendor}</Text>
+              </View>
+              {isSelected ? (
+                <Icon name="checkmark" fallback="✓" size={16} color={palette.blue} />
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </ChatPopover>
 
       <ChatPopover
         visible={toolsVisible}
@@ -1643,12 +1631,20 @@ const styles = themedStyles(() => StyleSheet.create({
   sendButtonDisabled: { backgroundColor: ios ? palette.tertiaryLabel : m3.surfaceContainerHighest },
   popoverRoot: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 30 },
   popover: { position: 'absolute' },
-  popoverShadow: {
-    shadowColor: '#000000',
-    shadowOpacity: ios ? 0.18 : 0,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-  },
+  // iOS 用原生阴影；安卓的 shadow* 不生效，改给外层 elevation（需要一个圆角底色才会投影，
+  // 玻璃回退层本身也是同色 card，叠上去看不出来）。
+  popoverShadow: ios
+    ? {
+        shadowColor: '#000000',
+        shadowOpacity: 0.18,
+        shadowRadius: 24,
+        shadowOffset: { width: 0, height: 12 },
+      }
+    : {
+        elevation: 16,
+        backgroundColor: palette.card,
+        borderRadius: 20,
+      },
   popoverCard: { overflow: 'hidden' },
   popoverScrollContent: { paddingVertical: 0 },
   popoverListRow: { flexDirection: 'row' },
@@ -1671,6 +1667,34 @@ const styles = themedStyles(() => StyleSheet.create({
   popoverMain: { flex: 1, gap: 1 },
   popoverName: { color: palette.label, fontSize: 16, fontWeight: '500' },
   popoverVendor: { color: palette.secondaryLabel, fontSize: 12 },
+  // 双端现在共用同一个浮层，分组标题的内缩与行内容（14pt）对齐。
+  recommendHeader: {
+    color: palette.secondaryLabel,
+    fontSize: 12,
+    fontWeight: '500',
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 2,
+  },
+  recommendHeaderSpaced: {
+    color: palette.secondaryLabel,
+    fontSize: 12,
+    fontWeight: '500',
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 2,
+  },
+  recommendMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  recommendTag: {
+    color: palette.blue,
+    fontSize: 11,
+    fontWeight: '600',
+    backgroundColor: palette.tintBlueSoft,
+    borderRadius: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    overflow: 'hidden',
+  },
   toolRow: {
     minHeight: 52,
     flexDirection: 'row',
@@ -1727,24 +1751,6 @@ const styles = themedStyles(() => StyleSheet.create({
   },
   historyEmpty: { alignItems: 'center', paddingTop: 80, gap: 8 },
   historyEmptyTitle: { color: palette.label, fontSize: 17, fontWeight: '500' },
-  modelSearch: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    height: 38,
-    marginHorizontal: 10,
-    marginTop: 10,
-    marginBottom: 4,
-    paddingHorizontal: 11,
-    borderRadius: ios ? 11 : shape.lg,
-    backgroundColor: palette.searchField,
-  },
-  modelSearchInput: {
-    flex: 1,
-    color: palette.label,
-    fontSize: ios ? 15 : 16,
-    paddingVertical: 0,
-  },
   modelSearchChipInput: {
     flex: 1,
     color: palette.label,
@@ -1752,40 +1758,7 @@ const styles = themedStyles(() => StyleSheet.create({
     paddingVertical: 0,
   },
   modelGlassSearch: { justifyContent: 'flex-start' },
-  sheetSearchHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingTop: 4,
-    paddingBottom: 6,
-  },
-  sheetSearchField: { flex: 1, marginHorizontal: 0, marginTop: 0, marginBottom: 0 },
-  sheetSearchDone: { color: palette.blue, fontSize: 16, fontWeight: '600', paddingHorizontal: 4 },
-  sheetListRow: { flex: 1, flexDirection: 'row' },
-  sheetFade: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  sheetScroll: { flex: 1 },
   modelEmpty: { paddingVertical: 18, alignItems: 'center' },
   modelEmptyText: { color: palette.secondaryLabel, fontSize: 15, textAlign: 'center', paddingVertical: 18 },
-  modelList: { backgroundColor: palette.card, borderRadius: ios ? 14 : shape.xl, overflow: 'hidden' },
-  modelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 12,
-    minHeight: 74,
-  },
-  modelMain: { flex: 1, gap: 3 },
-  modelName: { color: palette.label, fontSize: 17, fontWeight: '500' },
-  modelVendor: { color: palette.secondaryLabel, fontSize: 13 },
-  checkCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: palette.blue,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   sheetNote: { color: palette.secondaryLabel, fontSize: 12, lineHeight: 18, paddingHorizontal: 4, marginTop: 4 },
 }));

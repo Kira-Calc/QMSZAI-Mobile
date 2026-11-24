@@ -486,3 +486,156 @@ src/
 - `ModelLogo.tsx` 新增品牌 `xiaomi`（fill `#FF6900`，单图层路径）；判定规则加 `NAME_PREFIX_RULES` `/^mimo/`、`VENDOR_RULES` `小米 / xiaomi / mimo`、`NAME_CONTAINS_RULES` `/xiaomi|mimo|小米/`。品牌数 20 → 21。
 - 挖空的「mi」是透明，浅色卡片上显白、深色卡片上显卡片底色（深灰），实测两种都清楚，不需要额外垫白底（垫白底会在 squircle 圆角外露出白角）。
 - 验证：iOS 与安卓，`mimo-v2.5 / -cc / -pro / -pro-cc / v2.6-flash / v2.6-pro / v2.6-pro-ultraspeed` 全部显示橙色小米标；iOS 深色、安卓浅色各看一遍。`npx tsc --noEmit --noUnusedLocals` 与 `git diff --check` 通过。未提交、未推送。
+
+### 2026-11-24 · 聊天页模型选择器顶部「推荐模型」
+
+- 用户需求（原话）：「给首页的这个列表做一个『推荐模型』的功能，放在列表最顶部，目前固定放五个各个领域有优势的模型上去（例如最强、最有性价比、速度最快等等），并且需要有标识来展示这是推荐的模型（旁边写上简单的文字描述）」。
+- 新增 `src/recommendedModels.ts`：`recommendedModelPicks` 固定 6 条 —— `gpt-6-astra` 综合最强、`qwen3.8-max` 中文旗舰、`kimi-k2.7-code` 编程最强、`deepseek-v4-pro-0813` 深度推理、`glm-5.3-flash` 性价比最高、`mimo-v2.6-pro-ultraspeed` 响应最快（DeepSeek 一条是用户第二轮补充要求的）；`pickRecommendedModels(models)` 按 `id` 与实时模型列表精确匹配，账号里没有的自动跳过，不会出现点不动的行。DeepSeek 选正式版 `deepseek-v4-pro-0813`（`/api/pricing` 里写作「正式版 DeepSeek V4 Pro，极大增强 Agent 能力」），不用 `deepseek-v4-pro_官方`（描述是 cursor 专用别名）。
+- 选型依据：账号 `/api/user/models` 真实可聊的模型（该账号没有 Claude / Gemini 条目），用 `/api/pricing` 的 `model_ratio` 与 `description` 交叉核对定位。
+- `src/ChatWorkspace.tsx`：iOS 玻璃浮层（`ChatPopover`）与安卓全屏 sheet 两处都在列表最前面渲染「推荐模型」分组，行复用既有样式（图标 + 模型名 + 厂商），厂商名右侧加蓝色标签胶囊（`recommendTag`：`palette.blue` + `palette.tintBlueSoft`，11pt / 600）；推荐组与下方列表之间加「全部模型」小标题。搜索框有内容时整组隐藏，只显示过滤结果；无结果仍显示「没有匹配的模型」。选中态沿用原逻辑：iOS 行尾蓝色对勾，安卓行尾圆形蓝底对勾。
+- `src/i18n.en.ts` 新增 7 条：推荐模型 / 全部模型 / 综合最强 / 中文旗舰 / 编程最强 / 性价比最高 / 响应最快。
+- 验证（iOS iPhone 18 Pro，Expo Go 58.0.4；安卓 AVD `qmszai_pixel` / emulator-5554）：浅色与深色各一遍，推荐组位于列表最顶部、标签胶囊可读、默认选中 `gpt-6-astra` 打勾；点推荐行切换模型并关闭选择器；输入 `qwen` 后推荐组消失、只剩过滤结果，清空后恢复。安卓是单独卡片 + 「全部模型」标题，浅深色都正常。补 DeepSeek 一条后 iOS 复看：6 行顺序为 gpt-6-astra / qwen3.8-max / kimi-k2.7-code / deepseek-v4-pro-0813（鲸鱼图标 + 厂商 DeepSeek + 「深度推理」蓝胶囊）/ glm-5.3-flash / mimo-v2.6-pro-ultraspeed，行高与分隔线未变，长名字 `deepseek-v4-pro-0813`、`mimo-v2.6-pro-ultraspeed` 都能完整显示。
+- 事故与结论（如实记录）：为看到真实模型列表，本轮临时在 `src/api/client.ts` 的 `restoreSession()` 注入会话；期间 iOS Expo Go 重载把会话清掉，账号 `kira` 密码未知，一度掉到登录页。后来用「注入 + 延迟 3 秒再 `persistSession`」把会话写回 `SecureStore`，冷启动可正常读回（实测 `boot 352 124`），**iOS 当前是登录态且已稳定**；`src/api/client.ts` 已 `git checkout` 还原、无 diff（`grep TMP` 为空），`git status` 只有本轮 4 个文件。根因记录：**启动瞬间写 `SecureStore` 会静默不落盘**（写完当次读得到 352，重载后读回 `none`），约 3 秒后再写才可靠；另确认本轮全程没有出现 401，掉线是 `restoreSession()` 读不到 key 导致的 `signedOut`，不是 cookie 失效。安卓本轮只有临时注入会话，重载后即未登录，需要密码才能恢复。
+- `npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。未提交、未推送。
+
+### 2026-11-24 · gpt-* 全线 404（站点渠道配置问题），综合最强暂时换成 kimi-k3
+
+- 用户反馈：给推荐里的 `gpt-6-astra` 发消息弹「发送失败 / Invalid URL (POST /v1/v1/chat/completions)」。
+- 定位结论：**不是 App 的问题**。App 走的是 `${API_BASE_URL}/pg/chat/completions`（`src/api/client.ts` 的 `streamChat` / `chatOnce`），URL 只拼一次；`/v1/v1/...` 是站点侧 OpenAI 渠道的 base_url 带了 `/v1`，new-api 再拼一次 `/v1/chat/completions` 造成的，报错文案是上游 OpenAI 兼容服务的原文。
+- 证据（用当前登录会话直连 `/pg/chat/completions`，非流式）：`gpt-6-astra` / `gpt-6-sol` / `gpt-6-luna` / `gpt-6.1-sol` / `gpt-6.1-terra` / `gpt-5.6-sol` / `gpt-5.6-luna` / `gpt-5.6-terra` / `gpt-5.5` **全部 404** 且文案一致；`kimi-k3_官方` / `MiniMax-M3_官方` / `glm-5.3` / `qwen3.8-max` / `deepseek-v4-pro-0813` 均 200 正常回复。修法在后台：把该渠道的模型地址末尾 `/v1` 去掉（或改成不带 `/v1` 的域名），App 端无可改。
+- 处理（用户选择「换成 kimi-k3」）：`src/recommendedModels.ts` 的「综合最强」由 `gpt-6-astra` 改为 `kimi-k3_官方`，并在文件里留注释说明原因与换回条件；其余 5 条不变。
+- 验证：iOS 实测选择器第一行显示 `kimi-k3_官方`（Moonshot + 「综合最强」蓝胶囊），点选后头部与输入框占位都变成 `kimi-k3_官方`，选择器关闭。`npx tsc --noEmit --noUnusedLocals` 通过。
+- **等站点把 OpenAI 渠道修好后再把「综合最强」换回 `gpt-6-astra`。**
+
+### 2026-11-24 · 概览页小组件改用与账户页同一套 Group / Row
+
+- 用户反馈（原话）：「这两个页面内的小组件明显不一样，要以账户页这样的为标准」，截图给的是概览页（`QuickAction` 卡片列表 + 2×2 统计块）与账户页（标准 iOS 分组列表）的对比。
+- iOS 概览分支（`App.tsx` 的 `Overview`）全部换成 `src/ui.tsx` 的 `Group` / `Row`：顶部 4 个数字（可用模型 / 启用令牌 / 平均延迟 / 异常队列）从 `StatBlock` 2×2 色块改成一张列表卡（`value` 右对齐灰字，与账户页「当前分组 / 剩余额度」一致）；快捷访问 / AI 功能 / 用量与任务三组改成 `Group header + Row icon + chevron`，行高 47、图标 24、分隔线内缩 16、箭头 12×18 全部沿用共享组件，不再有自己的一套。
+- 删除不再使用的 `QuickAction` / `StatBlock` 两个组件及其样式（`sectionHeader` / `sectionTitle` / `actionList` / `quickAction` / `quickSymbol` / `quickBody` / `quickTitle` / `quickIcon` / `chevron` / `gridTwo` / `statBlock*` / `statValue`），iOS 保留 `statLabel` 给 `MiniStat` 用（令牌详情页未改动）。顺带清掉随之无用的 `ripple`、`ComponentProps` 导入。
+- 「任务」原来复用 `square.stack.3d.up`，和上面的「模型目录」图标一模一样；换成 `checklist`（安卓映射 `checkbox-outline`，加在 `src/components/AppIcon.tsx`），避免两行看起来是同一个入口。
+- 安卓概览不动（本来就是 `Group` / `Row`，但统计行用偏大的 `accessory` 数字，属安卓风格，保留）。
+- 验证（iOS iPhone 18 Pro）：概览与账户页并排比对，卡片圆角 / 行高 / 图标大小 / 分隔线缩进 / 箭头样式一致；滚动到 AI 功能、用量与任务，长列表无错位。令牌页「新建令牌」浮层（`MiniStat` 相关样式）复核正常。`npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。未提交、未推送。
+- 深色也验了：账户 → 个人设置 → 外观 → 深色，概览的统计卡与三组列表为深色卡片（`#1C1C1E` 系）+ 蓝色图标 + 深色分隔线，与账户页深色观感一致；验完已切回浅色。顺带记一个操作坑：底部五项标签栏在列表滚动后会自动收起，此时点底部坐标没反应，要先滚回顶部再点。
+
+### 2026-11-24 · 网页端新建的对话在移动端看不到（会话列表只在挂载时拉一次）
+
+- 现象：用户在网页测试环境留了一个对话（`ID 448`「问候语」，模型 `GLM-4-Flash_免费`），移动端「对话历史 / 最近对话」里没有。
+- 原因（不是接口问题）：`ChatWorkspace` 的会话列表只在组件挂载时 `fetchConversations(50, 0)` 一次。聊天标签页是常驻挂载的，之后不会再拉，唯一的补拉是「删除失败」那条分支，所以在其他端新建 / 删除的会话都不会反映到手机上来。接口本身返回正常：`/api/chat/conversations` 给了 2 条（448、444）。
+- 改法：抽出 `refreshConversations()`，在四个时机刷新——**进入 / 切回聊天标签**（`active` 变 true）、**App 回到前台**（`AppState` → `active`）、**打开对话历史**（顶部 `历史` 和「查看全部」都改成走 `openHistory`）。注意不要简单 `setConversations(新列表)`：那样会把本地已加载的消息、正在流式输出的回复清掉。
+- 合并规则：以服务端列表为准排序，逐条保留本地 `messages` / `loaded`；其他端改过的会话（服务端 `UpdatedAt` 比本地新、且不是当前打开的会话）清掉缓存、下次打开重新拉消息；服务端已没有的会话随之移除，只保留**本地刚新建 20 秒内且列表还没返回**的那条（`pendingCreated`），避免自己刚发的对话一闪而过。并发刷新用 `refreshing` 递增票据丢弃过期响应。
+- 验证（iOS）：改前历史里只有 `Hi`；改后切到聊天标签即出现「问候语 · GLM-4-Flash_免费 · 刚刚」，点开能看到网页端的两条消息（`hello` / `Hello! I am glm-4. How can I assist you today?`）。又用接口造了一条「临时同步测试」（`ID 449`）专门验证「不切标签、直接点历史」：能立刻看到；再用接口删掉后重开历史即消失。全新对话在 App 内新建仍立即出现在列表（历史角标 2 → 3）。测试数据已清理（449、450 都已删除）。
+- 顺手发现（未改，待用户决定）：模型目录里的 `deepseek-fetch` 上游不支持——`/pg/chat/completions` 返回 `The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed deepseek-fetch`。而 App 每次重载后默认模型取列表第一个（`models[0]`，按名称排序正好落在 `deepseek-fetch`），所以「重载 → 新建对话 → 直接发」会失败。
+- `npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。未提交、未推送。
+
+### 2026-11-24 · 编辑令牌会卡死（iOS 上两个 Modal 同时 present / dismiss）
+
+- 现象（用户原话）：「在这个页面编辑令牌，会卡死」，截图是令牌管理页的 `Mobile client` 卡片。点卡片 → 详情 → 「编辑」之后整个页面失去响应；之后连「新建令牌」FAB 也弹不出任何面板。JS 其实还活着（底部标签栏有时还能切），是上半部分内容区的点击被吃掉了。
+- 根因：详情和新建 / 编辑表单原本各是一个 `react-native` 的 `Modal`（都走 `App.tsx` 的 `SheetModal`）。点「编辑」时同一帧里把详情的 `visible` 置为 false、把表单的置为 true——**iOS 不允许在「另一个 Modal 正在关闭」时 present**，UIKit 把先前那个的关闭卡住，它就以完全透明的样子留在最上层，全屏 `Pressable` 把点击全部接走；此后所有 `Modal` 都 present 不出来。快速点「编辑」（前一个还在 280ms 开场动画里）也能触发同样的状态。
+- 改法：新增 `TokenSheets`，详情与表单**共用一个 `SheetModal`**，用 `mode`（`detail` / `form`）切内容；点「编辑」只是换页，不再关闭再打开 `Modal`。`TokenDetailPanel` / `TokenFormPanel` 只渲染面板内容，不再自带 `Modal`；表单通过 `closeRef` 把「点面板上方空白」的语义交给共用 Modal（选择页 → 表单 → 关闭），保持原来「先退一层」的行为。
+- 兜底：`SheetModal` 关闭动画的 `finished` 回调万一没回来（被系统打断等），400ms 后强制 `setMounted(false)`，不让一个全透明但仍拦截点击的 Modal 留在屏幕上。
+- 细节：表单的「保存 / 创建」按钮文案改用挂载时的 `editing` 判断，避免提交成功后面板淡出时 `initial` 已被清空、文案闪成「创建」；`onCancelForm` 只关面板、不再顺手清 `editingToken`（下次打开时 `openCreateToken` / `openEditToken` 会重置）。
+- 验证（iOS iPhone 18 Pro，Appium）：详情 → 编辑 → 改名 `tmp-edit2` → 保存，列表即时更新；新建令牌 → 点「分组优先选择」进选择页 → 点面板上方空白只退回表单（没关掉整个面板）→ 输入 `tmp-check` → 创建，列表出现 `#65`；再开详情 → 删除 → 确认框 → 列表恢复为只有 `Mobile client`。反复开关后点卡片、点 FAB、切标签页都正常，无残留遮罩。测试令牌 `#65` 已删除。
+- 事故如实记录：这轮为了把最新代码送进 App（Fast Refresh 当时已断）重载了 Expo Go，iOS 掉回登录页——`SecureStore` 里的记录没读回来，浏览器 jar 里的 `session` 也已失效（401），无法自行恢复；已请用户在模拟器上手动重新登录（`kira`，11:04 登录成功），之后没有再重载，登录态正常。
+- `npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。未提交、未推送。
+
+### 2026-11-24 · 用户要求：以后不要再让 App 掉登录（iOS 与安卓都算）
+
+- 用户原话：「以后不要帮我自动退出登录」，随后补充「不管是 iOS 还是安卓，都不要动」。起因是本轮为把新代码送进 App 重载了 Expo Go，iOS 掉回登录页。
+- 已写进 `HANDOVER_NEXT_CLI.md` 顶部的硬性约定和 `/Users/wenze/project.md` 的 QMSZAI 章节操作红线：**两个平台一样对待**——不 `simctl terminate/launch` Expo Go、不 force-stop 或重启安卓的 Expo Go、不重载 App、不随手 `simctl openurl exp://…`；改完代码先等 Fast Refresh，没生效先问用户；不改 `client.ts` 的会话逻辑、不调 `logout`；重启模拟器前先说明会掉登录并征得同意；掉登录只能请用户手动登录。
+
+### 2026-11-24 · 令牌卡片的「暂停」按钮改为红色，按住时红底白字
+
+- 用户原话：「这个暂停的字应该是红色的，并且手指按在上面时，还会变成红底白字以提示」，附图是令牌管理页 `Mobile client` 卡片（`#62`）。
+- 原因：暂停是**中断服务**的动作，按 iOS HIG 属于 destructive，应该用红色；此前和「启用」共用同一个次要按钮样式（蓝字），看不出这一下的风险等级。
+- 改法：`App.tsx` `TokensView` 里的切换按钮改成函数式 `style` + 函数式 children（拿 `Pressable` 的 `pressed`），只有 `status === 'active'`（文案「暂停」）时文字用 `palette.destructive`，按住时背景与边框换成 `palette.destructive`、文字用 `palette.onAccent`（白）；`paused`（「启用」）仍是蓝色文字，按住只给 `palette.pressedFill`，不碰危险色。
+- 样式落点：新增 `secondaryButtonTextDanger` / `secondaryButtonTextOnDanger` / `secondaryButtonDangerPressed` / `secondaryButtonPressed` 四个键，放在 `makeBaseStyles()`。注意 `styles` 是 `makeBaseStyles()` 与 `makeIosStyles()` 的并集类型，**只加到 iOS 样式块会过不了 `tsc`**（第一次就踩到了，已挪回 base）。
+- 顺带补的两个主题 token（深色核对时发现的问题）：
+  - `palette.destructiveFill`（iOS 深色 `#C63A43`、安卓深色 `#B3261E`，浅色与 `destructive` 同值）：深色下 `destructive` 是给**文字**用的浅红（`#FF6961` / `#FFB4AB`），直接当实心背景会让白字对比只有 2.8:1 左右，所以按压底色单独取一个更深的红。
+  - `palette.controlFill`（iOS 浅 `#F2F2F7` / 深 `#2C2C2E`，安卓浅 `#F2F5F7` / 深 `#28313A`）：iOS `secondaryButton` 原来用 `fillMuted`，而深色下 `fillMuted` 与 `card` 都是 `#1C1C1E`，整颗「暂停 / 启用」按钮在卡片上**看不见**（浅色 `#F2F2F7` 在白卡上正常）。换掉后浅色外观不变、深色重新出现按钮底。
+- 验证（iOS iPhone 18 Pro）：浅色静止态「暂停」为 `#B3404A` 红字，按压帧录屏抽帧为 `#B3404A` 底 + 纯白字；深色静止态为 `#FF6961` 红字、按压帧为 `#C33842`（≈`destructiveFill`）+ 白字，按钮底也能和卡片分开。两轮验证都点过令牌，最后都已切回「启用」，外观已改回「浅色」，全程没有重载 App。
+- 工具坑（给后面写脚本的同事）：W3C 的 `POST /session/{id}/actions` 只发 `pointerDown` 会在 WDA 上直接 500，且整段手势是**原子执行**的，按住中途截图拿不到 `pressed` 帧（背景仍是 `#F2F2F7`），所以那次「按住」实际在请求结束时被当作一次点击执行了。要抓按压态只有录屏抽帧这一条路；因此验完记得把令牌切回「启用」。全过程没有重载 App，iOS 登录态未受影响。
+- `npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。未提交、未推送。
+
+### 2026-11-24 · 概览页补齐网页端「数据看板」的全部指标
+
+- 用户原话：「在 mobile 端的界面内，有一些内容还是不完整，只有 web 有」，附网页端「数据看板」与移动端概览页的对比截图。网页端四组卡片：账户数据（账户余额 / 历史消耗 / 今日免费模型）、使用统计（请求次数 / 统计次数）、资源消耗（统计额度 / 统计Tokens）、性能指标（平均RPM / 平均TPM），移动端只有「请求次数（区间）/ 已使用 / 余额」。
+- 数据层（对照 `https://test.qmszai.cn/assets/Dashboard-B6HJKfkF.js` 逐个字段核过）：
+  - 账户数据：`/api/user/self` 的 `quota`（余额）、`used_quota`（历史消耗）、`request_count`（请求次数，历史累计）；今日免费模型取 `/api/user/free_daily_model/remaining`。
+  - 使用统计 / 资源消耗 / 性能指标：全部来自 `/api/data/self`。**该接口必须带 `start_timestamp` / `end_timestamp`，不带参数服务端返回 `[]`**；现在固定取最近 30 天（`default_time=day`），区间切换用 `created_at` 在前端按天过滤。统计次数 = `count` 累加，统计额度 = `quota` 累加，统计Tokens = `token_used` 累加。
+  - 平均 RPM / TPM 与网页端同公式：区间总量 ÷ 区间分钟数，三位小数（24h 即 7/1440 = 0.005、1541/1440 = 1.070）。
+- 今日免费模型接口的 `enabled` / `limit` / `used` / `remaining` 都在响应**顶层**（没有 `data` 包装，功能未配置时是 `{success:true,data:null}`），所以 `fetchFreeDailyModelUsage()` 走 `rawRequest` 自己解析，两种形态都兼容；`enabled === false` 或 `limit === 0` 时整行不渲染。
+- 顺带修正两处旧数据：`OverviewMetrics` 的 `requests` 其实是**区间**次数，与网页端「请求次数」（历史累计）不是一回事，改名 `times`；`reliability`（成功率）是「有请求就 100%」的假数据、后端也没有对应字段，删除，连带删掉那条进度条。
+- 界面：iOS / 安卓都换成 5 个 `Group`（账户数据 / 使用统计 / 资源消耗 / 性能指标 / 站点状态），全部 `Row`；删掉原 iOS `heroPanel` 与安卓 `heroCard` 及其样式（`hero*` / `panelLabel` / `heroMetric` / `progressTrack` / `progressFill`），`cardSurface` 导入随之移除。
+- 新增：`formatInt()`（千分位，2,573）、`FreeDailyModelUsage` 类型（`src/api/types.ts`）、`fetchDataSelf(params)` 的区间参数、`useConsoleData` 里的 `freeDaily` 状态、英文文案（账户数据 / 使用统计 / 统计次数 / 统计额度 / 统计Tokens / 资源消耗 / 性能指标 / 平均RPM / 平均TPM / 站点状态 / 今日免费模型）。
+- 数值核对（用当前登录会话直连接口，与网页截图一致）：余额 120715631 = ¥241.43、历史消耗 29798635 = ¥59.60、今日免费模型 2/30、请求次数 2,573、24h 统计次数 7、统计额度 518700 = ¥1.04、统计Tokens 1,541、RPM 0.005、TPM 1.070。
+- 事故如实记录：这轮改到了非组件模块（`src/api/format.ts`、`src/services/*`、`src/api/*`），Expo Go 整包重载，iOS 又掉回登录页（15:46，`SecureStore` 没读回 cookie，服务端 session 仍有效）；用户 16:00 左右手动重新登录后已恢复，没有再重载。
+- 验证（iOS iPhone 18 Pro，用户登录后）：24h 实测账户数据 ¥241.43 / ¥59.60 / 2/30，使用统计 2,573 / 7，资源消耗 ¥1.04 / 1,541，性能指标 0.005 / 1.070，站点状态 244 / 1 / — / 0，与网页端「数据看板」逐项一致；切 7d 后统计次数变为 10、Tokens 1,924（= 11-23 的 3 次 + 383 tokens 与今日累加），区间过滤生效。验完已切回 24h、回到聊天页。安卓未验证（无登录态）。
+- `npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。未提交、未推送。
+
+### 2026-11-24 · 模型详情点「分组」可逐个复制分组名
+
+- 用户原话：「加一个当用户点击这个对应分组后，弹出复制选项的功能，ios 安卓都要做」（附图：`gpt-6.1-sol` 的「分组 · gpt-codex3 等 10 个」那一行）。
+- 现状的问题：那一行是折叠文案，10 个分组只露出第一个，用户没法拿到具体分组名（在网页端是「可用分组」的标签列表）。
+- 改动：
+  - `src/types.ts`：`Model` 增加 `groups: string[]`（`enable_groups` 原样列表），`groupLabel` 仍是折叠后的展示文案。
+  - `src/services/liveConsole.ts`：`groupListOf()` 负责回落（没配 `enable_groups` 时用用户分组 / `default`），`groupLabelOf()` 只负责折叠，两者拼在 `mapConsoleModels` 里一起产出。
+  - `App.tsx` 的 `ModelDetail`：分组行改成 `Pressable`，值右侧加蓝色复制图标；点开是 `SheetModal` 底部列表（标题「分组」+ 模型名 + 关闭按钮），每行一个分组。
+  - 点某一行 → `Clipboard.setStringAsync(group)`，该行就地变成「已复制 ✓」（1.6 秒后复原），面板不自动关闭，方便连续复制多个；关闭面板时清掉计时器与已复制状态。
+  - 复用已有的 `groupOption` / `groupOptionMain` / `groupOptionName` / `groupOptionPressed` / `groupPickerList` 行样式（令牌分组选择器那套），双端一致；列表 `maxHeight: 300`，10 个分组可滚动。
+  - 新增样式 `detailHeaderMain` / `settingsRowPressed` / `groupCopiedLabel`；i18n 新增「关闭分组列表」「复制 {0}」「分组 {0}，点按可复制」。
+- 修正（用户 16:23 反馈「这个文字有错位」）：第一版把值放进了不可伸缩的 `copyKeyValue`，而 `settingsValue` 自带 `flex: 1`（flexBasis 0），文字框宽度算成 0 后向右溢出，`billingGrid` 又 `overflow: hidden`，于是「default」被卡片右缘截成「defau」、复制图标被挤到屏幕外。改成专用 `groupValueRow`（`flex: 1` + `flexDirection: 'row'` + `justifyContent: 'flex-end'` + `gap: 8`）配 `groupValueText`（`flexShrink: 1` + 右对齐），iOS 另外覆盖成 17pt / `subtleLabel`，和其它行一致。
+- 验证：`npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。**实机未验证**——首版改到 `types.ts`、`liveConsole.ts`、`i18n.en.ts`，Expo Go 整包重载，iOS 回到登录页（16:19，本次会话第三次）；用户 16:22 重新登录后看到了首版错位，随后这版布局修正 Metro 的 HMR 没送到运行中的 App（日志里没有新的 Bundled 记录），需要手动 reload 一次才能看到。
+- 未提交、未推送。
+
+### 2026-11-24 · 模型详情的「路由」按网页端改成「分组」
+
+- 用户原话：「根据 web 的命名，mobile 这个路由应该是分组吧？」（附图：模型详情里的「路由 / default」）。
+- 核对网页端：`Pricing` 页那一列叫**「可用分组」**，筛选器是「可用令牌分组」，数据源是 `/api/pricing` 的 `enable_groups`（`Model` 页里的「路由」是渠道层面的事，和这里不是一回事）。
+- 改动：
+  - `src/types.ts`：`Model.route` → `Model.groupLabel`，加注释说明是网页端「可用分组」。
+  - `src/services/liveConsole.ts`：新增 `groupLabelOf(groups, userGroup)`——0 个分组回落到用户分组 / `default`，1–2 个直接列（`a / b`），超过 2 个折叠成 `tf('{0} 等 {1} 个', 首个, 总数)`，避免 10 个分组的模型把详情页那一行撑成多行。
+  - `App.tsx`：`ModelDetail` 的 `SettingsRow` 标签改成 `t("分组")`，模型搜索的匹配字段同步改成 `model.groupLabel`。
+  - `src/ChatWorkspace.tsx`：`fallbackModel` 占位字段跟着改名。
+  - `src/i18n.en.ts`：删掉不再使用的 `"路由": "Routing"`（`"分组": "Group"` 本来就有）。
+- 数据核对：`/api/pricing` 共 340 个模型，1 个分组 234 个，其余 2–10 个（如 `gpt-6.1-sol` 10 个、`gemini-2.5-flash-lite` 4 个）。
+- 验证（iOS，用户重新登录后）：`Baichuan2-53B` 显示「分组 · default」；`gpt-6.1-sol` 显示「分组 · gpt-codex3 等 10 个」，单行不换行。`npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。
+- 事故如实记录：这轮改到 `services/liveConsole.ts`、`types.ts`、`i18n.en.ts`，Expo Go 又整包重载了一次（16:13 截图里会话列表短暂为空、历史角标归零、模型回到 `Doubao-pro-32k`）；未掉登录，切回聊天页后历史列表自动刷新回来了。以后尽量把这些改动攒到一次做完。
+- 未提交、未推送。
+
+### 2026-11-24 · 安卓「切换模型」改成和 iOS 同一个锚定浮层
+
+- 用户原话：「安卓端首页点进切换模型的界面，还是这种几乎占一整页的弹窗，要做成和 ios 那样类似的弹窗」（安卓截图：整页搜索栏 + 全屏列表）；看完 iOS 浮层截图后追问「没法做成这样的嘛」，明确了要的是 iOS 那种**贴着工具栏、浮在聊天页上**的卡片，而不是底部 sheet。
+- 中途试过一版「透明 Modal + 底部面板（约七成屏高）」，用户看了实际观感后否掉，最终方案是**双端共用 `ChatPopover`**：安卓不再走 `Modal`（`presentationStyle` 在安卓本来就不生效，等于整页）。
+- 改动（`src/ChatWorkspace.tsx`）：
+  - 删除安卓分支的整页 / 底部弹窗 `Modal`，模型列表统一渲染在 `ChatPopover` 里（`scrollable`、`estimatedHeight = 模型数 × 60 + 16`、A-Z 索引复用 `popoverOffsetFor`）。
+  - 顶部模型选择框在弹层打开时变成搜索框，原来只有 iOS 成立（`Platform.OS === 'ios' && modelPickerVisible`），现在双端都这样，搜索框仍可点按（浮层遮罩从锚点下方开始）。
+  - `openModelPicker` 双端都先 `measureInPage(modelButton)` 拿锚点再打开；键盘弹起时重新量页面尺寸的 effect 也去掉 iOS 限制，弹层跟着上移。
+  - 推荐分组标题（`recommendHeader` / `recommendHeaderSpaced`）去掉平台分支，统一 14pt 内缩，和行内容对齐（原来是安卓的 `marginLeft: 4`）。
+  - 清理随整页弹窗失效的样式与 ref：`modelSheet*`、`sheetSearch*`、`sheetListRow`、`sheetScroll`、`sheetFade`、`modelSearch` / `modelSearchInput`、`modelList` / `modelRow` / `modelMain` / `modelName` / `modelVendor` / `checkCircle`，以及 `modelSheetScroll` / `modelSheetListY` / `modelSheetRowOffsets` / `sheetOffsetFor` / `modelSheetAnim` / `windowHeight`。`sheetRoot` 与 `sheetContent` 保留给对话历史那个整页 Modal。
+- 补阴影（用户反馈「和背景没区分度」）：`popoverShadow` 改成按平台分支——iOS 保持原生 `shadowOpacity 0.18 / radius 24 / offset y 12`；安卓的 `shadow*` 不生效，改给 `elevation: 16`，并补 `backgroundColor: palette.card` + `borderRadius: 20`（elevation 需要有圆角底色才会投影；玻璃回退层同色 card，叠上去看不出来）。模型浮层与「+」菜单共用这个样式，同时生效。
+- 验证：iOS 实机复测通过（顶部点模型 → 选择框变搜索框、浮层停在工具栏下方，推荐 6 条 + 全部模型 + A-Z 索引均正常，点空白关闭）；`npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。**安卓模拟器上仍无登录态（`kira` 密码未知，按约定也不重启 App），安卓侧只做了代码层校验**，用户登录后需看一眼：浮层宽度与位置、搜索框输入时键盘不遮挡、列表滚动 / A-Z 定位、深色下浮层与背景能否分开。
+
+### 2026-11-24 · 账户充值（支付宝 / 微信 / 兑换码 / 充值记录 / 邀请奖励）
+
+- 用户原话：「可以使用opencli操作浏览器查看web端实际的充值界面与流程，并且在mobile中做出来」。
+- 网页端实测（`opencli browser web` 打开 `https://test.qmszai.cn/console/topup`，配合 `network` 抓包）：页面自上而下是账户统计（当前余额 / 历史消耗 / 请求次数）、充值数量 + 实付金额、选择支付方式（支付宝扫码支付 / 微信扫码支付）、选择充值额度 10·20·50·100·200·500（每档标「实付 ¥x，节省 ¥0」）、兑换码充值（输入框 + 兑换额度）、邀请奖励（待使用收益 / 总收益 / 邀请人数 + 划转到余额 + 邀请链接复制 + 奖励说明）；右上角「账单」弹窗是订单列表（订单号 / 支付方式 / 充值额度 / 支付金额 / 状态 / 创建时间）。
+- 接口实测（都用当前登录会话直连）：
+  - `GET /api/user/topup/info`：`enable_alipay_topup` / `enable_wechat_topup` 为 true，`enable_online_topup` / `stripe` / `creem` / `waffo` 全 false；`amount_options = [10,20,50,100,200,500]`、`min_topup = 1`、`alipay_min_topup = 0.01`、`wechat_min_topup = 1`、`payment_unit_price = 1`、`discount = {}`。
+  - `POST /api/user/alipay/pay {amount}` → `{qr_code: "https://qr.alipay.com/...", trade_no: "AP..."}`；`POST /api/user/wechat/pay {amount}` → `{qr_code: "weixin://wxpay/bizpayurl?pr=...", trade_no: "WX...", amount: "1.00"}`。
+  - 状态轮询 `GET /api/user/{alipay,wechat}/status?trade_no=` → `{status: "pending", amount, money}`（网页端 3 秒一次；5 分钟没付就停）。
+  - `GET /api/user/topup/self?page=1&page_size=n` → `{total, items:[{id, amount, money, trade_no, payment_method, create_time, complete_time, status}]}`，`create_time` 是 Unix 秒，未支付订单也会列出来（本轮留下了 3 笔 ¥1 的 `pending`）。
+  - `POST /api/user/topup {key}` → `data` 就是兑换到的额度数字；`POST /api/user/aff_transfer {quota}` 传原生额度单位。
+- 移动端落地（不新开 Tab，扩展已有的「账户 → 钱包」`src/screens/WalletScreen.tsx`）：
+  - 顶部 hero 卡保留余额（`quota` → `formatQuota`）+ 历史消耗 / 请求次数 / 用户分组。
+  - 「账户充值」组：充值数量行（`TextInput`，`number-pad`，副标题「最低 1」，整行可点聚焦）、实付金额行（`充值数量 × payment_unit_price × discount[n]`）、额度档位胶囊（`amount_options`，选中蓝底蓝字）、支付宝 / 微信扫码支付两行。
+  - 「兑换码充值」组：兑换码输入（`autoCapitalize="characters"`，回车即兑换）+「兑换额度」行。
+  - 「充值记录」组：取最近 5 笔，`¥金额` + 「支付宝/微信 · HH:mm」+ 状态（待支付 / 已支付 / 已失败）。
+  - 「邀请奖励」组：待使用收益 / 总收益 / 邀请人数（数据来自 `/api/user/self` 的 `aff_quota` / `aff_history_quota` / `aff_count`）、邀请码行（点按复制）、复制邀请链接、「划转到余额」（`aff_quota > 0` 才出现，带二次确认）。
+  - 支付：下单成功即弹居中卡片（`支付宝支付` / `微信支付` + 金额 + `等待支付` + 转圈 + 订单号），**不渲染二维码**（项目没有 QR 依赖，手机也用同机扫码没意义），改为 `Linking.openURL(qr_code)` 直接唤起对方 App；卡片里常驻「打开支付宝 / 打开微信」「复制支付链接」「关闭」，点背板也能关。唤起失败（没装 App）弹「无法打开支付应用 / 请复制支付链接后在对应 App 中打开」——微信在本机没装，正好验证到这条。
+  - 轮询 effect 只依赖 `pay.method / pay.status / pay.tradeNo`，成功后 `refreshUser()` + 重拉订单，`pay.status` 变 `success` 后 effect 自己停；100 次（5 分钟）兜底置 `timeout`。
+  - 遮罩用 `palette.overlay`，卡片 `maxWidth: 330`；`tsc` 不认 `useRef<TextInput>`，要写 `useRef<TextInputInstance>`（类型来自 `react-native`，和 `ChatWorkspace` 一致）。
+  - 两个输入框的无障碍标签故意和行标题不同（`充值金额，最低 {0}` / `输入兑换码`），否则 VoiceOver 与 Appium 都会匹配到第一个同名元素（行标题），点不到输入框。
+- 验证（iOS iPhone 18 Pro，17:17–17:19）：钱包页各分组排版正常；点档位 `¥10` → 充值数量变 10、实付 ¥10.00、胶囊变蓝；点「充值数量」任意位置弹出数字键盘、输入 `5` 后实付即时变 ¥510.00；点「微信扫码支付」→ 弹出支付卡片（微信支付 / ¥1.00 / 等待支付 + 转圈 / 订单号 WX…），随即弹出「无法打开支付应用」（本机未装微信），点「复制支付链接」提示「已复制支付链接」，关闭卡片后充值记录里立刻出现这笔 `¥1.00 微信 · 17:18 待支付`；「兑换额度」空输入提示「请输入兑换码」；邀请奖励三项均为 0，划转行按条件隐藏。`npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。
+- 已知限制：① 支付宝 `https://qr.alipay.com/...` 在 iOS 上会先开 Safari/Alipay 落地页（要求再点一次「打开支付宝」），试过 `alipays://platformapi/startapp?saId=10000007&qrcode=...` 但模拟器没装支付宝、无法验证，故仍用 https 兜底；② 充值记录只显示最近 5 笔，没做网页端「账单」弹窗的全量分页；③ 真实付款未验证（本机没有支付宝/微信，也没有可用的兑换码）。
+- 事故与结论（如实记录）：上一轮 HMR 断掉之后本轮开局 App 已经在登录页；按既有做法从模拟器 `host.exp.Exponent.binarycookies` 取出仍有效的 `session`，临时写进 `client.ts` 的 `restoreSession()` 兜底并用 `setTimeout(3s)` 补写 `SecureStore`，恢复登录完成验证，**验完已 `git checkout -- src/api/client.ts`，`git status` 里没有该文件的改动**。这轮顺手确认：本机 Expo Go 里 `SecureStore.setItemAsync` 会返回成功，但重载后 `getItemAsync` 恒为 `null`（日志 `TMPSS get none none` 出现在写入成功之后），所以**任何整包重载都会掉到登录页**，与 cookie 无关；`binarycookies` 里的 session 仍有效（用它直连 `/api/user/self` 返回 200）。结论：本地只能靠用户手动登录恢复，不要再用重载“修”界面。
+- 未提交、未推送。

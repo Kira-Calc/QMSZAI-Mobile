@@ -8,7 +8,10 @@ export type Model = {
   vendor: string;
   tags: string[];
   note: string;
-  route: string;
+  /** 该模型可用的令牌分组（网页端「可用分组」，来自 enable_groups），原样列表。 */
+  groups: string[];
+  /** 上面那份列表展示用的文案：超过两个会折叠成「首个 等 N 个」。 */
+  groupLabel: string;
   inputRate: string;
   outputRate: string;
   updatedAt: string;
@@ -34,16 +37,21 @@ export type Token = {
   allowIps?: string;
 };
 
+// 概览页的区间统计，字段与网页端数据看板一一对应。
 export type OverviewMetrics = {
-  requests: string;
-  reliability: string;
-  availableModels: string;
+  /** 区间请求数（网页端「统计次数」）。 */
+  times: string;
+  /** 区间额度消耗。 */
+  quotaLabel: string;
+  /** 区间 tokens。 */
+  tokensLabel: string;
+  /** 区间总量 ÷ 区间分钟数，三位小数。 */
+  rpm: string;
+  tpm: string;
   averageLatency: string;
   issueCount: number;
-  totalUsage: number;
-  totalQuota: number;
-  summary: string;
 };
+
 
 export type AccountSummary = {
   workspaceName: string;

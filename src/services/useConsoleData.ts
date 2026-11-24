@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   fetchDataSelf,
+  fetchFreeDailyModelUsage,
   fetchNotice,
   fetchPlaygroundModels,
   fetchPricing,
@@ -10,7 +11,7 @@ import {
   fetchTokens,
   fetchUsageLogs,
 } from '../api/endpoints';
-import type { DataSelfPoint, PricingPayload } from '../api/types';
+import type { DataSelfPoint, FreeDailyModelUsage, PricingPayload } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
 import type {
   MarketModel,
@@ -43,6 +44,7 @@ type ConsoleState = {
   points: DataSelfPoint[];
   logPoints: DataSelfPoint[];
   notice: string;
+  freeDaily: FreeDailyModelUsage | null;
 };
 
 const emptyState: ConsoleState = {
@@ -54,12 +56,23 @@ const emptyState: ConsoleState = {
   points: [],
   logPoints: [],
   notice: '',
+  freeDaily: null,
+};
+
+const emptyMetric: OverviewMetrics = {
+  times: '0',
+  quotaLabel: '¥0.00',
+  tokensLabel: '0',
+  rpm: '0.000',
+  tpm: '0.000',
+  averageLatency: '—',
+  issueCount: 0,
 };
 
 const emptyMetrics: Record<UsageRange, OverviewMetrics> = {
-  '24h': { requests: '0', reliability: '—', availableModels: '0', averageLatency: '—', issueCount: 0, totalUsage: 0, totalQuota: 1, summary: '' },
-  '7d': { requests: '0', reliability: '—', availableModels: '0', averageLatency: '—', issueCount: 0, totalUsage: 0, totalQuota: 1, summary: '' },
-  '30d': { requests: '0', reliability: '—', availableModels: '0', averageLatency: '—', issueCount: 0, totalUsage: 0, totalQuota: 1, summary: '' },
+  '24h': emptyMetric,
+  '7d': emptyMetric,
+  '30d': emptyMetric,
 };
 
 function extractPoints(payload: unknown): DataSelfPoint[] {
@@ -145,16 +158,20 @@ export function useConsoleData() {
     setLogsLoading(true);
     setTasksLoading(true);
 
-    const [modelsResult, playgroundResult, pricingResult, logsResult, tasksResult, dataResult, tokensResult, noticeResult] =
+    // 网页端看板的统计来自 /api/data/self 的日期区间，不带参数会返回空数组，
+    // 所以这里固定取最近 30 天（按天聚合），由前端再按 24h / 7d / 30d 过滤。
+    const now = Math.floor(Date.now() / 1000);
+    const [modelsResult, playgroundResult, pricingResult, logsResult, tasksResult, dataResult, tokensResult, noticeResult, freeDailyResult] =
       await Promise.allSettled([
         fetchUserModels(),
         fetchPlaygroundModels(),
         fetchPricing(),
         fetchUsageLogs({ page: 1, pageSize: 50 }),
         fetchTasks(1, 50),
-        fetchDataSelf(),
+        fetchDataSelf({ start: now - 30 * 24 * 3600, end: now, granularity: 'day' }),
         fetchTokens(1, 100),
         fetchNotice(),
+        fetchFreeDailyModelUsage(),
       ]);
     if (!mounted.current) return;
 
@@ -192,6 +209,7 @@ export function useConsoleData() {
           ? pointsFromLogs(logsResult.value.items ?? [])
           : current.logPoints,
       notice: noticeResult.status === 'fulfilled' ? noticeResult.value ?? '' : current.notice,
+      freeDaily: freeDailyResult.status === 'fulfilled' ? freeDailyResult.value : current.freeDaily,
     }));
 
     const failures = [
@@ -222,14 +240,15 @@ export function useConsoleData() {
   }, [refresh, user]);
 
   const metricsByRange = useMemo(() => {
+    // /api/data/self 有区间数据时优先用它（与网页端看板一致），否则退回用量日志。
     const points = state.points.length ? state.points : state.logPoints;
-    if (!points.length && !state.models.length) return emptyMetrics;
+    if (!points.length) return emptyMetrics;
     return {
-      '24h': buildMetrics({ points, modelCount: state.models.length, quotaPerUnit, range: '24h' }),
-      '7d': buildMetrics({ points, modelCount: state.models.length, quotaPerUnit, range: '7d' }),
-      '30d': buildMetrics({ points, modelCount: state.models.length, quotaPerUnit, range: '30d' }),
+      '24h': buildMetrics({ points, quotaPerUnit, range: '24h' }),
+      '7d': buildMetrics({ points, quotaPerUnit, range: '7d' }),
+      '30d': buildMetrics({ points, quotaPerUnit, range: '30d' }),
     } satisfies Record<UsageRange, OverviewMetrics>;
-  }, [state.points, state.logPoints, state.models.length, quotaPerUnit]);
+  }, [state.points, state.logPoints, quotaPerUnit]);
 
   const account = useMemo(() => {
     if (!user) return null;
