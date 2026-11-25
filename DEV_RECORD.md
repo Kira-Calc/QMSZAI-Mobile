@@ -639,3 +639,18 @@ src/
 - 已知限制：① 支付宝 `https://qr.alipay.com/...` 在 iOS 上会先开 Safari/Alipay 落地页（要求再点一次「打开支付宝」），试过 `alipays://platformapi/startapp?saId=10000007&qrcode=...` 但模拟器没装支付宝、无法验证，故仍用 https 兜底；② 充值记录只显示最近 5 笔，没做网页端「账单」弹窗的全量分页；③ 真实付款未验证（本机没有支付宝/微信，也没有可用的兑换码）。
 - 事故与结论（如实记录）：上一轮 HMR 断掉之后本轮开局 App 已经在登录页；按既有做法从模拟器 `host.exp.Exponent.binarycookies` 取出仍有效的 `session`，临时写进 `client.ts` 的 `restoreSession()` 兜底并用 `setTimeout(3s)` 补写 `SecureStore`，恢复登录完成验证，**验完已 `git checkout -- src/api/client.ts`，`git status` 里没有该文件的改动**。这轮顺手确认：本机 Expo Go 里 `SecureStore.setItemAsync` 会返回成功，但重载后 `getItemAsync` 恒为 `null`（日志 `TMPSS get none none` 出现在写入成功之后），所以**任何整包重载都会掉到登录页**，与 cookie 无关；`binarycookies` 里的 session 仍有效（用它直连 `/api/user/self` 返回 200）。结论：本地只能靠用户手动登录恢复，不要再用重载“修”界面。
 - 未提交、未推送。
+
+#### 2026-11-24 · 安卓实机补验（充值页）
+
+- 用户这边把上一轮全部改动提交成了 `a2551e1 payment`（含三份文档），已推送到 `origin/main`；本轮只剩 `src/screens/WalletScreen.tsx` 一处新增改动未提交。
+- 安卓模拟器（`qmszai_pixel`，Pixel 尺寸 1080×2400 / 360×800dp）从快照启动后**登录态还在**（余额 ¥241.42，用户 989294），所以这轮能补上安卓实机验证。启动方式记一笔：`nohup $ANDROID_HOME/emulator/emulator -avd qmszai_pixel -no-boot-anim > /tmp/qmszai-emulator.log 2>&1 &`，**必须让父 shell 一直 wait 住 emulator 进程**（`emulator ... & wait`），否则脚本一退出模拟器就收到信号自杀（实测三次都这样，日志里是 `Wait for emulator ... to shutdown gracefully before kill`）。
+- 安卓验证结果（全部通过）：
+  - 账户中心 → 钱包：hero 余额卡、账户充值、兑换码充值、充值记录、邀请奖励、额度说明全部正常；档位胶囊两行换行（¥10·20·50·100 / 200·500）不挤。
+  - 点「充值数量」整行 → 数字键盘弹出，**实付金额行仍在键盘上方可见**，输入即时联动（打到 134 → ¥134.00）。
+  - 点档位「¥100」→ 数量 100、实付 ¥100.00、胶囊变浅蓝底蓝字。
+  - 点「微信扫码支付」→ 支付卡片居中、遮罩压暗背景、转圈 + 「等待支付」、订单号 WX…；本机没装微信 → 弹「无法打开支付应用 / 请复制支付链接后在对应 App 中打开」；「复制支付链接」弹「已复制支付链接」，系统剪贴板预览显示 `weixin://wxpay/bizpayurl?pr=...`。
+  - 点「支付宝扫码支付」→ 安卓装了 Chrome，`https://qr.alipay.com/...` 被浏览器接住（比 iOS 少一步，但仍不是直接进支付宝），返回 App 后卡片还在。
+  - 空兑换码点「兑换额度」→ 弹「请输入兑换码」。
+- 顺带修掉一个 iOS 没暴露的问题：下单成功后记录列表不刷新（`loadOrders()` 原来只在进入页面、支付成功、兑换成功时调用），所以刚下的单关掉弹窗也看不到。现在 `startPayment` 拿到订单号后立刻 `loadOrders()`，关闭弹窗就能看到这笔「待支付」。
+- **本轮没能在实机上看到这个修复的生效**：Metro 之前重启过，两个 App 的 Fast Refresh 都没重连上（Metro 日志自重启后没有一条 Bundle 记录），按红线不重载 App，所以验证用的是重连前的 bundle。修复本身只有一行调用，`tsc` 与 `git diff --check` 通过，等下次 App 自然加载后生效。
+- 又留下 3 笔 ¥1 的待支付测试单（18:10 支付宝、18:11 微信、18:12 微信），后端仍无删除接口。

@@ -177,6 +177,8 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
         amount: amountValue,
         status: 'pending',
       });
+      // 下单即刷新记录，关掉弹窗就能看到这笔「待支付」。
+      loadOrders();
       openPayApp(order.qr_code);
     } catch (error) {
       if (isUnauthorized(error)) return;

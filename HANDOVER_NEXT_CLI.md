@@ -566,5 +566,7 @@ iOS 登录页右上角齿轮是 Expo Go 悬浮按钮，不是应用 UI。恢复�
   - 额度档位是胶囊行（`amount_options`），选中 `tintBlue` 底 + `palette.blue` 字。
   - 两个输入框的 `accessibilityLabel` 必须和行标题不同（`充值金额，最低 {0}` / `输入兑换码`），否则 VoiceOver / Appium 都只会匹配到行标题文字，点不到输入框。
   - 支付卡片遮罩用 `palette.overlay`，卡片 `maxWidth: 330`。
-- 验证状态：iOS 已实机走通（档位 / 输入联动 / 微信下单弹窗 + 未安装提示 / 复制支付链接 / 空兑换码提示 / 充值记录出现 pending 订单 / 邀请奖励空态）；真实付款、兑换成功、划转未验证（本机无支付宝微信、无兑换码）。安卓只过 `tsc`，登录后需看一眼卡片居中与遮罩、胶囊换行、键盘遮挡。
+- 验证状态：双端都已实机走通（档位 / 输入联动 / 微信下单弹窗 + 未安装提示 / 复制支付链接 / 空兑换码提示 / 邀请奖励空态 / 支付卡片居中与遮罩 / 档位胶囊换行 / 安卓键盘不遮实付金额）。安卓差异：`https://qr.alipay.com/...` 由 Chrome 接住，点了「支付宝扫码支付」会先跳浏览器。真实付款、兑换成功、划转仍未验证（本机无支付宝微信、无兑换码）。
+- 下单后记录列表：`startPayment` 成功即 `loadOrders()`（2026-11-24 安卓验证时补的），关掉弹窗就能看到这笔「待支付」。该行改动提交前请连同同一文件的其他修改一起带上。
+- 安卓模拟器启动：`nohup $ANDROID_HOME/emulator/emulator -avd qmszai_pixel -no-boot-anim > /tmp/qmszai-emulator.log 2>&1 &` 会被信号带走，必须写成 `emulator ... & wait`（父 shell 一直挂着）才能稳定运行。
 - 环境坑（重要）：本机 Expo Go 的 `SecureStore` 写入返回成功但**重载后读回 `null`**，所以任何整包重载都会掉到登录页；恢复只能靠用户手动登录，或临时把 `binarycookies` 里的 `session` 注入 `restoreSession()`（验完必须 `git checkout -- src/api/client.ts`）。
