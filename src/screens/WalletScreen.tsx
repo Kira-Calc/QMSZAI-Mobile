@@ -348,14 +348,14 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
           ) : null}
           {alipayEnabled ? (
             <Row
-              title={t('支付宝扫码支付')}
+              title={t('支付宝支付')}
               chevron
               onPress={() => startPayment('alipay')}
             />
           ) : null}
           {wechatEnabled ? (
             <Row
-              title={t('微信扫码支付')}
+              title={t('微信支付')}
               chevron
               onPress={() => startPayment('wechat')}
             />

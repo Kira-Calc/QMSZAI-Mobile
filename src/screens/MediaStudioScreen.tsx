@@ -50,10 +50,12 @@ import { speechToFile, writeBase64Audio } from '../api/client';
 import type { PricingPayload } from '../api/types';
 import type { MediaGeneration, MediaKind, Model, TaskKind } from '../types';
 import { ModelLogo } from '../components/ModelLogo';
+import { AppIcon } from '../components/AppIcon';
 import { modelsForKind, priceLabelOf, firstMediaUrl, taskIdOf } from '../services/mediaModels';
 import { waitForMediaTask } from '../services/mediaTasks';
 import {
   addMediaGeneration,
+  removeMediaGeneration,
   updateMediaGeneration,
   useMediaGenerations,
 } from '../mediaGenerations';
@@ -604,6 +606,21 @@ export function MediaStudioScreen({
     Alert.alert(t('已复制链接'));
   };
 
+  // 记录只在本机，删除就是把它从列表移除；生成中的任务会照常跑完，只是不再有人接收结果。
+  const confirmRemove = (item: MediaGeneration) => {
+    Alert.alert(t('删除记录？'), t('删除后无法恢复。'), [
+      { text: t('取消'), style: 'cancel' },
+      {
+        text: t('删除'),
+        style: 'destructive',
+        onPress: () => {
+          if (selectedId === item.id) setSelectedId(null);
+          void removeMediaGeneration(item.id);
+        },
+      },
+    ]);
+  };
+
   // 图片/视频优先写入系统相册；音频或相册权限不可用时回退到系统分享面板。
   const saveResult = async (item: MediaGeneration) => {
     if (!item.url || downloading) return;
@@ -753,41 +770,54 @@ export function MediaStudioScreen({
           ) : (
             <Group>
               {visibleGenerations.map((item) => (
-                <Pressable
-                  key={item.id}
-                  accessibilityRole="button"
-                  onPress={() => setSelectedId(item.id)}
-                  style={({ pressed }) => [styles.genRow, pressed ? styles.genRowPressed : null]}
-                >
-                  <View style={styles.genTop}>
-                    <Text style={styles.genTitle} numberOfLines={1}>
-                      {item.prompt}
-                    </Text>
-                    <Badge
-                      text={statusMeta[item.status].label}
-                      tone={statusMeta[item.status].tone}
-                    />
-                  </View>
-                  <Text style={styles.genMeta}>
-                    {configs[item.kind].label} · {item.model} · {timeLabel(item.createdAt)}
-                  </Text>
-                  {item.status === 'running' ? (
-                    <View style={styles.genProgressRow}>
-                      <View style={styles.genProgressTrack}>
-                        <GenerationProgress progress={item.progress} />
-                      </View>
-                      {item.progress !== undefined ? (
-                        <Text style={styles.genProgressValue}>{Math.round(item.progress)}%</Text>
-                      ) : null}
+                <View key={item.id} style={styles.genRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setSelectedId(item.id)}
+                    style={({ pressed }) => [styles.genMain, pressed ? styles.genRowPressed : null]}
+                  >
+                    <View style={styles.genTop}>
+                      <Text style={styles.genTitle} numberOfLines={1}>
+                        {item.prompt}
+                      </Text>
+                      <Badge
+                        text={statusMeta[item.status].label}
+                        tone={statusMeta[item.status].tone}
+                      />
                     </View>
-                  ) : null}
-                  <View style={styles.genBottom}>
-                    <Text style={styles.genSummary} numberOfLines={1}>
-                      {errorText(item) || item.summary}
+                    <Text style={styles.genMeta}>
+                      {configs[item.kind].label} · {item.model} · {timeLabel(item.createdAt)}
                     </Text>
-                    <Text style={styles.genCost}>{item.url ? t('查看') : ''}</Text>
-                  </View>
-                </Pressable>
+                    {item.status === 'running' ? (
+                      <View style={styles.genProgressRow}>
+                        <View style={styles.genProgressTrack}>
+                          <GenerationProgress progress={item.progress} />
+                        </View>
+                        {item.progress !== undefined ? (
+                          <Text style={styles.genProgressValue}>{Math.round(item.progress)}%</Text>
+                        ) : null}
+                      </View>
+                    ) : null}
+                    <View style={styles.genBottom}>
+                      <Text style={styles.genSummary} numberOfLines={1}>
+                        {errorText(item) || item.summary}
+                      </Text>
+                      <Text style={styles.genCost}>{item.url ? t('查看') : ''}</Text>
+                    </View>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={tf('删除 {0}', item.prompt)}
+                    hitSlop={8}
+                    onPress={() => confirmRemove(item)}
+                    style={({ pressed }) => [
+                      styles.genDelete,
+                      pressed ? styles.genRowPressed : null,
+                    ]}
+                  >
+                    <AppIcon name="trash" size={17} color={palette.red} />
+                  </Pressable>
+                </View>
               ))}
             </Group>
           )}
@@ -1003,7 +1033,12 @@ const styles = themedStyles(() => StyleSheet.create({
     marginRight: 4,
   },
   genRow: {
-    paddingHorizontal: 16,
+    flexDirection: 'row',
+  },
+  genMain: {
+    flex: 1,
+    paddingLeft: 16,
+    paddingRight: 4,
     paddingVertical: ios ? 12 : 14,
     gap: 5,
   },
@@ -1074,6 +1109,13 @@ const styles = themedStyles(() => StyleSheet.create({
     color: palette.blue,
     fontSize: 12,
     fontVariant: ['tabular-nums'],
+  },
+  genDelete: {
+    width: 48,
+    paddingRight: 12,
+    paddingBottom: ios ? 12 : 14,
+    justifyContent: 'flex-end',
+    alignItems: 'center',
   },
   footer: {
     flexDirection: 'row',

@@ -31,7 +31,7 @@ import {
   type ScrollViewInstance,
   type ViewProps,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatInt, formatQuota, formatQuotaSmart } from './src/api/format';
 import { usageRangeOptions } from './src/data/mockConsole';
@@ -890,6 +890,11 @@ function ModelsView({
   const blurTarget = useRef<ComponentRef<typeof View>>(null);
   const rowOffsets = useRef<number[]>([]);
   const listFade = useRef(new Animated.Value(0)).current;
+  // 安卓的模型详情也做成浮层卡片：遮罩淡入、卡片从底部滑上来，关闭时倒放。
+  const safeAreaInsets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const detailProgress = useRef(new Animated.Value(0)).current;
+  const [detailMounted, setDetailMounted] = useState(selectedModel !== null);
   const letters = useMemo(
     () => alphabetOf(filteredModels.map((model) => model.name)),
     [filteredModels],
@@ -903,6 +908,48 @@ function ModelsView({
     // modelList 有 paddingTop，减一点让字母对应的第一行完整露出。
     scrollRef.current?.scrollTo({ y: Math.max(0, offset - 12), animated: true });
   };
+
+  useEffect(() => {
+    // iOS 交给原生 pageSheet 的 slide，安卓自己驱动。
+    if (Platform.OS === 'ios') return;
+    if (selectedModel) {
+      setDetailMounted(true);
+      Animated.timing(detailProgress, {
+        toValue: 1,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
+    if (!detailMounted) return;
+    Animated.timing(detailProgress, {
+      toValue: 0,
+      duration: 200,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setDetailMounted(false);
+    });
+    // 兜底：动画被打断也要卸载，否则透明浮层会留在最上层吃点击。
+    const fallback = setTimeout(() => setDetailMounted(false), 400);
+    return () => clearTimeout(fallback);
+  }, [selectedModel, detailMounted, detailProgress]);
+
+  const detailSheetContent = (
+    <>
+      <SheetHeader title={t("模型详情")} onClose={() => setSelectedModel(null)} />
+      <ScrollView
+        contentContainerStyle={
+          Platform.OS === 'ios'
+            ? styles.detailSheetContent
+            : [styles.detailSheetContent, { paddingBottom: 40 + safeAreaInsets.bottom }]
+        }
+      >
+        {selectedModel ? <ModelDetail model={selectedModel} /> : null}
+      </ScrollView>
+    </>
+  );
 
   return (
     <View style={styles.splitContent}>
@@ -999,14 +1046,57 @@ function ModelsView({
       </View>
       <AlphabetRail letters={letters} onSelect={jumpToLetter} />
       </View>
-      <Modal visible={selectedModel !== null} animationType="slide" presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'} statusBarTranslucent onRequestClose={() => setSelectedModel(null)}>
-        <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
-          <SheetHeader title={t("模型详情")} onClose={() => setSelectedModel(null)} />
-          <ScrollView contentContainerStyle={styles.detailSheetContent}>
-            {selectedModel ? <ModelDetail model={selectedModel} /> : null}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+      {Platform.OS === 'ios' ? (
+        <Modal
+          visible={selectedModel !== null}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          statusBarTranslucent
+          onRequestClose={() => setSelectedModel(null)}
+        >
+          <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+            {detailSheetContent}
+          </SafeAreaView>
+        </Modal>
+      ) : (
+        <Modal
+          visible={detailMounted}
+          transparent
+          statusBarTranslucent
+          animationType="none"
+          onRequestClose={() => setSelectedModel(null)}
+        >
+          <View style={styles.detailSheetOverlay}>
+            <Animated.View style={[StyleSheet.absoluteFill, { opacity: detailProgress }]}>
+              <View style={[StyleSheet.absoluteFill, styles.detailSheetScrim]} />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t('关闭模型详情')}
+                onPress={() => setSelectedModel(null)}
+                style={StyleSheet.absoluteFill}
+              />
+            </Animated.View>
+            <Animated.View
+              style={[
+                styles.detailSheetCard,
+                {
+                  marginTop: safeAreaInsets.top + 16,
+                  transform: [
+                    {
+                      translateY: detailProgress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [windowHeight, 0],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            >
+              {detailSheetContent}
+            </Animated.View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -2357,6 +2447,16 @@ function makeBaseStyles() {
     lineHeight: 18,
   },
   detailSheetContent: { padding: 16, paddingBottom: 40 },
+  // 安卓的模型详情浮层：左右与底部贴边、上面两角圆角，靠遮罩分层。
+  detailSheetOverlay: { flex: 1 },
+  detailSheetScrim: { backgroundColor: palette.overlay },
+  detailSheetCard: {
+    flex: 1,
+    borderTopLeftRadius: shape.xl,
+    borderTopRightRadius: shape.xl,
+    overflow: 'hidden',
+    backgroundColor: palette.groupedBackground,
+  },
   detailPanel: {
     borderRadius: shape.xl,
     backgroundColor: m3.surfaceContainerLowest,

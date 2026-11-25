@@ -654,3 +654,65 @@ src/
 - 顺带修掉一个 iOS 没暴露的问题：下单成功后记录列表不刷新（`loadOrders()` 原来只在进入页面、支付成功、兑换成功时调用），所以刚下的单关掉弹窗也看不到。现在 `startPayment` 拿到订单号后立刻 `loadOrders()`，关闭弹窗就能看到这笔「待支付」。
 - **本轮没能在实机上看到这个修复的生效**：Metro 之前重启过，两个 App 的 Fast Refresh 都没重连上（Metro 日志自重启后没有一条 Bundle 记录），按红线不重载 App，所以验证用的是重连前的 bundle。修复本身只有一行调用，`tsc` 与 `git diff --check` 通过，等下次 App 自然加载后生效。
 - 又留下 3 笔 ¥1 的待支付测试单（18:10 支付宝、18:11 微信、18:12 微信），后端仍无删除接口。
+
+#### 2026-11-25 · 安卓「对话历史」改成卡片（对齐 iOS pageSheet）
+
+- 用户反馈：安卓的对话历史是一整页，iOS 是浮在页面上的圆角卡片，要一致。
+- 改法（只动 `src/ChatWorkspace.tsx` 一个文件）：
+  - iOS 保持原生 `presentationStyle="pageSheet"`，内容外面多包一层 `flex: 1` 的 `View`（`historyBody`），布局不变。
+  - 安卓改成透明 `Modal`：`transparent` + `presentationStyle="overFullScreen"` + `animationType="fade"`（整块遮罩滑上来很生硬，和 `SheetModal` 的处理一致），根容器铺 `palette.overlay` 遮罩；卡片（`historyCard`）**左右和底部贴边**、只有顶部留 `safeAreaInsets.top + 16` 的缺口，圆角只给上面两个角（`borderTopLeft/RightRadius: shape.xl`）、`overflow: 'hidden'`、背景 `palette.groupedBackground`；因为底部贴边，`ScrollView` 的 `contentContainerStyle` 在安卓额外加 `paddingBottom: 32 + safeAreaInsets.bottom`，避免最后一行压到手势条。卡片内还是原来的 `SheetHeader` + `ScrollView`（新建对话 / 最近列表的白色卡片层次不变）。第一版是四面留边的小卡片，用户看过之后要求「左右以及下边贴着边」，已按此调整。
+  - 卡片外的遮罩是一个 `absoluteFill` 的 `Pressable`，点了关闭（无障碍标签「关闭对话历史」）；返回键仍走 `onRequestClose`。
+  - **动画**：安卓用 `animationType="slide/fade"` 实测「点开没有动画」（Modal 窗口自己不做过渡），改成手写：`historyMounted` + `Animated.Value historyProgress`，打开时 `setHistoryMounted(true)` 后 280ms `Easing.out(cubic)` 到 1，关闭时 200ms `Easing.in(cubic)` 到 0 再卸载（400ms 兜底卸载，防止动画被打断后透明浮层吃点击）；遮罩用 `historyScrim` 单独一层做 `opacity`，卡片 `translateY` 从 `windowHeight` 滑到 0，`useNativeDriver: true`，Modal 本身 `animationType="none"`。iOS 继续交给原生 `pageSheet`，不参与这套动画。
+  - 安卓不加投影，靠遮罩压暗页面形成层次（沿用「安卓已统一扁平化」的约定）。
+- 验证（安卓模拟器 1080×2400 / 360×800dp）：`screenrecord` 抽帧确认打开是「遮罩淡入 + 卡片从底部滑上来」、关闭是倒放（不再是一下子出现/消失）；卡片左右与底部贴边、只有上面两角是圆的，标题「对话历史」与右上「完成」在卡片内；点顶部露出的遮罩关闭；点「完成」关闭；点某条对话正常进入并把卡片收起（选中行有 ✓，预览文字为最新一条消息）；`npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。iOS 未回归（代码路径与布局未变，需用户下次自然加载时瞄一眼）。
+- 事故与结论（如实记录）：按用户授权重载安卓 App 后**掉到了登录页**。排查发现 `SecureStore` 的数据其实还在（`/data/data/host.exp.exponent/shared_prefs/*-SecureStore.xml` 里有 `key_v1-qmszai_session_cookie` / `key_v1-qmszai_session_user`，**没有被 `clearSession` 删掉**），是 keystore 解密失败导致 `getItemAsync` 返回 null。**后续更正**：重启模拟器让用户重新登录一次之后，连续两次 `am force-stop host.exp.exponent` + `am start -a VIEW -d exp://127.0.0.1:8091` 都**保持登录**，说明 SecureStore 本身没问题，坏的是「快照恢复后旧的 keystore 密文解不开」。结论：整包重载可以做，但如果上次登录是在更早的模拟器快照里做的，重载仍可能掉登录；掉了一次之后重新登录即可长期正常。
+- 顺带记两个安卓模拟器坑：
+  - `adb root` 会重启 adbd，**`adb reverse tcp:8091 tcp:8091` 随之失效**（Metro 的 dev socket 连不上），要重新添加。
+  - 同一轮里模拟器 DNS 坏掉（`ping: unknown host`，但 `10.0.2.2/10.0.2.3/223.5.5.5` 都能 ping 通、`private_dns_mode` 为 off），改 private DNS、开关飞行模式都没用；最后 `adb emu kill` + 重新启动模拟器解决。以后遇到「网络连接失败，请检查网络后重试」先 `adb shell ping test.qmszai.cn` 确认，别先怀疑接口。
+- 未提交、未推送。
+
+#### 2026-11-25 · 安卓「模型详情」也改成卡片（模型目录）
+
+- 用户反馈：模型目录点开「模型详情」在安卓是一整页，要像对话历史一样是带遮罩、有动画的卡片。
+- 改法（`App.tsx` 的 `ModelsView`）：iOS 保持 `presentationStyle="pageSheet"`（内容抽成 `detailSheetContent`，布局不变）；安卓改成透明 `Modal` + 手写动画（`detailMounted` + `detailProgress`，打开 280ms `Easing.out(cubic)`、关闭 200ms `Easing.in(cubic)` 后卸载、400ms 兜底），遮罩层 `detailSheetScrim`（`palette.overlay`）做 `opacity`、卡片 `detailSheetCard` `translateY` 从 `windowHeight` 到 0。卡片左右与底部贴边、只有 `borderTopLeft/RightRadius: shape.xl`，顶部留 `safeAreaInsets.top + 16`，背景 `palette.groupedBackground`；内容 `detailSheetContent` 在安卓额外加 `paddingBottom: 40 + safeAreaInsets.bottom`。
+- 新增 `useSafeAreaInsets` 导入与 i18n 词条「关闭模型详情」（遮罩的无障碍标签）。
+- 验证（安卓模拟器）：`screenrecord` 抽帧确认打开是遮罩淡入 + 卡片从底部升起、关闭倒放；点遮罩（卡片上方那条）和「完成」都能关；`npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。
+- iOS 重载后回归：模型详情、对话历史仍是原生 `pageSheet`（顶部圆角卡片、「完成」可关），`detailSheetContent` 的拆分没有破坏 iOS 布局。
+
+#### 2026-11-25 · 共享 `Sheet` 在安卓统一改成卡片（模型广场 / 消息 / 任务 / 个人设置等 10 处）
+
+- 用户反馈：安卓「模型详情」还是一整页。这次指的是**模型广场**（`src/screens/ModelMarketplaceScreen.tsx`）里的详情——它走的是 `src/ui.tsx` 的共享 `Sheet`，上一轮改的是「模型目录」里 `App.tsx` 的那一个，所以没生效。
+- 改法（只动 `src/ui.tsx` 的 `Sheet`，一处改动覆盖全部调用点）：
+  - iOS 分支不变：`presentationStyle="pageSheet"` + 原生 `slide`，内容抽成 `sheetBody` 复用。
+  - 安卓：透明 `Modal`（`animationType="none"`）+ `palette.overlay` 遮罩 + 手写 `Animated`（打开 280ms `Easing.out(cubic)`、关闭 200ms `Easing.in(cubic)`、400ms 兜底卸载、`useNativeDriver: true`）。卡片 `sheetCard` 左右与底部贴边、只有 `borderTopLeft/RightRadius: shape.xl`、`overflow: 'hidden'`、顶部留 `insets.top + 16`；卡片内保留原来的 `SafeAreaView`（`edges=['bottom','left','right']`），所以底部手势条不会被压到。遮罩层是 `absoluteFill` 的 `Pressable`（无障碍标签「关闭」），返回键走 `onRequestClose`。
+  - **关闭时闪白**：调用方大多写成 `visible={selected !== null}` + `{selected ? … : null}`，关闭瞬间子内容就没了。`Sheet` 里用 `lastChildren` ref 留住最后一次内容，动画期间继续渲染它。
+- 验证（安卓模拟器 1080×2400）：
+  - 模型广场 → 模型详情：卡片形态正确，`screenrecord` 抽帧确认关闭是卡片下滑 + 遮罩淡出，中间没有闪白。
+  - 任务详情、个人设置里的「显示名称」「修改密码」同样是卡片；点遮罩、点「完成」、按返回键都能关，返回键不会退出 App。
+  - 带输入框的「显示名称」：点输入框弹键盘时卡片随 `adjustResize` 收缩，输入框和「保存」都还在可视区。
+- iOS 回归：共享 `Sheet` 的 `sheetBody` 拆分后，模型广场详情仍是原生 `pageSheet`（顶部圆角、「完成」玻璃胶囊），布局没变。
+- 已知（与本次无关）：Fast Refresh 之后偶发底部标签栏点不动（`LiquidTabBar` 的 `minimized` 状态没复位，`pointerEvents` 为 none），整包重载即恢复。另外安卓子页面（如模型广场）按系统返回键会直接退出 App，而不是回到上一页，这是既有问题，未在本轮处理。
+
+#### 2026-11-25 · AI 创作「生成记录」加删除按钮
+
+- 用户要求：生成记录每条都要能删。
+- 事实：记录只落本机（`src/mediaGenerations.ts`，`AsyncStorage` + 按账号隔离），**服务端没有删除接口**，所以删除就是把它从列表和存储里移掉。
+- 改动：
+  - `src/mediaGenerations.ts` 新增 `removeMediaGeneration(id)`（过滤 + `persist()`，找不到 id 时直接返回）。
+  - `src/screens/MediaStudioScreen.tsx`：每行右侧加红色垃圾桶按钮，点击弹 `删除记录？` / `删除后无法恢复。` / 取消·删除（`style: 'destructive'`），删的是当前查看的那条时同时关掉详情。
+  - 行结构改成 `View` + 主 `Pressable` + 删除 `Pressable`（照 `ChatWorkspace` 对话历史的做法）。**第一版是嵌套 Pressable + 灰色图标**，实测无障碍树把整行和按钮合并成一个元素（label 里带「删除记录」但点不到），改成兄弟节点后删除按钮才是独立元素，`accessibilityLabel` 用 `tf('删除 {0}', item.prompt)`；图标换成 `palette.red` 与对话历史一致。
+  - i18n 新增「删除记录？」。
+- 边界：删掉正在生成的记录不会中止服务端任务，只是 `updateMediaGeneration` 找不到 id 后不再接收结果。
+- 验证（iOS 实机）：4 条 → 点第二条（15:29 的语音）→ 确认框 → 删除 → 变成 3 条、列表即时刷新；无障碍树里四条记录各有一个独立的「删除 …」按钮（48×86）。安卓该设备生成记录为空（换账号时按设计清过），未目检按钮，组件与页面代码双端共用。
+- 未提交、未推送。
+
+#### 2026-11-25 · 充值页渠道文案去掉「扫码」+ 支付接口调研
+
+- 用户问「移动端为什么还是扫码支付，是不是只有扫码接口，有没有直接跳转支付的接口」。
+- 结论（查了 web 端 `TopUp-BxFtXgjf.js` 与 new-api 文档）：
+  - 站点只开了**支付宝当面付 / 微信 Native**：`POST /api/user/alipay/pay` 走 `alipay.trade.precreate`，返回 `qr_code`（`https://qr.alipay.com/...`）；`POST /api/user/wechat/pay` 返回 `weixin://wxpay/bizpayurl?...`；状态接口轮询。web 端同样只是把 `qr_code` 渲染成二维码。
+  - **没有** H5 / WAP / APP 支付接口；通用网关 `POST /api/user/pay`（易支付风格，表单 POST 跳转）需要站点开启 `enable_online_topup`，本站没开（`/api/user/topup/info` 里只有 `enable_alipay_topup` / `enable_wechat_topup`）。Stripe / Creem / Waffo 全关。
+  - 移动端本来就不渲染二维码：点行直接 `Linking.openURL(qr_code)`。微信的 `weixin://` 是真正的深链；支付宝的 `https://qr.alipay.com/...` 在装了支付宝的手机上会拉起客户端（本机没装，只能落到 Chrome）。
+- 改动：充值页两行文案 `支付宝扫码支付` / `微信扫码支付` → `支付宝支付` / `微信支付`（复用支付弹窗标题已有的词条，`i18n.en.ts` 里删掉两条不再使用的 `*扫码支付`）。安卓实机确认钱包页显示「支付宝支付」「微信支付」。
+- iOS 当时还在跑旧 bundle（Fast Refresh 没重连），重载后同样确认钱包页显示「支付宝支付」「微信支付」（重载会掉登录，已用 kira 账号登回）。
+- 未做（待用户定）：支付宝先试 `alipays://platformapi/startapp?...` 再回落 https；后端开 H5/易支付才能做到真正的 App 内收银台。

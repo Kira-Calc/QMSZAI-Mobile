@@ -547,7 +547,7 @@ iOS 登录页右上角齿轮是 Expo Go 悬浮按钮，不是应用 UI。恢复�
   - 顶部模型选择框在 `modelPickerVisible` 时变成搜索框（原先是 `Platform.OS === 'ios' && modelPickerVisible`）。
   - `openModelPicker` 双端都先 `measureInPage(modelButton)` 拿锚点再打开。
   - 键盘弹起重新量页面尺寸的 effect 不再限定 iOS，浮层随键盘上移。
-- 已被删除、不要再加回来的样式：`modelSheet*`、`sheetSearch*`、`sheetListRow` / `sheetScroll` / `sheetFade`、`modelSearch` / `modelSearchInput`、`modelList` / `modelRow` / `modelMain` / `modelName` / `modelVendor` / `checkCircle`。`sheetRoot` / `sheetContent` 仍归对话历史那个整页 `Modal`。
+- 已被删除、不要再加回来的样式：`modelSheet*`、`sheetSearch*`、`sheetListRow` / `sheetScroll` / `sheetFade`、`modelSearch` / `modelSearchInput`、`modelList` / `modelRow` / `modelMain` / `modelName` / `modelVendor` / `checkCircle`。`sheetRoot` / `sheetContent` 仍归对话历史 `Modal`（iOS 是 pageSheet 整页，安卓是 2026-11-25 加的卡片，见下）。
 - **阴影**：`popoverShadow` 按平台分支，iOS 用 `shadowOpacity 0.18 / radius 24 / offset y 12`；安卓 `shadow*` 无效，用 `elevation: 16` + `backgroundColor: palette.card` + `borderRadius: 20`（elevation 要有圆角底色才投影）。改阴影时两端都要留，别只改一边。
 - iOS 已实机复测通过；安卓模拟器仍无登录态，仅过 `tsc`，登录后需看浮层位置 / 宽度、键盘遮挡、滚动与索引、深色对比。
 
@@ -568,5 +568,39 @@ iOS 登录页右上角齿轮是 Expo Go 悬浮按钮，不是应用 UI。恢复�
   - 支付卡片遮罩用 `palette.overlay`，卡片 `maxWidth: 330`。
 - 验证状态：双端都已实机走通（档位 / 输入联动 / 微信下单弹窗 + 未安装提示 / 复制支付链接 / 空兑换码提示 / 邀请奖励空态 / 支付卡片居中与遮罩 / 档位胶囊换行 / 安卓键盘不遮实付金额）。安卓差异：`https://qr.alipay.com/...` 由 Chrome 接住，点了「支付宝扫码支付」会先跳浏览器。真实付款、兑换成功、划转仍未验证（本机无支付宝微信、无兑换码）。
 - 下单后记录列表：`startPayment` 成功即 `loadOrders()`（2026-11-24 安卓验证时补的），关掉弹窗就能看到这笔「待支付」。该行改动提交前请连同同一文件的其他修改一起带上。
-- 安卓模拟器启动：`nohup $ANDROID_HOME/emulator/emulator -avd qmszai_pixel -no-boot-anim > /tmp/qmszai-emulator.log 2>&1 &` 会被信号带走，必须写成 `emulator ... & wait`（父 shell 一直挂着）才能稳定运行。
+- 安卓模拟器启动：`nohup $ANDROID_HOME/emulator/emulator -avd qmszai_pixel -no-boot-anim > /tmp/qmszai-emulator.log 2>&1 &` 会被信号带走，必须写成 `emulator ... & wait`（父 shell 一直挂着）才能稳定运行。启动后要 `adb reverse tcp:8091 tcp:8091`，否则 Expo Go 连不上 8091；`adb root` 会重启 adbd，**reverse 映射随之丢失**，需要重新加。
 - 环境坑（重要）：本机 Expo Go 的 `SecureStore` 写入返回成功但**重载后读回 `null`**，所以任何整包重载都会掉到登录页；恢复只能靠用户手动登录，或临时把 `binarycookies` 里的 `session` 注入 `restoreSession()`（验完必须 `git checkout -- src/api/client.ts`）。
+
+## 对话历史：iOS pageSheet / 安卓遮罩卡片（2026-11-25）
+
+- 用户反馈安卓是一整页、iOS 是浮在页面上的圆角卡片，要求一致。改动只在 `src/ChatWorkspace.tsx` 的对话历史 `Modal`。
+- iOS：仍用原生 `presentationStyle="pageSheet"`，内容外面多包一层 `flex: 1` 的 `View`（`styles.historyBody`），布局不变。
+- 安卓：透明 `Modal`（`transparent`、`presentationStyle="overFullScreen"`、`animationType="fade"`）→ 根容器铺 `palette.overlay` → 卡片 `styles.historyCard`（**左右和底部贴边**，只有 `borderTopLeft/RightRadius: shape.xl`，顶部 `marginTop: safeAreaInsets.top + 16`，`overflow: 'hidden'`，背景 `palette.groupedBackground`）→ 里面还是 `SheetHeader` + `ScrollView` + `sheetContent`；底部贴边所以安卓的 `contentContainerStyle` 额外加 `paddingBottom: 32 + safeAreaInsets.bottom`，别让最后一行压到手势条。用户明确要「左右以及下边贴着边」，不要改回四面留边。
+- 卡片外层是一个 `StyleSheet.absoluteFill` 的 `Pressable`（无障碍标签「关闭对话历史」），点遮罩关闭；返回键走 `onRequestClose`。安卓不加投影，靠遮罩压暗分层（别加 `elevation`，和「安卓已统一扁平化」冲突）。
+- 动画：安卓的 Modal 用 `animationType` 实测没有过渡（点开是硬切），所以改成手写 `historyMounted` + `Animated.Value historyProgress`：打开 280ms `Easing.out(cubic)`、关闭 200ms `Easing.in(cubic)` 后再卸载（400ms 兜底），遮罩层 `historyScrim` 做 `opacity`、卡片 `translateY` 从 `windowHeight` 到 0，`useNativeDriver: true`，`Modal` 自身 `animationType="none"`。iOS 仍走原生 `pageSheet` 的 `slide`，两条分支各自独立，别把 iOS 也套进这套 Animated。
+- 已验证（安卓模拟器）：卡片左右与底部贴边、上面两角圆角，标题/完成在卡内、点顶部遮罩关闭、点完成关闭、点某条对话进入并收起卡片；`tsc` / `git diff --check` 通过。iOS 未在改后回归，仅布局等价。
+- 环境补充：安卓 Expo Go 曾出现「`SecureStore` 数据还在（`shared_prefs` 里有 `key_v1-qmszai_session_*`）、但重载后读回 null」导致掉登录，原因是**模拟器快照恢复后旧的 keystore 密文解不开**。在重启模拟器后重新登录一次，之后连续两次整包重载都保持登录，所以重载本身没问题；只是别用「很旧快照里的登录态」去验证重载。
+
+## 模型目录「模型详情」也是安卓卡片（2026-11-25）
+
+- 用户要求和对话历史一致：`App.tsx` 的 `ModelsView` 里那个 `Modal` 在 iOS 仍是 `pageSheet`，安卓改透明 `Modal` + `historyProgress` 同款手写动画（`detailMounted` / `detailProgress`），卡片 `detailSheetCard` 贴左右与底部、只圆上面两角、顶部 `safeAreaInsets.top + 16`，遮罩 `detailSheetScrim`（`palette.overlay`），内容在安卓加 `paddingBottom: 40 + safeAreaInsets.bottom`。
+- `src/ui.tsx` 的共享 `Sheet`（模型广场详情、消息详情、任务详情、个人设置、媒体/融合选择器等 10 处）**仍是整页 Modal**，要统一成卡片需要改这个组件并逐页回归。
+
+## 充值渠道接口能力（2026-11-25 调研）
+
+- 本站只有**当面付 / Native 扫码**两个通道：`POST /api/user/alipay/pay` → `alipay.trade.precreate` 的 `qr_code`（`https://qr.alipay.com/...`）；`POST /api/user/wechat/pay` → `weixin://wxpay/bizpayurl?...`；再配 `/api/user/{alipay,wechat}/status` 轮询。web 端也只是渲染二维码。
+- 没有 H5 / WAP / APP 支付接口。`POST /api/user/pay` 是易支付网关（表单 POST 跳转），需要后台开 `enable_online_topup`；本站未开。
+- 移动端不画二维码，直接 `Linking.openURL`：微信是真深链，支付宝是 https，装支付宝的机器会拉起客户端。因此充值页文案已从「支付宝/微信扫码支付」改为「支付宝支付」「微信支付」。
+
+## iOS 模拟器重载与 Appium 输入（2026-11-25 实测可用）
+
+- 重载 Expo Go（Fast Refresh 没重连时唯一可靠手段）：
+  1. `xcrun simctl terminate booted host.exp.Exponent`
+  2. `xcrun simctl launch booted host.exp.Exponent`（会回到 Expo Go 首页）
+  3. `xcrun simctl openurl booted "exp://127.0.0.1:8091"`（Metro 日志出现 `iOS Bundled …` 即成功）
+- `simctl openurl` 在 App 已经跑着同一个 experience 时是**无效**的（什么都不会发生）；必须先 terminate，再 launch，再 openurl。
+- Appium 的 `terminate_app` / `activate_app` / `mobile: shake` 这套 Appium 2 + XCUITest 驱动都返回 404，别浪费时间；`osascript` 也找不到 Simulator（-1728）。就用上面三步。
+- **掉登录**：重载后 SecureStore 读回空，一定回登录页。用 Appium 填 kira 账号密码登回（密码问用户，别写进文件）。
+- Appium 输入坑：
+  - 一次 `POST /element/{id}/value` 传整串会**丢字**（只进第一个字符）。改成逐字符发送、间隔 ~0.18s，发完用 `GET /element/{id}/attribute/value` 核对（安全输入框返回 `••••` 个数）。
+  - 元素 id 会随 App 重启失效；App 被 terminate/launch 后要重建 session（`POST /session`），否则全是 `invalid session id` 404。现成脚本 `/tmp/ios5.py`（session 缓存 + 失效自动重建 + `tap` / `find` / `type_into` / `shot` / `source`）。

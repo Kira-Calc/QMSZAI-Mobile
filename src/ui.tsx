@@ -17,6 +17,8 @@ import {
 } from 'react';
 import {
   AccessibilityInfo,
+  Animated,
+  Easing,
   LayoutAnimation,
   Modal,
   Platform,
@@ -25,12 +27,13 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
   type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { elevation, m3, ripple, shape, type } from './material';
@@ -507,16 +510,48 @@ export function Sheet({
 }) {
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const [fadeId] = useState(() => `sheetFade${fadeSeq++}`);
-  return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      statusBarTranslucent
-      presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
-      onRequestClose={onClose}
-    >
-      <SafeAreaView style={styles.sheetRoot} edges={['top', 'bottom', 'left', 'right']}>
-        <SheetHeader title={title} onClose={onClose} />
+  // 安卓的弹层也做成贴边卡片：遮罩淡入、卡片从底部滑上来，关闭时倒放。
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const progress = useRef(new Animated.Value(0)).current;
+  const [mounted, setMounted] = useState(visible);
+  // 关闭时调用方通常会把选中项置空，留一份最后的内容，动画期间卡片才不会闪白。
+  const lastChildren = useRef<ReactNode>(children);
+  const shownChildren = visible ? children : lastChildren.current;
+
+  useEffect(() => {
+    if (visible) lastChildren.current = children;
+  });
+
+  useEffect(() => {
+    if (ios) return;
+    if (visible) {
+      setMounted(true);
+      Animated.timing(progress, {
+        toValue: 1,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
+    if (!mounted) return;
+    Animated.timing(progress, {
+      toValue: 0,
+      duration: 200,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setMounted(false);
+    });
+    // 兜底：动画被打断也要卸载，否则透明浮层会留在最上层吃点击。
+    const fallback = setTimeout(() => setMounted(false), 400);
+    return () => clearTimeout(fallback);
+  }, [visible, mounted, progress]);
+
+  const sheetBody = (
+    <>
+      <SheetHeader title={title} onClose={onClose} />
         {onSearchChange ? (
           <View style={styles.sheetSearchBar}>
             <View style={styles.sheetSearchField}>
@@ -551,7 +586,7 @@ export function Sheet({
             contentContainerStyle={styles.sheetContent}
             keyboardShouldPersistTaps="handled"
           >
-            {empty ? <Text style={styles.sheetEmptyText}>{emptyText}</Text> : children}
+            {empty ? <Text style={styles.sheetEmptyText}>{emptyText}</Text> : shownChildren}
           </ScrollView>
           <AlphabetRail
             letters={indexLetters ?? []}
@@ -573,7 +608,64 @@ export function Sheet({
           </Svg>
         </View>
         {footer ? <View style={styles.sheetFooter}>{footer}</View> : null}
-      </SafeAreaView>
+    </>
+  );
+
+  if (ios) {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        statusBarTranslucent
+        presentationStyle="pageSheet"
+        onRequestClose={onClose}
+      >
+        <SafeAreaView style={styles.sheetRoot} edges={['top', 'bottom', 'left', 'right']}>
+          {sheetBody}
+        </SafeAreaView>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      visible={mounted}
+      transparent
+      statusBarTranslucent
+      animationType="none"
+      onRequestClose={onClose}
+    >
+      <View style={styles.sheetOverlay}>
+        <Animated.View style={[StyleSheet.absoluteFill, { opacity: progress }]}>
+          <View style={[StyleSheet.absoluteFill, styles.sheetScrim]} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('关闭')}
+            onPress={onClose}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
+        <Animated.View
+          style={[
+            styles.sheetCard,
+            {
+              marginTop: insets.top + 16,
+              transform: [
+                {
+                  translateY: progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [windowHeight, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <SafeAreaView style={styles.sheetRoot} edges={['bottom', 'left', 'right']}>
+            {sheetBody}
+          </SafeAreaView>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
@@ -820,6 +912,16 @@ const styles = themedStyles(() => StyleSheet.create({
   },
   sheetRoot: {
     flex: 1,
+    backgroundColor: palette.groupedBackground,
+  },
+  // 安卓弹层的卡片：左右与底部贴边、上面两角圆角，靠遮罩分层。
+  sheetOverlay: { flex: 1 },
+  sheetScrim: { backgroundColor: palette.overlay },
+  sheetCard: {
+    flex: 1,
+    borderTopLeftRadius: shape.xl,
+    borderTopRightRadius: shape.xl,
+    overflow: 'hidden',
     backgroundColor: palette.groupedBackground,
   },
   sheetNav: {

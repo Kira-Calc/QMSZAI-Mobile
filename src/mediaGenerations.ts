@@ -118,6 +118,15 @@ export async function updateMediaGeneration(id: string, patch: Partial<MediaGene
   await persist();
 }
 
+// 记录只在本机，删除就是把它从列表和存储里移除；正在生成的任务仍会跑完，只是不再有人接收结果。
+export async function removeMediaGeneration(id: string) {
+  await initMediaGenerations();
+  if (!generations.some((item) => item.id === id)) return;
+  generations = generations.filter((item) => item.id !== id);
+  emit();
+  await persist();
+}
+
 export function useMediaGenerations() {
   return useSyncExternalStore(subscribe, getMediaGenerations, getMediaGenerations);
 }

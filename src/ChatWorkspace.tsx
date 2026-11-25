@@ -154,6 +154,7 @@ export function ChatWorkspace({
   const [toolsAnchor, setToolsAnchor] = useState({ x: 111, y: 170, width: 228, height: 36 });
   const { visible: keyboardVisible, inset: keyboardInset } = useKeyboardInsets(true);
   const safeAreaInsets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   // 渐变模糊只在键盘弹出、输入条上移后淡入；收起键盘时淡出，避免静态页面出现色带。
   const blurTarget = useRef<ComponentRef<typeof View>>(null);
   const composerFade = useRef(new Animated.Value(0)).current;
@@ -594,6 +595,124 @@ export function ChatWorkspace({
 
   const canSend = draft.trim().length > 0 && !busy;
 
+  // 安卓的对话历史是浮层卡片：遮罩淡入、卡片从底部滑上来，关闭时倒放。
+  // iOS 继续交给原生 pageSheet 做动画，这里不参与。
+  const historyProgress = useRef(new Animated.Value(0)).current;
+  const [historyMounted, setHistoryMounted] = useState(historyVisible);
+
+  useEffect(() => {
+    if (ios) return;
+    if (historyVisible) {
+      setHistoryMounted(true);
+      Animated.timing(historyProgress, {
+        toValue: 1,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
+    if (!historyMounted) return;
+    Animated.timing(historyProgress, {
+      toValue: 0,
+      duration: 200,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setHistoryMounted(false);
+    });
+    // 兜底：动画回调被打断时也要卸载，否则透明浮层会一直盖在页面上吃点击。
+    const fallback = setTimeout(() => setHistoryMounted(false), 400);
+    return () => clearTimeout(fallback);
+  }, [historyVisible, historyMounted, historyProgress]);
+
+  const historyContent = (
+    <>
+      <SheetHeader title={t("对话历史")} onClose={() => setHistoryVisible(false)} />
+
+      <ScrollView
+        contentContainerStyle={
+          ios
+            ? styles.sheetContent
+            : [styles.sheetContent, { paddingBottom: 32 + safeAreaInsets.bottom }]
+        }
+      >
+        <Pressable
+          accessibilityRole="button"
+          onPress={startNewConversation}
+          style={({ pressed }) => [styles.newConversation, pressed ? styles.pressed : null]}
+        >
+          <View style={styles.newConversationIcon}>
+            <Icon name="plus.bubble" fallback="＋" size={19} color={palette.blue} />
+          </View>
+          <Text style={styles.newConversationText}>{t('新建对话')}</Text>
+        </Pressable>
+
+        {sortedConversations.length === 0 ? (
+          <View style={styles.historyEmpty}>
+            <Icon name="bubble.left.and.bubble.right" fallback="◌" size={32} color={palette.tertiaryLabel} />
+            <Text style={styles.historyEmptyTitle}>{t('还没有对话')}</Text>
+          </View>
+        ) : (
+          <>
+            <Text style={styles.groupLabel}>{t('最近')}</Text>
+            <View style={styles.historyList}>
+              {sortedConversations.map((conversation, index) => {
+                const isSelected = selected === conversation.id;
+                const model = models.find((item) => item.id === conversation.modelId);
+                return (
+                  <View
+                    key={conversation.id}
+                    style={[
+                      styles.historyRow,
+                      index < sortedConversations.length - 1 ? styles.historyRowBorder : null,
+                    ]}
+                  >
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isSelected }}
+                      onPress={() => openConversation(conversation.id)}
+                      style={({ pressed }) => [styles.historyMain, pressed ? styles.pressed : null]}
+                    >
+                      <View style={styles.historyTop}>
+                        <Text numberOfLines={1} style={styles.historyName}>
+                          {conversation.title}
+                        </Text>
+                        {isSelected ? (
+                          <Icon name="checkmark" fallback="✓" size={15} color={palette.blue} />
+                        ) : null}
+                      </View>
+                      <Text numberOfLines={1} style={styles.historyPreview}>
+                        {plainText(
+                          conversation.messages[conversation.messages.length - 1]?.text ??
+                            conversation.modelId ??
+                            t('暂无消息'),
+                        )}
+                      </Text>
+                      <Text style={styles.historyMeta}>
+                        {conversation.messages.length} {t('条消息 ·')} {model?.name ?? t('未知模型')} ·{' '}
+                        {relativeTime(conversation.updatedAt)}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={tf('删除 {0}', conversation.title)}
+                      onPress={() => deleteConversation(conversation.id)}
+                      hitSlop={8}
+                      style={({ pressed }) => [styles.deleteButton, pressed ? styles.pressed : null]}
+                    >
+                      <Icon name="trash" fallback="⌫" size={17} color={palette.red} />
+                    </Pressable>
+                  </View>
+                );
+              })}
+            </View>
+          </>
+        )}
+      </ScrollView>
+    </>
+  );
+
   return (
     <View
       ref={rootRef}
@@ -874,92 +993,58 @@ export function ChatWorkspace({
         </View>
       </View>
 
-      <Modal
-        visible={historyVisible}
-        animationType="slide"
-        statusBarTranslucent
-        presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
-        onRequestClose={() => setHistoryVisible(false)}
-      >
-        <SafeAreaView style={styles.sheetRoot} edges={['top', 'bottom', 'left', 'right']}>
-          <SheetHeader title={t("对话历史")} onClose={() => setHistoryVisible(false)} />
-
-          <ScrollView contentContainerStyle={styles.sheetContent}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={startNewConversation}
-              style={({ pressed }) => [styles.newConversation, pressed ? styles.pressed : null]}
+      {ios ? (
+        <Modal
+          visible={historyVisible}
+          animationType="slide"
+          statusBarTranslucent
+          presentationStyle="pageSheet"
+          onRequestClose={() => setHistoryVisible(false)}
+        >
+          <SafeAreaView style={styles.sheetRoot} edges={['top', 'bottom', 'left', 'right']}>
+            {historyContent}
+          </SafeAreaView>
+        </Modal>
+      ) : (
+        <Modal
+          visible={historyMounted}
+          transparent
+          statusBarTranslucent
+          animationType="none"
+          onRequestClose={() => setHistoryVisible(false)}
+        >
+          <View style={styles.historyOverlay}>
+            <Animated.View style={[StyleSheet.absoluteFill, { opacity: historyProgress }]}>
+              <View style={[StyleSheet.absoluteFill, styles.historyScrim]} />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t('关闭对话历史')}
+                onPress={() => setHistoryVisible(false)}
+                style={StyleSheet.absoluteFill}
+              />
+            </Animated.View>
+            <Animated.View
+              style={[
+                styles.historyBody,
+                styles.historyCard,
+                {
+                  marginTop: safeAreaInsets.top + 16,
+                  transform: [
+                    {
+                      translateY: historyProgress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [windowHeight, 0],
+                      }),
+                    },
+                  ],
+                },
+              ]}
             >
-              <View style={styles.newConversationIcon}>
-                <Icon name="plus.bubble" fallback="＋" size={19} color={palette.blue} />
-              </View>
-              <Text style={styles.newConversationText}>{t('新建对话')}</Text>
-            </Pressable>
-
-            {sortedConversations.length === 0 ? (
-              <View style={styles.historyEmpty}>
-                <Icon name="bubble.left.and.bubble.right" fallback="◌" size={32} color={palette.tertiaryLabel} />
-                <Text style={styles.historyEmptyTitle}>{t('还没有对话')}</Text>
-              </View>
-            ) : (
-              <>
-                <Text style={styles.groupLabel}>{t('最近')}</Text>
-                <View style={styles.historyList}>
-                  {sortedConversations.map((conversation, index) => {
-                    const isSelected = selected === conversation.id;
-                    const model = models.find((item) => item.id === conversation.modelId);
-                    return (
-                      <View
-                        key={conversation.id}
-                        style={[
-                          styles.historyRow,
-                          index < sortedConversations.length - 1 ? styles.historyRowBorder : null,
-                        ]}
-                      >
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityState={{ selected: isSelected }}
-                          onPress={() => openConversation(conversation.id)}
-                          style={({ pressed }) => [styles.historyMain, pressed ? styles.pressed : null]}
-                        >
-                          <View style={styles.historyTop}>
-                            <Text numberOfLines={1} style={styles.historyName}>
-                              {conversation.title}
-                            </Text>
-                            {isSelected ? (
-                              <Icon name="checkmark" fallback="✓" size={15} color={palette.blue} />
-                            ) : null}
-                          </View>
-                          <Text numberOfLines={1} style={styles.historyPreview}>
-                            {plainText(
-                              conversation.messages[conversation.messages.length - 1]?.text ??
-                                conversation.modelId ??
-                                t('暂无消息'),
-                            )}
-                          </Text>
-                          <Text style={styles.historyMeta}>
-                            {conversation.messages.length} {t('条消息 ·')} {model?.name ?? t('未知模型')} ·{' '}
-                            {relativeTime(conversation.updatedAt)}
-                          </Text>
-                        </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel={tf('删除 {0}', conversation.title)}
-                          onPress={() => deleteConversation(conversation.id)}
-                          hitSlop={8}
-                          style={({ pressed }) => [styles.deleteButton, pressed ? styles.pressed : null]}
-                        >
-                          <Icon name="trash" fallback="⌫" size={17} color={palette.red} />
-                        </Pressable>
-                      </View>
-                    );
-                  })}
-                </View>
-              </>
-            )}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+              {historyContent}
+            </Animated.View>
+          </View>
+        </Modal>
+      )}
 
       <ChatPopover
         visible={modelPickerVisible}
@@ -1704,6 +1789,17 @@ const styles = themedStyles(() => StyleSheet.create({
   },
   toolMenuLabel: { color: palette.label, fontSize: 16, fontWeight: ios ? '400' : '500' },
   sheetRoot: { flex: 1, backgroundColor: palette.groupedBackground },
+  // 安卓不做整页 sheet：压暗底下的聊天，卡片左右和底部贴边、只有顶部留缺口，和 iOS 的 pageSheet 观感一致。
+  historyOverlay: { flex: 1 },
+  // 遮罩单独一层，好跟卡片一起做淡入淡出。
+  historyScrim: { backgroundColor: palette.overlay },
+  historyBody: { flex: 1 },
+  historyCard: {
+    borderTopLeftRadius: shape.xl,
+    borderTopRightRadius: shape.xl,
+    overflow: 'hidden',
+    backgroundColor: palette.groupedBackground,
+  },
   sheetContent: { paddingHorizontal: 16, paddingBottom: 32, gap: 12 },
   newConversation: {
     minHeight: ios ? 54 : 60,
