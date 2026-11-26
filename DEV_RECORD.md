@@ -693,6 +693,24 @@ src/
 - iOS 回归：共享 `Sheet` 的 `sheetBody` 拆分后，模型广场详情仍是原生 `pageSheet`（顶部圆角、「完成」玻璃胶囊），布局没变。
 - 已知（与本次无关）：Fast Refresh 之后偶发底部标签栏点不动（`LiquidTabBar` 的 `minimized` 状态没复位，`pointerEvents` 为 none），整包重载即恢复。另外安卓子页面（如模型广场）按系统返回键会直接退出 App，而不是回到上一页，这是既有问题，未在本轮处理。
 
+#### 2026-11-26 · 充值记录行与支付弹窗标题补上品牌图标（「不要纯文字」）
+
+- 用户提示词原文：「不要纯文字」。承接上一条里「充值记录行与支付弹窗标题仍是纯文字」的自述，要求这两处也带图形，而不是只有文字。
+- `src/screens/WalletScreen.tsx`：
+  - 充值记录每条 `Row` 加 `leading={<PaymentLogo brand={order.payment_method === 'wechat' ? 'wechat' : 'alipay'} size={22} />}`；副标题保持 `支付宝 · 11/25 09:27`（图标 + 渠道名，读屏仍能听到渠道）。`TopUpOrder.payment_method` 是 `string`，沿用页面原有判定：非 `wechat` 一律按支付宝。
+  - 支付弹窗标题从单个 `<Text>` 改成 `payTitleRow`（`row` + `gap: 8`）+ `PaymentLogo brand={pay.method} size={22}` + `payTitle`，`pay.method` 本身就是 `'alipay' | 'wechat'`，可直接作为 `brand`。
+- 验证：iOS 实机（下单后从 Safari 用 `appium /appium/device/activate_app` 拉回前台）看到弹窗标题是「支付宝方标 + 支付宝支付」；充值记录 5 条各带对应品牌图标。安卓实机付款卡片同理（下单跳 Chrome，`keyevent 4` 返回后卡片仍在），充值记录列表图标正常。
+- 注意：`xcrun simctl launch booted host.exp.Exponent` 会把 Expo Go 重启到首页（不是单纯切前台），需要重新点「最近打开」进项目；要只切前台用 Appium 的 `activate_app`。本次重启后登录态仍在。
+- `tsc`、`git diff --check` 通过；未提交、未推送。
+
+#### 2026-11-26 · 充值渠道加官方品牌图标
+
+- 用户要求：钱包页两种支付方式都加官方图标。
+- 新增 `src/components/PaymentLogo.tsx`：内置 Simple Icons 的支付宝（`#1677FF`）与微信（`#07C160`）矢量路径，`react-native-svg` 单色渲染，`<PaymentLogo brand="alipay" | "wechat" size?>`，默认 24（与 `Row` 里 `AppIcon` 同尺寸）。图形本身设了 `accessibilityElementsHidden`，读屏只播渠道名。
+- `src/screens/WalletScreen.tsx`：两行 `Row` 用 `leading={<PaymentLogo brand=… />}`（`Row` 已有的插槽，间距沿用 `row` 的 gap），文案仍是上一轮改的「支付宝支付」「微信支付」。
+- 验证：iOS 与安卓实机截图均显示蓝色支付宝方标与绿色微信气泡；`tsc`、`git diff --check` 通过。安卓这次重载先报了 Expo Go 的「Something went wrong」，原因是 `Failed to download remote update`（网络抖动，不是代码），重开 `exp://127.0.0.1:8091` 即恢复。
+- 未做：充值记录行（`支付宝 · 11/25 09:27`）与支付弹窗标题仍是纯文字，需要的话可以复用同一个组件。
+
 #### 2026-11-25 · AI 创作「生成记录」加删除按钮
 
 - 用户要求：生成记录每条都要能删。

@@ -32,6 +32,7 @@ import { formatCurrency, formatQuota, formatUnixTime } from '../api/format';
 import type { TopUpInfo, TopUpOrder } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
 import { AppIcon } from '../components/AppIcon';
+import { PaymentLogo } from '../components/PaymentLogo';
 import { pressedSurface } from '../material';
 import { Group, Row, Subpage, palette } from '../ui';
 import { themedStyles } from '../theme';
@@ -349,6 +350,7 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
           {alipayEnabled ? (
             <Row
               title={t('支付宝支付')}
+              leading={<PaymentLogo brand="alipay" />}
               chevron
               onPress={() => startPayment('alipay')}
             />
@@ -356,6 +358,7 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
           {wechatEnabled ? (
             <Row
               title={t('微信支付')}
+              leading={<PaymentLogo brand="wechat" />}
               chevron
               onPress={() => startPayment('wechat')}
             />
@@ -397,6 +400,12 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
               key={order.id}
               title={formatCurrency(order.money)}
               subtitle={tf('{0} · {1}', order.payment_method === 'wechat' ? t('微信') : t('支付宝'), formatUnixTime(order.create_time))}
+              leading={
+                <PaymentLogo
+                  brand={order.payment_method === 'wechat' ? 'wechat' : 'alipay'}
+                  size={22}
+                />
+              }
               value={orderStatusLabel(order.status)}
             />
           ))}
@@ -467,7 +476,10 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
           />
           {pay ? (
             <View style={styles.payCard}>
-              <Text style={styles.payTitle}>{payTitle(pay.method)}</Text>
+              <View style={styles.payTitleRow}>
+                <PaymentLogo brand={pay.method} size={22} />
+                <Text style={styles.payTitle}>{payTitle(pay.method)}</Text>
+              </View>
               <Text style={styles.payAmount}>{formatCurrency(pay.amount)}</Text>
               <View style={styles.payStatusRow}>
                 {pay.status === 'pending' ? (
@@ -658,6 +670,11 @@ const styles = themedStyles(() => StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 22,
     paddingBottom: 12,
+    alignItems: 'center',
+    gap: 8,
+  },
+  payTitleRow: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
