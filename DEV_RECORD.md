@@ -693,6 +693,21 @@ src/
 - iOS 回归：共享 `Sheet` 的 `sheetBody` 拆分后，模型广场详情仍是原生 `pageSheet`（顶部圆角、「完成」玻璃胶囊），布局没变。
 - 已知（与本次无关）：Fast Refresh 之后偶发底部标签栏点不动（`LiquidTabBar` 的 `minimized` 状态没复位，`pointerEvents` 为 none），整包重载即恢复。另外安卓子页面（如模型广场）按系统返回键会直接退出 App，而不是回到上一页，这是既有问题，未在本轮处理。
 
+#### 2026-11-26 · 关闭双端支付功能（总开关）
+
+- 用户要求：「关闭双端的支付功能」。没有说明只关安卓，所以 iOS / Android 一起关（同一份 JS）。
+- 新增 `src/features.ts`：`export const PAYMENTS_ENABLED = false;`，注释写清恢复方式（改回 `true`，页面代码不用动）。
+- `src/screens/WalletScreen.tsx` 用这个开关做四层收敛：
+  1. 「账户充值」分组（充值数量 / 实付金额 / 金额档位 / 支付宝 / 微信）整块不渲染。
+  2. 「充值记录」分组不渲染（历史订单也属支付内容）。
+  3. 支付弹窗 `<Modal>` 不挂载。
+  4. 挂载时不再请求 `fetchTopUpInfo` / `fetchTopUpOrders`；`startPayment` 开头直接 return 兜底。
+- 保留：余额卡片、兑换码（`兑换额度`）、邀请奖励与划转、额度说明。额度说明本来就是「签到、兑换码、邀请奖励」，与关支付后一致。
+- 验证：
+  - iOS 模拟器钱包页只剩「兑换码充值 / 邀请奖励 / 额度说明」，无充值入口与记录。
+  - 安卓 Expo Go 同样；重新 `assembleRelease`（增量 12 秒）后把 `~/Downloads/QMSZAI-Mobile-1.0.0.apk` 覆盖为 11:03 的包，`adb install -r` 后进钱包确认同样没有支付区块。
+- 未提交、未推送（`src/features.ts` 新增、`WalletScreen.tsx`、`app.json` 的 `android.package`）。
+
 #### 2026-11-26 · 本地打出安卓 release APK
 
 - 用户要求：「先部署到安卓上，是需要一个安卓的 apk 文件吗？需要如何导出，或者你帮我导出」。

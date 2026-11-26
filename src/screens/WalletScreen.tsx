@@ -33,6 +33,7 @@ import type { TopUpInfo, TopUpOrder } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
 import { AppIcon } from '../components/AppIcon';
 import { PaymentLogo } from '../components/PaymentLogo';
+import { PAYMENTS_ENABLED } from '../features';
 import { pressedSurface } from '../material';
 import { Group, Row, Subpage, palette } from '../ui';
 import { themedStyles } from '../theme';
@@ -124,6 +125,8 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
   }, []);
 
   useEffect(() => {
+    // 支付功能关闭时完全不请求充值配置与订单，避免留下支付入口或多余的网络请求。
+    if (!PAYMENTS_ENABLED) return;
     let active = true;
     fetchTopUpInfo()
       .then((data) => {
@@ -160,7 +163,7 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
   };
 
   const startPayment = async (method: PayMethod) => {
-    if (busy) return;
+    if (!PAYMENTS_ENABLED || busy) return;
     if (!amountValid) {
       Alert.alert(tf('充值数量不能小于 {0}', String(minTopup)));
       return;
@@ -299,71 +302,73 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
           </View>
         </View>
 
-        <Group header={t("账户充值")}>
-          <Row
-            title={t('充值数量')}
-            subtitle={tf('最低 {0}', String(minTopup))}
-            onPress={() => amountRef.current?.focus()}
-            accessory={
-              <TextInput
-                ref={amountRef}
-                value={amount}
-                onChangeText={(next) => setAmount(next.replace(/[^0-9]/g, ''))}
-                keyboardType="number-pad"
-                inputMode="numeric"
-                placeholder={String(minTopup)}
-                placeholderTextColor={palette.placeholder}
-                accessibilityLabel={tf('充值金额，最低 {0}', String(minTopup))}
-                style={styles.amountInput}
+        {PAYMENTS_ENABLED ? (
+          <Group header={t("账户充值")}>
+            <Row
+              title={t('充值数量')}
+              subtitle={tf('最低 {0}', String(minTopup))}
+              onPress={() => amountRef.current?.focus()}
+              accessory={
+                <TextInput
+                  ref={amountRef}
+                  value={amount}
+                  onChangeText={(next) => setAmount(next.replace(/[^0-9]/g, ''))}
+                  keyboardType="number-pad"
+                  inputMode="numeric"
+                  placeholder={String(minTopup)}
+                  placeholderTextColor={palette.placeholder}
+                  accessibilityLabel={tf('充值金额，最低 {0}', String(minTopup))}
+                  style={styles.amountInput}
+                />
+              }
+            />
+            <Row
+              title={t('实付金额')}
+              value={formatCurrency(actualAmount)}
+            />
+            {(info?.amount_options?.length ?? 0) > 0 ? (
+              <View style={styles.amountChips}>
+                {(info?.amount_options ?? []).map((option) => {
+                  const active = amountValue === option;
+                  return (
+                    <Pressable
+                      key={option}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={formatCurrency(option, 0)}
+                      onPress={() => setAmount(String(option))}
+                      style={({ pressed }) => [
+                        styles.amountChip,
+                        active ? styles.amountChipActive : null,
+                        pressed ? pressedSurface : null,
+                      ]}
+                    >
+                      <Text style={[styles.amountChipText, active ? styles.amountChipTextActive : null]}>
+                        {formatCurrency(option, 0)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : null}
+            {alipayEnabled ? (
+              <Row
+                title={t('支付宝支付')}
+                leading={<PaymentLogo brand="alipay" />}
+                chevron
+                onPress={() => startPayment('alipay')}
               />
-            }
-          />
-          <Row
-            title={t('实付金额')}
-            value={formatCurrency(actualAmount)}
-          />
-          {(info?.amount_options?.length ?? 0) > 0 ? (
-            <View style={styles.amountChips}>
-              {(info?.amount_options ?? []).map((option) => {
-                const active = amountValue === option;
-                return (
-                  <Pressable
-                    key={option}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                    accessibilityLabel={formatCurrency(option, 0)}
-                    onPress={() => setAmount(String(option))}
-                    style={({ pressed }) => [
-                      styles.amountChip,
-                      active ? styles.amountChipActive : null,
-                      pressed ? pressedSurface : null,
-                    ]}
-                  >
-                    <Text style={[styles.amountChipText, active ? styles.amountChipTextActive : null]}>
-                      {formatCurrency(option, 0)}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : null}
-          {alipayEnabled ? (
-            <Row
-              title={t('支付宝支付')}
-              leading={<PaymentLogo brand="alipay" />}
-              chevron
-              onPress={() => startPayment('alipay')}
-            />
-          ) : null}
-          {wechatEnabled ? (
-            <Row
-              title={t('微信支付')}
-              leading={<PaymentLogo brand="wechat" />}
-              chevron
-              onPress={() => startPayment('wechat')}
-            />
-          ) : null}
-        </Group>
+            ) : null}
+            {wechatEnabled ? (
+              <Row
+                title={t('微信支付')}
+                leading={<PaymentLogo brand="wechat" />}
+                chevron
+                onPress={() => startPayment('wechat')}
+              />
+            ) : null}
+          </Group>
+        ) : null}
 
         <Group header={t("兑换码充值")}>
           <Row
@@ -386,30 +391,32 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
           <Row title={t('兑换额度')} onPress={redeem} chevron />
         </Group>
 
-        <Group header={t("充值记录")}>
-          {orders === null ? (
-            <View style={styles.ordersLoading}>
-              <ActivityIndicator size="small" color={palette.blue} />
-            </View>
-          ) : null}
-          {orders !== null && orders.length === 0 ? (
-            <Row title={t('暂无充值记录')} />
-          ) : null}
-          {(orders ?? []).map((order) => (
-            <Row
-              key={order.id}
-              title={formatCurrency(order.money)}
-              subtitle={tf('{0} · {1}', order.payment_method === 'wechat' ? t('微信') : t('支付宝'), formatUnixTime(order.create_time))}
-              leading={
-                <PaymentLogo
-                  brand={order.payment_method === 'wechat' ? 'wechat' : 'alipay'}
-                  size={22}
-                />
-              }
-              value={orderStatusLabel(order.status)}
-            />
-          ))}
-        </Group>
+        {PAYMENTS_ENABLED ? (
+          <Group header={t("充值记录")}>
+            {orders === null ? (
+              <View style={styles.ordersLoading}>
+                <ActivityIndicator size="small" color={palette.blue} />
+              </View>
+            ) : null}
+            {orders !== null && orders.length === 0 ? (
+              <Row title={t('暂无充值记录')} />
+            ) : null}
+            {(orders ?? []).map((order) => (
+              <Row
+                key={order.id}
+                title={formatCurrency(order.money)}
+                subtitle={tf('{0} · {1}', order.payment_method === 'wechat' ? t('微信') : t('支付宝'), formatUnixTime(order.create_time))}
+                leading={
+                  <PaymentLogo
+                    brand={order.payment_method === 'wechat' ? 'wechat' : 'alipay'}
+                    size={22}
+                  />
+                }
+                value={orderStatusLabel(order.status)}
+              />
+            ))}
+          </Group>
+        ) : null}
 
         <Group header={t("邀请奖励")}>
           <View style={styles.inviteStats}>
@@ -466,61 +473,63 @@ export function WalletScreen({ onBack }: { onBack: () => void }) {
         </Group>
       </ScrollView>
 
-      <Modal visible={pay !== null} transparent animationType="fade" onRequestClose={() => setPay(null)}>
-        <View style={styles.payRoot}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t('关闭支付')}
-            onPress={() => setPay(null)}
-            style={StyleSheet.absoluteFill}
-          />
-          {pay ? (
-            <View style={styles.payCard}>
-              <View style={styles.payTitleRow}>
-                <PaymentLogo brand={pay.method} size={22} />
-                <Text style={styles.payTitle}>{payTitle(pay.method)}</Text>
-              </View>
-              <Text style={styles.payAmount}>{formatCurrency(pay.amount)}</Text>
-              <View style={styles.payStatusRow}>
+      {PAYMENTS_ENABLED ? (
+        <Modal visible={pay !== null} transparent animationType="fade" onRequestClose={() => setPay(null)}>
+          <View style={styles.payRoot}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('关闭支付')}
+              onPress={() => setPay(null)}
+              style={StyleSheet.absoluteFill}
+            />
+            {pay ? (
+              <View style={styles.payCard}>
+                <View style={styles.payTitleRow}>
+                  <PaymentLogo brand={pay.method} size={22} />
+                  <Text style={styles.payTitle}>{payTitle(pay.method)}</Text>
+                </View>
+                <Text style={styles.payAmount}>{formatCurrency(pay.amount)}</Text>
+                <View style={styles.payStatusRow}>
+                  {pay.status === 'pending' ? (
+                    <ActivityIndicator size="small" color={palette.secondaryLabel} />
+                  ) : null}
+                  <Text style={styles.payStatus}>{payStatusText(pay)}</Text>
+                </View>
+                <Text style={styles.payTrade}>{tf('订单号 {0}', pay.tradeNo)}</Text>
                 {pay.status === 'pending' ? (
-                  <ActivityIndicator size="small" color={palette.secondaryLabel} />
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => openPayApp(pay.url)}
+                    style={({ pressed }) => [styles.payPrimary, pressed ? pressedSurface : null]}
+                  >
+                    <Text style={styles.payPrimaryText}>
+                      {pay.method === 'wechat' ? t('打开微信') : t('打开支付宝')}
+                    </Text>
+                  </Pressable>
                 ) : null}
-                <Text style={styles.payStatus}>{payStatusText(pay)}</Text>
-              </View>
-              <Text style={styles.payTrade}>{tf('订单号 {0}', pay.tradeNo)}</Text>
-              {pay.status === 'pending' ? (
                 <Pressable
                   accessibilityRole="button"
-                  onPress={() => openPayApp(pay.url)}
-                  style={({ pressed }) => [styles.payPrimary, pressed ? pressedSurface : null]}
+                  onPress={async () => {
+                    await Clipboard.setStringAsync(pay.url);
+                    Alert.alert(t('已复制支付链接'));
+                  }}
+                  style={({ pressed }) => [styles.paySecondary, pressed ? pressedSurface : null]}
                 >
-                  <Text style={styles.payPrimaryText}>
-                    {pay.method === 'wechat' ? t('打开微信') : t('打开支付宝')}
-                  </Text>
+                  <Text style={styles.paySecondaryText}>{t('复制支付链接')}</Text>
                 </Pressable>
-              ) : null}
-              <Pressable
-                accessibilityRole="button"
-                onPress={async () => {
-                  await Clipboard.setStringAsync(pay.url);
-                  Alert.alert(t('已复制支付链接'));
-                }}
-                style={({ pressed }) => [styles.paySecondary, pressed ? pressedSurface : null]}
-              >
-                <Text style={styles.paySecondaryText}>{t('复制支付链接')}</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setPay(null)}
-                style={({ pressed }) => [styles.payClose, pressed ? pressedSurface : null]}
-              >
-                <Text style={styles.payCloseText}>{t('关闭')}</Text>
-              </Pressable>
-              {busy ? <ActivityIndicator size="small" color={palette.blue} /> : null}
-            </View>
-          ) : null}
-        </View>
-      </Modal>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setPay(null)}
+                  style={({ pressed }) => [styles.payClose, pressed ? pressedSurface : null]}
+                >
+                  <Text style={styles.payCloseText}>{t('关闭')}</Text>
+                </Pressable>
+                {busy ? <ActivityIndicator size="small" color={palette.blue} /> : null}
+              </View>
+            ) : null}
+          </View>
+        </Modal>
+      ) : null}
     </Subpage>
   );
 }
