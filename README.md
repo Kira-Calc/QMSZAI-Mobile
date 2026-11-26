@@ -72,6 +72,10 @@ npx expo export --platform ios --platform android
 - [接手说明](HANDOVER_NEXT_CLI.md)
 - [开发记录](HANDOVER.md)
 
+## 作者
+
+**Wenze Ou** · [@Kira-Calc](https://github.com/Kira-Calc)
+
 ## 许可
 
 代码使用 [MIT 许可证](LICENSE)，© 2026 Wenze Ou。第三方模型名称与标识归各自所有者所有。

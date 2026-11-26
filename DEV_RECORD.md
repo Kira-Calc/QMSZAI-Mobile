@@ -731,6 +731,7 @@ src/
   - `LICENSE`：保留 Expo 模板的版权行，追加 `Copyright (c) 2026 Wenze Ou`。
   - `README.md`：首段加「作者：Wenze Ou」，许可段补 ©。
 - 没有加「关于」页面，App 内暂时看不到署名；需要的话在个人设置里加一行即可。
+- 追加（同日）：用户要求「GitHub 的 readme 里也要署名」。顶部那行「作者：Wenze Ou」其实已在 `origin/main` 上；这次在 README 底部再加一个显眼的「## 作者」小节（Wenze Ou · [@Kira-Calc](https://github.com/Kira-Calc)），未提交前 GitHub 看不到。
 - 实机测试结论（详见回复）：不导出文件也能测——iPhone 装 Expo Go，Metro 从 `--localhost` 换成 `--lan`（本机 172.18.9.154），扫码打开；要装成桌面独立 App 才需要 `.ipa`（EAS Build 或 Xcode 直装），本机目前无签名证书、无付费开发者账号。
 - 验证：`app.json` / `package.json` 可正常解析，`npx expo config --type public` 正常输出，`tsc`、`git diff --check` 通过。
 - 未提交、未推送。上一轮钱包图标改动已被用户提交为 `bbb9691 11.26.9.38`。
