@@ -37,5 +37,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit"
   },
-  "private": true
+  "private": true,
+  "author": "Wenze Ou",
+  "license": "MIT"
 }

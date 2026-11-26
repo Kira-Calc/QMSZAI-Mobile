@@ -693,6 +693,19 @@ src/
 - iOS 回归：共享 `Sheet` 的 `sheetBody` 拆分后，模型广场详情仍是原生 `pageSheet`（顶部圆角、「完成」玻璃胶囊），布局没变。
 - 已知（与本次无关）：Fast Refresh 之后偶发底部标签栏点不动（`LiquidTabBar` 的 `minimized` 状态没复位，`pointerEvents` 为 none），整包重载即恢复。另外安卓子页面（如模型广场）按系统返回键会直接退出 App，而不是回到上一页，这是既有问题，未在本轮处理。
 
+#### 2026-11-26 · 代码署名 Wenze Ou + 实机安装路径
+
+- 用户请求：「给代码里面，加上我的署名（Wenze Ou）」，并问实机测试是否需要导出文件装到 iPhone。
+- 署名改动（只动元数据，不碰 UI）：
+  - `package.json`：`"author": "Wenze Ou"`、`"license": "MIT"`。
+  - `app.json`：`ios.bundleIdentifier: "com.wenzeou.qmszai"`（独立构建必需，可改）；`ios.infoPlist.NSHumanReadableCopyright: "© 2026 Wenze Ou"`（写进 Info.plist，装成独立 App 后在系统里能看到）。
+  - `LICENSE`：保留 Expo 模板的版权行，追加 `Copyright (c) 2026 Wenze Ou`。
+  - `README.md`：首段加「作者：Wenze Ou」，许可段补 ©。
+- 没有加「关于」页面，App 内暂时看不到署名；需要的话在个人设置里加一行即可。
+- 实机测试结论（详见回复）：不导出文件也能测——iPhone 装 Expo Go，Metro 从 `--localhost` 换成 `--lan`（本机 172.18.9.154），扫码打开；要装成桌面独立 App 才需要 `.ipa`（EAS Build 或 Xcode 直装），本机目前无签名证书、无付费开发者账号。
+- 验证：`app.json` / `package.json` 可正常解析，`npx expo config --type public` 正常输出，`tsc`、`git diff --check` 通过。
+- 未提交、未推送。上一轮钱包图标改动已被用户提交为 `bbb9691 11.26.9.38`。
+
 #### 2026-11-26 · 充值记录行与支付弹窗标题补上品牌图标（「不要纯文字」）
 
 - 用户提示词原文：「不要纯文字」。承接上一条里「充值记录行与支付弹窗标题仍是纯文字」的自述，要求这两处也带图形，而不是只有文字。

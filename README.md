@@ -2,6 +2,8 @@
 
 阡陌数智用户控制台的 iOS 和 Android 演示应用，使用 Expo、React Native 和 TypeScript 开发。
 
+作者：Wenze Ou
+
 目前使用本地模拟数据，尚未接入登录和业务接口。聊天回复、任务结果、用量与余额都用于界面演示，不会调用模型或产生费用。
 
 ## 界面预览
@@ -72,4 +74,4 @@ npx expo export --platform ios --platform android
 
 ## 许可
 
-代码使用 [MIT 许可证](LICENSE)。第三方模型名称与标识归各自所有者所有。
+代码使用 [MIT 许可证](LICENSE)，© 2026 Wenze Ou。第三方模型名称与标识归各自所有者所有。
