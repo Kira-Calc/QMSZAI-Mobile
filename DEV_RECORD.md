@@ -693,6 +693,20 @@ src/
 - iOS 回归：共享 `Sheet` 的 `sheetBody` 拆分后，模型广场详情仍是原生 `pageSheet`（顶部圆角、「完成」玻璃胶囊），布局没变。
 - 已知（与本次无关）：Fast Refresh 之后偶发底部标签栏点不动（`LiquidTabBar` 的 `minimized` 状态没复位，`pointerEvents` 为 none），整包重载即恢复。另外安卓子页面（如模型广场）按系统返回键会直接退出 App，而不是回到上一页，这是既有问题，未在本轮处理。
 
+#### 2026-11-26 · 本地打出安卓 release APK
+
+- 用户要求：「先部署到安卓上，是需要一个安卓的 apk 文件吗？需要如何导出，或者你帮我导出」。
+- 环境事实：Java 17、Android SDK 只有 `platforms/android-36`，无 build-tools、无 NDK、无 eas-cli、无代码签名证书；`/android` 已在 `.gitignore`。
+- 步骤：
+  1. `app.json` 增加 `android.package: "com.wenzeou.qmszai"`（与 iOS `bundleIdentifier` 一致，prebuild 需要）。
+  2. `npx expo prebuild -p android --no-install` 生成 `android/`。**它会把 `package.json` 的 `android` / `ios` 脚本改成 `expo run:*`，已手动改回 `expo start --*`**。
+  3. `cd android && ANDROID_HOME=$HOME/Library/Android/sdk ./gradlew assembleRelease`。首次构建自动补装 NDK 27.1.12297006、Build-Tools 37、Platform 37，`BUILD SUCCESSFUL in 7m 5s`，460 个 task。
+  4. 产物 `android/app/build/outputs/apk/release/app-release.apk`（74 MB），另存一份 `~/Downloads/QMSZAI-Mobile-1.0.0.apk`。
+- 包属性（`aapt2 dump badging` / `apksigner verify`）：`com.wenzeou.qmszai`，versionCode 1 / versionName 1.0.0，minSdk 24（Android 7.0），targetSdk 36，包含 `armeabi-v7a / arm64-v8a / x86 / x86_64` 四 ABI，V2 签名证书为 `CN=Android Debug`（Expo 模板 release 也复用 debug keystore）。
+- 验证：`adb install -r` 成功；`adb shell am start -n com.wenzeou.qmszai/.MainActivity` 冷启动直接到登录页，不依赖 Metro、无崩溃。未登录验证（登录态在全新 App 里是空的，和 Expo Go 不共享）。
+- 限制：debug 签名只能侧载，不能上 Google Play；以后换正式 keystore 覆盖安装会失败，必须先卸载。需要上架时再生成 keystore 打 AAB。
+- 未提交、未推送（`app.json` 的一行 `android.package` 待用户提交）。
+
 #### 2026-11-26 · 代码署名 Wenze Ou + 实机安装路径
 
 - 用户请求：「给代码里面，加上我的署名（Wenze Ou）」，并问实机测试是否需要导出文件装到 iPhone。
