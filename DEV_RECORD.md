@@ -693,6 +693,29 @@ src/
 - iOS 回归：共享 `Sheet` 的 `sheetBody` 拆分后，模型广场详情仍是原生 `pageSheet`（顶部圆角、「完成」玻璃胶囊），布局没变。
 - 已知（与本次无关）：Fast Refresh 之后偶发底部标签栏点不动（`LiquidTabBar` 的 `minimized` 状态没复位，`pointerEvents` 为 none），整包重载即恢复。另外安卓子页面（如模型广场）按系统返回键会直接退出 App，而不是回到上一页，这是既有问题，未在本轮处理。
 
+#### 2026-11-27 · P0：修复令牌分组「返回」失灵 + 登录页隐私政策 + 安卓返回键
+
+- 背景：用户贴了一份安卓测试反馈表，要求「不要全部完全采纳，排一个重要优先级」。给出的排序是 P0 = 返回按钮 + 隐私政策；用户确认「先做 p0」。
+- **令牌分组选择页「返回」点不动（真 bug，已定位根因）**
+  - 现象：安卓 release 包上「新建令牌 → 分组优先选择 → 选择分组」后，点「返回」完全无反应；同一行的「完成」正常。
+  - 根因：`pickerNav` 里标题 `<Text style={styles.pickerTitle}>` 是 `position: absolute; left: 0; right: 0`，且排在两个按钮**之后**。安卓按绘制顺序做命中测试，标题的绘制顺序高于「返回」，其实际 bounds 横跨整行（uiautomator 量到 `[53,1311][1028,1377]`），把「返回」的触摸区域盖住；「完成」排在标题之后所以不受影响。`pointerEvents="none"` 在安卓的 Text 上没起到预期作用。
+  - 修复：把标题移到两个按钮**之前**渲染（按钮后画即在标题之上），并给「返回」加 `minWidth: 78`。`pickerNav` 的 `space-between` 布局不变。
+  - 顺带：`GlassPillButton` 安卓高度 40 → 44、`hitSlop` 6 → 10（统一放大胶囊按钮命中区）。
+  - 验证：重打 release APK（增量 8s），`adb install -r` 后按同一路径操作，「返回」一次点击即回到表单；随后用系统返回键也能从分组页退回表单。iOS 模拟器复看标题仍居中、返回正常。
+- **安卓系统返回键不再直接退出 App**
+  - `AppShell` 增加 `BackHandler`：有子页面先 `setSubpage(null)`，在非聊天标签则 `setActiveTab('chat')`，都处理不了才交给系统退出。
+  - 弹层（共享 `Sheet` / `SheetModal` / 对话历史）本身是原生 `Modal`，`onRequestClose` 已经接管返回键；本次只补主页面层级。
+  - 验证：安卓 release 包「账户 → 钱包」按返回键回到账户中心（之前直接退出）；再按一次回到聊天标签，不会退出 App。
+- **登录页补隐私政策（合规）**
+  - 数据源：`/api/public/status` 已返回 `privacy_policy_enabled: true`、`user_agreement_enabled: false`；站点本身提供 `https://test.qmszai.cn/privacy-policy` 与 `/user-agreement`（均 200）。
+  - `LoginScreen` 在登录按钮上方加一行复选框「我已阅读并同意《隐私政策》」（协议启用时才追加《用户协议》）；未勾选就点登录 / 注册 / 重置 / 2FA，会提示「请先阅读并同意隐私政策」且不发请求。
+  - 链接用 `Linking.openURL` 打开站点对应页面，与网页端口径一致；勾选后清掉错误提示。
+  - `PersonalScreen` 新增「关于」分组，登录后也能打开隐私政策（Apple 审核通常要求 App 内可访问）。
+  - 英文文案同步补进 `src/i18n.en.ts`。
+  - 验证：安卓 Expo Go 登录页显示复选框，未勾选点登录出现红色提示；勾选后提示消失；点《隐私政策》唤起 Chrome。iOS 个人设置底部出现「关于 → 隐私政策」。
+- 验证范围：`tsc --noEmit --noUnusedLocals`、`git diff --check` 通过；APK 已重打并覆盖 `~/Downloads/QMSZAI-Mobile-1.0.0.apk`（74MB）。未提交、未推送。
+- 说明：安卓 Expo Go 的登录态本轮丢失（另一 experience 的存储），P0 的登录页验证在 Expo Go 做；令牌/返回键验证在已登录的 standalone 包做。
+
 #### 2026-11-26 · 关闭双端支付功能（总开关）
 
 - 用户要求：「关闭双端的支付功能」。没有说明只关安卓，所以 iOS / Android 一起关（同一份 JS）。

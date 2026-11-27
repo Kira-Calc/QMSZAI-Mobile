@@ -13,6 +13,7 @@ import {
   Alert,
   Animated,
   AppState,
+  BackHandler,
   Easing,
   FlatList,
   Modal,
@@ -179,6 +180,24 @@ function AppShell() {
   const [subpage, setSubpage] = useState<SubpageKey | null>(null);
   const [tabBarMinimized, setTabBarMinimized] = useState(false);
   const lastTabScrollY = useRef(0);
+
+  // 安卓系统返回键：先退子页面，再回聊天标签，最后才允许退出 App。
+  // 之前子页面里按返回会直接退出，和页面左上角的返回按钮行为不一致。
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (subpage) {
+        setSubpage(null);
+        return true;
+      }
+      if (activeTab !== 'chat') {
+        setActiveTab('chat');
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [activeTab, subpage]);
 
   // Android 上 LayoutAnimation 需要显式开启（iOS 默认可用）。
   useEffect(() => {
@@ -1751,15 +1770,18 @@ function TokenFormPanel({
       {pickerMode !== 'none' ? (
         <>
           <View style={styles.pickerNav}>
+            {/* 标题先画，两个按钮后画。之前标题在按钮之后且横跨整行，
+                安卓上会盖住「返回」的触摸区域，表现就是点了没反应。 */}
+            <Text style={styles.pickerTitle} pointerEvents="none">
+              {pickerTitle}
+            </Text>
             <GlassPillButton
               icon="chevron.left"
               label={t("返回")}
               tint={palette.blue}
               onPress={closePicker}
+              style={{ minWidth: 78 }}
             />
-            <Text style={styles.pickerTitle} pointerEvents="none">
-              {pickerTitle}
-            </Text>
             <GlassPillButton label={t("完成")} tint={palette.blue} onPress={closePicker} />
           </View>
           <View style={styles.groupSearch}>

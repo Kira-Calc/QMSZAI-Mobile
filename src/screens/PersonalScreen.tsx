@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Alert,
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { isUnauthorized } from '../api/client';
+import { API_BASE_URL, isUnauthorized } from '../api/client';
 import { fetchCheckin, submitCheckin, updateSelf } from '../api/endpoints';
 import type { CheckinStatus } from '../api/types';
 import { formatQuota, formatQuotaSmart } from '../api/format';
@@ -24,7 +34,7 @@ const roleLabel = (role: number) => (role === 1 ? t('普通用户') : tf('角色
 
 export function PersonalScreen({ onBack }: { onBack: () => void }) {
   const insets = useSafeAreaInsets();
-  const { user, signOut, refreshUser, quotaPerUnit, siteStatus } = useAuth();
+  const { user, signOut, refreshUser, quotaPerUnit, siteStatus, publicStatus } = useAuth();
   const themeMode = useThemeMode();
   const languageSetting = useLanguageSetting();
   useLanguage();
@@ -167,6 +177,12 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
     ]);
   };
 
+  const openPolicy = (path: 'privacy-policy' | 'user-agreement') => {
+    Linking.openURL(`${API_BASE_URL}/${path}`).catch(() => {
+      Alert.alert(t('无法打开链接'));
+    });
+  };
+
   return (
     <Subpage title={t("个人设置")} onBack={onBack}>
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}>
@@ -247,6 +263,15 @@ export function PersonalScreen({ onBack }: { onBack: () => void }) {
           <Row title={t("登录密码")} value={user?.has_password ? t('已设置') : t('未设置')} chevron onPress={openPassword} />
           {avatarUri ? (
             <Row title={t("移除头像")} destructive onPress={confirmRemoveAvatar} />
+          ) : null}
+        </Group>
+
+        <Group header={t("关于")}>
+          {publicStatus?.privacy_policy_enabled ? (
+            <Row title={t("隐私政策")} chevron onPress={() => openPolicy('privacy-policy')} />
+          ) : null}
+          {publicStatus?.user_agreement_enabled ? (
+            <Row title={t("用户协议")} chevron onPress={() => openPolicy('user-agreement')} />
           ) : null}
         </Group>
 

@@ -2,7 +2,9 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -14,7 +16,8 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ApiError } from '../api/client';
+import { API_BASE_URL, ApiError } from '../api/client';
+import { AppIcon } from '../components/AppIcon';
 import {
   generateCaptcha,
   registerAccount,
@@ -53,10 +56,33 @@ export function LoginScreen() {
 
   const [countdown, setCountdown] = useState(0);
   const [captchaVisible, setCaptchaVisible] = useState(false);
+  const [agreed, setAgreed] = useState(false);
   const captchaTarget = useRef<null | ((token: string | null) => void)>(null);
 
   const smsEnabled = publicStatus?.sms_verification !== false;
   const registerEnabled = publicStatus?.register_enabled !== false;
+  const privacyEnabled = publicStatus?.privacy_policy_enabled === true;
+  const agreementEnabled = publicStatus?.user_agreement_enabled === true;
+  const needsConsent = privacyEnabled || agreementEnabled;
+
+  // 与网页端一致：用户协议 / 隐私政策都打开对应页面；配置里没开启的不展示。
+  const openPolicy = (path: 'privacy-policy' | 'user-agreement') => {
+    Linking.openURL(`${API_BASE_URL}/${path}`).catch(() => {
+      Alert.alert(t('无法打开链接'));
+    });
+  };
+
+  const ensureConsent = () => {
+    if (!needsConsent || agreed) return true;
+    setError(
+      agreementEnabled && privacyEnabled
+        ? t('请先阅读并同意用户协议和隐私政策')
+        : privacyEnabled
+          ? t('请先阅读并同意隐私政策')
+          : t('请先阅读并同意用户协议'),
+    );
+    return false;
+  };
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -93,6 +119,7 @@ export function LoginScreen() {
 
   const submitLogin = async () => {
     if (busy) return;
+    if (!ensureConsent()) return;
     if (!username.trim() || !password) {
       setError(t('请填写账号和密码'));
       return;
@@ -117,6 +144,7 @@ export function LoginScreen() {
 
   const submit2FA = async () => {
     if (busy) return;
+    if (!ensureConsent()) return;
     if (!code2fa.trim()) {
       setError(t('请输入验证码'));
       return;
@@ -134,6 +162,7 @@ export function LoginScreen() {
 
   const submitRegister = async () => {
     if (busy) return;
+    if (!ensureConsent()) return;
     if (!phone.trim() || !code.trim() || !newPassword) {
       setError(t('请完整填写手机号、验证码和密码'));
       return;
@@ -162,6 +191,7 @@ export function LoginScreen() {
 
   const submitReset = async () => {
     if (busy) return;
+    if (!ensureConsent()) return;
     if (!phone.trim() || !code.trim() || !newPassword) {
       setError(t('请完整填写手机号、验证码和新密码'));
       return;
@@ -312,6 +342,40 @@ export function LoginScreen() {
                 />
               </>
             )}
+
+            {needsConsent ? (
+              <View style={styles.consentRow}>
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: agreed }}
+                  accessibilityLabel={t('我已阅读并同意隐私政策')}
+                  onPress={() => {
+                    setAgreed((value) => !value);
+                    setError('');
+                  }}
+                  hitSlop={12}
+                  style={styles.consentCheckHit}
+                >
+                  <View style={[styles.consentBox, agreed ? styles.consentBoxOn : null]}>
+                    {agreed ? <AppIcon name="checkmark" size={12} color="#FFFFFF" /> : null}
+                  </View>
+                </Pressable>
+                <Text style={styles.consentText}>
+                  {t('我已阅读并同意')}
+                  {agreementEnabled ? (
+                    <Text style={styles.consentLink} onPress={() => openPolicy('user-agreement')}>
+                      {t('《用户协议》')}
+                    </Text>
+                  ) : null}
+                  {agreementEnabled && privacyEnabled ? t('和') : null}
+                  {privacyEnabled ? (
+                    <Text style={styles.consentLink} onPress={() => openPolicy('privacy-policy')}>
+                      {t('《隐私政策》')}
+                    </Text>
+                  ) : null}
+                </Text>
+              </View>
+            ) : null}
 
             {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -620,6 +684,42 @@ const styles = themedStyles(() => StyleSheet.create({
     color: palette.red,
     fontSize: 13,
     lineHeight: 18,
+  },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 2,
+  },
+  consentCheckHit: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  consentBox: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: palette.separator,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  consentBoxOn: {
+    backgroundColor: palette.blue,
+    borderColor: palette.blue,
+  },
+  consentText: {
+    flex: 1,
+    color: palette.secondaryLabel,
+    fontSize: ios ? 13 : 12,
+    lineHeight: ios ? 20 : 18,
+    paddingTop: 1,
+  },
+  consentLink: {
+    color: palette.blue,
+    fontWeight: '500',
   },
   primary: {
     minHeight: ios ? 50 : 52,

@@ -197,7 +197,7 @@ export function GlassPillButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
-      hitSlop={6}
+      hitSlop={10}
       style={({ pressed }) => [
         styles.glassPillWrap,
         pressed ? styles.glassPressed : null,
@@ -1048,7 +1048,7 @@ const styles = themedStyles(() => StyleSheet.create({
     justifyContent: 'center',
   },
   glassPillWrap: {
-    height: ios ? 36 : 40,
+    height: ios ? 36 : 44,
   },
   glassPillFill: {
     flex: 1,
