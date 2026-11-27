@@ -7,7 +7,7 @@ import { AppIcon } from './src/components/AppIcon';
 import { elevation, m3, pressedSurface, shape, type as typeScale } from './src/material';
 import { ChatWorkspace } from './src/ChatWorkspace';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useCallback, useMemo, useRef, useState, type ComponentRef, type ComponentType, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentRef, type ComponentType, type ReactElement, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -27,8 +27,6 @@ import {
   UIManager,
   View,
   useWindowDimensions,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
   type ScrollViewInstance,
   type ViewProps,
 } from 'react-native';
@@ -38,11 +36,12 @@ import { formatInt, formatQuota, formatQuotaSmart } from './src/api/format';
 import { usageRangeOptions } from './src/data/mockConsole';
 import { ModelLogo } from './src/components/ModelLogo';
 import { UserAvatar } from './src/components/UserAvatar';
-import { LiquidTabBar } from './src/LiquidTabBar';
+import { NavDrawer } from './src/NavDrawer';
 import { AuthProvider, useAuth } from './src/auth/AuthProvider';
 import {
   createToken,
   deleteToken as removeToken,
+  fetchGroupStability,
   fetchTokenKey,
   fetchUserGroups,
   fetchUserModels,
@@ -78,7 +77,7 @@ import { PersonalScreen } from './src/screens/PersonalScreen';
 import { TasksScreen } from './src/screens/TasksScreen';
 import { UsageLogsScreen } from './src/screens/UsageLogsScreen';
 import { WalletScreen } from './src/screens/WalletScreen';
-import type { FreeDailyModelUsage } from './src/api/types';
+import type { FreeDailyModelUsage, GroupStabilityMap, GroupStabilitySegment } from './src/api/types';
 import type {
   AccountSummary,
   Model,
@@ -101,8 +100,6 @@ type SubpageKey =
   | 'pricing'
   | 'personal'
   | 'wallet';
-
-type TabScrollHandler = (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
 
 const tokenStatusLabel = (status: TokenStatus) => {
   if (status === 'active') return t('启用');
@@ -178,14 +175,16 @@ function AppShell() {
   const [tokenFormVisible, setTokenFormVisible] = useState(false);
   const [tokenFormSession, setTokenFormSession] = useState(0);
   const [subpage, setSubpage] = useState<SubpageKey | null>(null);
-  const [tabBarMinimized, setTabBarMinimized] = useState(false);
-  const lastTabScrollY = useRef(0);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // 安卓系统返回键：先退子页面，再回聊天标签，最后才允许退出 App。
-  // 之前子页面里按返回会直接退出，和页面左上角的返回按钮行为不一致。
+  // 安卓系统返回键：先收侧边栏，再退子页面，再回聊天标签，最后才允许退出 App。
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (drawerOpen) {
+        setDrawerOpen(false);
+        return true;
+      }
       if (subpage) {
         setSubpage(null);
         return true;
@@ -197,7 +196,7 @@ function AppShell() {
       return false;
     });
     return () => subscription.remove();
-  }, [activeTab, subpage]);
+  }, [activeTab, drawerOpen, subpage]);
 
   // Android 上 LayoutAnimation 需要显式开启（iOS 默认可用）。
   useEffect(() => {
@@ -278,36 +277,6 @@ function AppShell() {
       });
     }
   }, [subpage, subpageAnim, consoleData.refreshLogs, consoleData.refreshTasks]);
-
-  // 收起/展开的动画在 LiquidTabBar 内用 Animated 驱动（尺寸 + 内容交叉淡化），
-  // 这里只切状态，避免再叠一层 LayoutAnimation 造成重复/瞬切。
-  const setTabBarMinimizedAnimated = useCallback((minimized: boolean) => {
-    setTabBarMinimized(minimized);
-  }, []);
-
-  const handleTabScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const offsetY = Math.max(0, event.nativeEvent.contentOffset.y);
-      const delta = offsetY - lastTabScrollY.current;
-      lastTabScrollY.current = offsetY;
-
-      if (offsetY <= 12) {
-        if (tabBarMinimized) setTabBarMinimizedAnimated(false);
-        return;
-      }
-      if (delta > 8 && offsetY > 48) {
-        if (!tabBarMinimized) setTabBarMinimizedAnimated(true);
-      } else if (delta < -8) {
-        if (tabBarMinimized) setTabBarMinimizedAnimated(false);
-      }
-    },
-    [setTabBarMinimizedAnimated, tabBarMinimized],
-  );
-
-  useEffect(() => {
-    lastTabScrollY.current = 0;
-    setTabBarMinimized(false);
-  }, [activeTab]);
 
   // 令牌页每次进入都重新拉取：网页端新建/删除的令牌不用重启 App 才同步。
   useEffect(() => {
@@ -594,7 +563,17 @@ function AppShell() {
         <StatusBar style={isDark() ? 'light' : 'dark'} />
         <View style={styles.appShell}>
         <View style={styles.header}>
-          <Animated.Text style={[styles.title, titleStyle]}>{activeTab === 'chat' ? t('聊天') : currentTitle}</Animated.Text>
+          <View style={styles.headerLeft}>
+            <GlassIconButton
+              icon="line.3.horizontal"
+              label={t('打开菜单')}
+              onPress={() => setDrawerOpen(true)}
+              size={36}
+            />
+            <Animated.Text style={[styles.title, titleStyle]} numberOfLines={1}>
+              {activeTab === 'chat' ? t('聊天') : currentTitle}
+            </Animated.Text>
+          </View>
           {activeTab === 'account' ? (
             <Animated.View style={[styles.headerAction, titleStyle]}>
               <GlassIconButton
@@ -617,7 +596,6 @@ function AppShell() {
         <Animated.View style={[styles.content, sceneStyle]}>
           <View style={{ flex: 1, display: activeTab === 'chat' ? 'flex' : 'none' }}>
             <ChatWorkspace
-              bottomInset={76}
               onOpenTool={setSubpage}
               models={chatModels}
               active={activeTab === 'chat'}
@@ -634,7 +612,6 @@ function AppShell() {
               freeDaily={consoleData.freeDaily}
               usageRange={usageRange}
               onRangeChange={setUsageRange}
-              onScroll={handleTabScroll}
               onOpenModels={() => setActiveTab('models')}
               onOpenTokens={() => setActiveTab('tokens')}
               onOpenLogs={() => setSubpage('logs')}
@@ -653,7 +630,6 @@ function AppShell() {
               filteredModels={filteredModels}
               selectedModel={selectedModel}
               setSelectedModel={setSelectedModel}
-              onScroll={handleTabScroll}
             />
           ) : null}
 
@@ -663,7 +639,6 @@ function AppShell() {
               onOpen={setSelectedToken}
               onToggle={toggleToken}
               onCreate={openCreateToken}
-              onScroll={handleTabScroll}
             />
           ) : null}
 
@@ -672,7 +647,6 @@ function AppShell() {
               account={consoleData.account}
               onOpenPersonal={() => setSubpage('personal')}
               onOpenWallet={() => setSubpage('wallet')}
-              onScroll={handleTabScroll}
             />
           ) : null}
         </Animated.View>
@@ -692,15 +666,21 @@ function AppShell() {
           onSubmit={submitToken}
         />
         </SafeAreaView>
-        <LiquidTabBar
-          activeKey={activeTab}
-          minimized={tabBarMinimized}
-          onChange={setActiveTab}
-          onMinimizedChange={setTabBarMinimizedAnimated}
-        />
         <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.dimLayer, dimStyle]} />
       </Animated.View>
       {subpageView}
+      <NavDrawer
+        visible={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        onOpenSubpage={setSubpage}
+        userName={user?.display_name || user?.username || t('未登录')}
+        userHandle={user?.username ? `@${user.username}` : ''}
+        userId={user?.id}
+        balance={consoleData.account?.balance ?? '¥0.00'}
+        unreadMessages={unreadMessages}
+      />
     </SafeAreaProvider>
   );
 }
@@ -715,7 +695,6 @@ function Overview({
   freeDaily,
   usageRange,
   onRangeChange,
-  onScroll,
   onOpenModels,
   onOpenTokens,
   onOpenLogs,
@@ -734,7 +713,6 @@ function Overview({
   freeDaily: FreeDailyModelUsage | null;
   usageRange: UsageRange;
   onRangeChange: (range: UsageRange) => void;
-  onScroll: TabScrollHandler;
   onOpenModels: () => void;
   onOpenTokens: () => void;
   onOpenLogs: () => void;
@@ -747,9 +725,6 @@ function Overview({
   return (
     <ScrollView
       contentContainerStyle={styles.scrollContent}
-
-      onScroll={onScroll}
-      scrollEventThrottle={16}
     >
       {ios ? (
         <>
@@ -896,14 +871,12 @@ function ModelsView({
   filteredModels,
   selectedModel,
   setSelectedModel,
-  onScroll,
 }: {
   query: string;
   setQuery: (value: string) => void;
   filteredModels: Model[];
   selectedModel: Model | null;
   setSelectedModel: (model: Model | null) => void;
-  onScroll: TabScrollHandler;
 }) {
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const blurTarget = useRef<ComponentRef<typeof View>>(null);
@@ -999,7 +972,6 @@ function ModelsView({
           // 列表滚到搜索框下方时淡入顶部模糊，静止时不压暗第一行。
           const offset = event.nativeEvent.contentOffset.y;
           listFade.setValue(Math.min(1, Math.max(0, offset / 24)));
-          onScroll(event);
         }}
         scrollEventThrottle={16}
       >
@@ -1250,20 +1222,16 @@ function TokensView({
   onOpen,
   onToggle,
   onCreate,
-  onScroll,
 }: {
   tokens: Token[];
   onOpen: (token: Token) => void;
   onToggle: (id: string) => void;
   onCreate: () => void;
-  onScroll: TabScrollHandler;
 }) {
   return (
     <View style={styles.tokensPane}>
       <ScrollView
         contentContainerStyle={[styles.scrollContent, styles.tokensScrollContent]}
-        onScroll={onScroll}
-        scrollEventThrottle={16}
       >
         {tokens.length === 0 ? (
           <View style={styles.emptyState}>
@@ -1339,12 +1307,10 @@ function AccountView({
   account,
   onOpenPersonal,
   onOpenWallet,
-  onScroll,
 }: {
   account: AccountSummary | null;
   onOpenPersonal: () => void;
   onOpenWallet: () => void;
-  onScroll: TabScrollHandler;
 }) {
   const { user } = useAuth();
   const displayName = user?.display_name || user?.username || t('未登录');
@@ -1352,9 +1318,6 @@ function AccountView({
   return (
     <ScrollView
       contentContainerStyle={styles.scrollContent}
-
-      onScroll={onScroll}
-      scrollEventThrottle={16}
     >
       <Pressable
         accessibilityRole="button"
@@ -1382,7 +1345,6 @@ function AccountView({
 
       <Group>
         <Row title={t("当前分组")} value={account?.plan ?? user?.group ?? '—'} />
-        <Row title={t("剩余额度")} value={account?.balance ?? '—'} />
         <Row title={t("API 端点")} value={account?.endpoint ?? 'test.qmszai.cn'} />
         <Row title={t("连接状态")} value={account?.mode ?? t('在线')} />
       </Group>
@@ -1552,6 +1514,54 @@ function TokenDetailPanel({
   );
 }
 
+// 稳定性接口把最近 24 小时切成 2 小时一段；no_data / unknown / maintenance
+// 只代表这段时间没有样本，不计入可用率分母。
+const failedStabilityStatuses = new Set([
+  'error',
+  'down',
+  'fail',
+  'failure',
+  'unavailable',
+  'outage',
+  'degraded',
+]);
+
+type GroupStabilitySummary = {
+  // 1 表示 100%，null 表示没有可用样本。
+  uptime: number | null;
+  tone: 'good' | 'warn' | 'bad' | 'none';
+};
+
+function summarizeGroupStability(segments?: GroupStabilitySegment[]): GroupStabilitySummary {
+  if (!segments?.length) return { uptime: null, tone: 'none' };
+  let normal = 0;
+  let failed = 0;
+  for (const segment of segments) {
+    const status = (segment.status ?? '').toLowerCase();
+    if (status === 'normal') normal += 1;
+    else if (failedStabilityStatuses.has(status)) failed += 1;
+  }
+  const total = normal + failed;
+  if (total === 0) return { uptime: null, tone: 'none' };
+  const uptime = normal / total;
+  return {
+    uptime,
+    tone: uptime >= 0.98 ? 'good' : uptime >= 0.9 ? 'warn' : 'bad',
+  };
+}
+
+function stabilityToneColor(tone: GroupStabilitySummary['tone']) {
+  if (tone === 'good') return palette.green;
+  if (tone === 'warn') return palette.orange;
+  if (tone === 'bad') return palette.red;
+  return palette.tertiaryLabel;
+}
+
+function formatStabilityPercent(uptime: number) {
+  if (uptime >= 1) return '100';
+  return (uptime * 100).toFixed(1).replace(/\.0$/, '');
+}
+
 function TokenFormPanel({
   visible,
   initial,
@@ -1588,6 +1598,7 @@ function TokenFormPanel({
   // 拉不到分组列表时退回手填，避免功能直接不可用。
   const [freeGroup, setFreeGroup] = useState(initial?.group ?? '');
   const [groups, setGroups] = useState<TokenGroupOption[] | null>(null);
+  const [stability, setStability] = useState<GroupStabilityMap | null>(null);
   const [groupQuery, setGroupQuery] = useState('');
   const [models, setModels] = useState<string[] | null>(null);
   const [modelLimits, setModelLimits] = useState<string[]>(initial?.modelLimits ?? []);
@@ -1599,6 +1610,15 @@ function TokenFormPanel({
     if (!visible) return;
     let alive = true;
     setGroups(null);
+    setStability(null);
+    // 稳定性与分组并行拉取；稳定性失败只影响可用率展示，不影响分组选择。
+    fetchGroupStability()
+      .then((map) => {
+        if (alive) setStability(map);
+      })
+      .catch(() => {
+        if (alive) setStability({});
+      });
     fetchUserGroups()
       .then((map) => {
         if (!alive) return;
@@ -1821,12 +1841,17 @@ function TokenFormPanel({
                 filteredGroups.map((option) => {
                   const order = selectedGroups.indexOf(option.name);
                   const selected = order >= 0;
+                  const summary = summarizeGroupStability(stability?.[option.name]);
+                  const stabilityLabel =
+                    summary.uptime === null
+                      ? t('24h 可用率 无数据')
+                      : tf('24h 可用率 {0}%', formatStabilityPercent(summary.uptime));
                   return (
                     <Pressable
                       key={option.name}
                       accessibilityRole="button"
                       accessibilityState={{ selected }}
-                      accessibilityLabel={`${option.name}${selected ? tf('，第 {0} 优先', order + 1) : ''}`}
+                      accessibilityLabel={`${option.name}，${stabilityLabel}${selected ? tf('，第 {0} 优先', order + 1) : ''}`}
                       onPress={() => toggleGroup(option.name)}
                       style={({ pressed }) => [
                         styles.groupOption,
@@ -1848,11 +1873,24 @@ function TokenFormPanel({
                         <Text style={styles.groupOptionName} numberOfLines={1}>
                           {option.name}
                         </Text>
-                        {option.desc && option.desc !== option.name ? (
-                          <Text style={styles.groupOptionDesc} numberOfLines={1}>
-                            {option.desc}
-                          </Text>
-                        ) : null}
+                        <View style={styles.groupOptionMeta}>
+                          {option.desc && option.desc !== option.name ? (
+                            <Text style={styles.groupOptionDesc} numberOfLines={1}>
+                              {option.desc}
+                            </Text>
+                          ) : null}
+                          <View style={styles.groupStability}>
+                            <View
+                              style={[
+                                styles.groupStabilityDot,
+                                { backgroundColor: stabilityToneColor(summary.tone) },
+                              ]}
+                            />
+                            <Text style={styles.groupStabilityText} numberOfLines={1}>
+                              {stabilityLabel}
+                            </Text>
+                          </View>
+                        </View>
                       </View>
                       <Text style={styles.groupOptionRatio}>
                         {tf('{0}x 倍率', Number(option.ratio.toFixed(5)))}
@@ -2272,6 +2310,13 @@ function makeBaseStyles() {
     alignItems: 'flex-end',
     justifyContent: 'space-between',
   },
+  headerLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginRight: 12,
+  },
   title: {
     color: m3.onSurface,
     fontSize: 30,
@@ -2305,7 +2350,7 @@ function makeBaseStyles() {
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: 96,
+    paddingBottom: 28,
     gap: 16,
   },
   tokensPane: {
@@ -2313,13 +2358,12 @@ function makeBaseStyles() {
   },
   // 右下角悬浮按钮会盖住列表末条，多留一屏滚动余量。
   tokensScrollContent: {
-    paddingBottom: 176,
+    paddingBottom: 100,
   },
   fab: {
     position: 'absolute',
     right: 20,
-    // 悬浮导航栏顶边距内容底边 70pt（dock paddingTop 6 + bar 64），再留 14pt 间距。
-    bottom: 84,
+    bottom: 24,
     width: 56,
     height: 56,
     borderRadius: 28,
@@ -2430,7 +2474,7 @@ function makeBaseStyles() {
     paddingTop: 12,
     paddingHorizontal: 20,
     gap: 10,
-    paddingBottom: 96,
+    paddingBottom: 28,
   },
   modelRow: {
     minHeight: 80,
@@ -2914,6 +2958,28 @@ function makeBaseStyles() {
   groupOptionDesc: {
     color: palette.placeholder,
     fontSize: 12,
+    flexShrink: 1,
+  },
+  groupOptionMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  groupStability: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 0,
+  },
+  groupStabilityDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  groupStabilityText: {
+    color: palette.subtleLabel,
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
   },
   groupOptionRatio: {
     color: palette.subtleLabel,
@@ -3009,13 +3075,17 @@ function makeIosStyles() {
   groupOptionOrderActive: { borderColor: palette.blue, backgroundColor: palette.blue },
   groupOptionOrderText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
   groupOptionName: { color: palette.label, fontSize: 17, fontWeight: '400' },
-  groupOptionDesc: { color: palette.subtleLabel, fontSize: 13 },
+  groupOptionDesc: { color: palette.subtleLabel, fontSize: 13, flexShrink: 1 },
+  groupOptionMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  groupStability: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 },
+  groupStabilityDot: { width: 6, height: 6, borderRadius: 3 },
+  groupStabilityText: { color: palette.subtleLabel, fontSize: 13, fontVariant: ['tabular-nums'] },
   groupOptionRatio: { color: palette.subtleLabel, fontSize: 13, fontVariant: ['tabular-nums'] },
   groupEmpty: { color: palette.subtleLabel, fontSize: 15, paddingVertical: 20, textAlign: 'center' },
   fab: {
     position: 'absolute',
     right: 20,
-    bottom: 84,
+    bottom: 24,
     width: 56,
     height: 56,
     borderRadius: 28,

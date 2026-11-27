@@ -254,7 +254,8 @@ src/
   material.ts            Material 3 令牌（cardSurface/softShadow 在 iOS 返回空对象）
   i18n.ts / i18n.en.ts   t()/tf()、语言解析与持久化、英文词典
   ui.tsx                 共享组件：Group/Row/Sheet/SheetHeader/AlphabetRail/GlassSurface/SegmentedControl 等
-  LiquidTabBar.tsx       液态玻璃底栏 + 收起/展开动画
+  LiquidTabBar.tsx       旧液态玻璃底栏 + 收起/展开动画（2026-11-27 起不再挂载，保留备用）
+  NavDrawer.tsx          左侧抽屉：品牌、账户卡、聊天/概览/模型目录/令牌/账户、消息与钱包
   ChatWorkspace.tsx      聊天：会话列表、流式、气泡操作、模型选择浮层、输入条与模糊
   richText.tsx           Markdown 渲染 + plainText()
   messageTime.ts         气泡时间格式
@@ -692,6 +693,80 @@ src/
   - 带输入框的「显示名称」：点输入框弹键盘时卡片随 `adjustResize` 收缩，输入框和「保存」都还在可视区。
 - iOS 回归：共享 `Sheet` 的 `sheetBody` 拆分后，模型广场详情仍是原生 `pageSheet`（顶部圆角、「完成」玻璃胶囊），布局没变。
 - 已知（与本次无关）：Fast Refresh 之后偶发底部标签栏点不动（`LiquidTabBar` 的 `minimized` 状态没复位，`pointerEvents` 为 none），整包重载即恢复。另外安卓子页面（如模型广场）按系统返回键会直接退出 App，而不是回到上一页，这是既有问题，未在本轮处理。
+
+#### 2026-11-27 · P2（二）：聊天支持图片与文档上传；确认网页端「专业模式」不是管理员权限
+
+- 用户原话：「使用opencli工具查看chrome浏览器内，有一个专业模式，查看是否是管理员权限；并且把支持文件上传的功能做了，例如常见的图片以及文档格式」。
+- 网页端「专业模式」结论（opencli 1.8.7，Chrome 会话 `qmszai`）：
+  - 模式只写在本机 `localStorage.user_mode`（`pro` / `normal`），切换后没有新增任何管理入口。
+  - `/api/user/self` / `localStorage.user` 里 `role: 1`，即普通用户（new-api 的 10 / 100 才是管理员 / 超级管理员）。
+  - 专业模式下的控制台侧边栏仍是「数据看板 / 令牌管理 / 使用日志 / 任务日志 / 古今图书 / 古书法系统 / 专业模型 / 文本聊天 / 图片生成 / 视频生成 / 音乐生成 / 语音合成 / 模型融合 / 人脸检测 / 人脸比对」，没有用户管理、渠道管理、系统设置等管理员菜单。
+  - 结论：**专业模式是界面/功能密度的偏好开关，不是管理员权限。**
+- 聊天附件上传（`POST /api/upload`，multipart 字段 `file`，带会话 Cookie + `New-Api-User`）：
+  - `src/api/client.ts`：新增 `absoluteUrl()` 与 `uploadChatFile()`；用 RN 的 XHR + `{uri,name,type}` 流式上传，不手写 multipart boundary。返回 `{name,size,mimeType,type,content,url}`，其中 `type` 为 `image | text | other`。
+  - `src/ChatWorkspace.tsx`：
+    - 输入框内加回形针按钮，点开浮层「照片 / 文件」；照片走已装的 `expo-image-picker`（可多选），文件走已装的 `expo-file-system` 的 `File.pickFileAsync({ multipleFiles: true })`，没有引入新依赖。
+    - 附件上限 4 个、单个 5MB；上传中显示加载 chip，上传完成后显示缩略图 / 文件名 + 体积，可单独移除；上传未完成时发送按钮禁用。
+    - 拼装规则与网页端一致：图片 → `[{type:'text'},{type:'image_url',image_url:{url:绝对地址}}]`；文本文件 → `<file name="...">原文</file>`（超过 50KB 截到 100000 字符）；PDF / Office 等其他文件 → `Attachment: 名称\nURL: 绝对地址`。
+    - 消息持久化改为可传数组内容；加载历史时把 `Content` 的 JSON 字符串还原成图片块，并从注入文本里还原附件条，气泡只显示用户输入的文字。
+    - 多轮对话使用每条消息的原始 `apiContent` 作为历史，避免第二轮丢图片。
+    - 只发附件不写文字也能发送；会话标题取第一个附件名。
+  - 实测接口：文本文件返回 `type:"text"` + 原文；PNG 返回 `type:"image"` + base64 data URL；PDF 返回 `type:"other"` + base64；`/uploads/...` 相对地址拼绝对后用 `image_url` 发 `/pg/chat/completions`，`deepseek-v4.1-flash-1017` 正确识别纯红图片（`image_tokens: 184`）。
+- 验证（安卓 release APK，`adb install -r` 保留登录）：
+  - 回形针 → 「照片 / 文件」浮层正常；从 Downloads 长按多选 `notes.txt` + `red64.png` + `dummy.pdf`，三个 chip 均上传成功并显示体积与红色缩略图。
+  - 选 `deepseek-flash_官方` 发送「what color is the image and what is in notes.txt」，回复「The image is red. notes.txt contains: hello from mobile test 1234」。
+  - 强停重开 App（登录态保留）后从最近对话进入，图片缩略图、两个文件 chip、用户原文均从服务端历史正确还原；继续发「thanks」正常。
+- iOS：验证时模拟器已回到登录页（会话失效，非本次代码改动导致），未重新登录，因此 iOS 端上传未实测；新增代码只用了 Expo Go 已内置的模块，样式未区分平台。**需用户重新登录后补验。**
+- `npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。未提交、未推送。
+
+#### 2026-11-27 · 双端 App 图标换成公司 QN 品牌图
+
+- 用户原话：「这是公司要求的软件图标，给双端都加上」，附 2048×2048 JPG（白底、蓝色 3D「QN」、网格与粒子）。
+- 生成（临时脚本 `/tmp/make_qn_icons.py`，未入库；参数可照下面重跑）：
+  - `assets/icon.png`：1024×1024、RGB 无 alpha（iOS 与安卓 legacy 共用，整幅原图 LANCZOS 缩放）。
+  - `assets/android-icon-foreground.png`：1024×1024 RGB，原图缩到 75% 居中、四周用纯白填满。标记 bbox 在源图为 308–1638 × 516–1536，缩后距自适应图标安全区（中心 66.7%）边缘仍有 ≥4.6% 余量；为视觉居中把原图再右移 38px（2048 坐标系）。
+  - `assets/android-icon-background.png`：1024×1024 纯白。
+  - `assets/android-icon-monochrome.png`：1024×1024 RGBA，按亮度转 alpha 的 QN 剪影（`v>168` 全透明，其余按 `(190-v)*2.2` 渐变），网格/粒子保留成半透明纹理，供 Android 13+ 主题图标着色。
+  - `assets/favicon.png`：64×64。
+- `app.json`：`android.adaptiveIcon.backgroundColor` 由 `#E6F4FE` 改为 `#FFFFFF`（与新白色背景一致）；foreground/background/monochrome 三个路径不变。
+- 安卓原生资源（`android/` 为 prebuild 产物、不入库）：五个密度全部重写——`ic_launcher.webp` / `ic_launcher_round.webp` 48/72/96/144/192，`ic_launcher_foreground/background/monochrome.webp` 108/162/216/324/432；`mipmap-anydpi-v26` 的两个 XML 与 `AndroidManifest` 的 `icon`/`roundIcon` 未改。
+- 验证：`./gradlew assembleRelease` 增量重打（74MB，覆盖 `~/Downloads/QMSZAI-Mobile-1.0.0.apk`）→ `adb install -r` → Pixel Launcher 桌面 dock 与应用抽屉均显示 QN，圆形遮罩下 Q 左缘、N 右缘均未被裁切。dock 图标外圈有一圈浅蓝描边、抽屉内同一图标没有，包内 webp 四周已核对是纯白（`255,255,255`），判断是 Pixel Launcher 的 dock 渲染效果，不是资源问题。
+- iOS：仓库没有 `ios/` 原生工程，Expo 在打包时用 `assets/icon.png` 生成 AppIcon；Expo Go 不显示应用图标，模拟器无法目检，真机/正式构建才生效。以后 `npx expo prebuild -p ios` 会从该文件生成 `Images.xcassets/AppIcon.appiconset`。
+- 登录态说明：本次安装前模拟器上并没有这个包（`dumpsys package` 的 `firstInstallTime` 就是本次安装时间，`shared_prefs` / `RKStorage` 均无旧数据），所以不是这次重装把登录态弄丢的；安装后 App 停在登录页，需要用户用 kira 账号手动登录。本轮未做安卓界面回归。
+- 未提交、未推送。
+
+#### 2026-11-27 · P2（一）：令牌分组选择页显示最近 24h 可用率
+
+- 用户原话：「风度稳定性在后端有接口吗，有的话就做」（按上下文指「分组稳定性」）。接口确认存在：`GET /api/user/self/groups/stability`，用测试站会话实测返回 `{data:{<分组>:[{start,end,status}]}}`；`start/end` 为秒级时间戳、每段 2 小时。测试站当前 46 个分组全是 `no_data`，只能验空态。
+- `src/api/types.ts`：新增 `GroupStabilitySegment` / `GroupStabilityMap`。
+- `src/api/endpoints.ts`：新增 `fetchGroupStability()`。
+- `App.tsx` 的 `TokenFormPanel`：
+  - 打开表单时与 `fetchUserGroups()` 并行拉稳定性；稳定性失败只把 map 置空，不影响分组选择。
+  - 分组行第二行在 desc 后追加状态点 + `24h 可用率 xx%`。
+  - 统计口径：`normal` 计可用；`error / down / fail / failure / unavailable / outage / degraded` 计故障；`no_data / unknown / maintenance` 不计入分母。
+  - 色点：≥98% 绿、≥90% 橙、<90% 红、无样本灰；无样本显示「24h 可用率 无数据」。
+  - 无障碍标签同时读出可用率。
+- 英文补 `24h 可用率 {0}%` / `24h 可用率 无数据`。
+- 验证：`npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过；安卓 release APK 增量重打并 `adb install -r`，进入「令牌管理 → + → 分组优先选择」，46 个分组均显示灰点 +「24h 可用率 无数据」，选中 `default` 后蓝底、序号、倍率、可用率同排正常（截图 `/tmp/q5.png`、`/tmp/q6.png`）。iOS 模拟器（Fast Refresh，未重载 App）同样进入分组选择页，空态、行高、倍率对齐正常，无障碍标签读出「default，24h 可用率 无数据」（截图 `/tmp/ios_p2_3.png`）。
+- 限制：测试站暂无真实百分比样本，绿/橙/红三种状态等后端产生数据或到生产站再验。
+- 未提交、未推送。
+
+#### 2026-11-27 · P1：左上角菜单 + 左侧抽屉，移除底部五标签
+
+- 用户原话：「做好现在版本的备份，开始 p1，我建议可以参考把菜单按钮放在左上角，点击后可以展开侧边栏形式的（看情况）」。
+- 备份：先用 rsync 把当前源码（不含 node_modules / android / ios / .expo / .git / dist）备份到 `/Users/wenze/Documents/GitHub/QMSZAI-Mobile-backups/20261127-084731/`，同目录记 `-head.txt`（`3006168`）与 `-uncommitted.diff`。
+- 选型：底部 5 个标签（聊天 / 概览 / 模型 / 令牌 / 账户）全部收进左侧抽屉，底部不再保留标签栏。理由是 P1 的主题就是「界面减负」，聊天页需要更多纵向空间；两套导航同时存在反而更乱。抽屉里同时放账户卡（头像 / 显示名 / @用户名 / 余额）与消息、钱包两个次级入口。
+- 实现：
+  - 新增 `src/NavDrawer.tsx`：透明 `Modal` + 遮罩 + `Animated` 从左侧滑入（开 260ms `Easing.out(cubic)` / 关 200ms `Easing.in(cubic)`，`useNativeDriver`）；面板宽 `min(320, 窗口宽 - 56)`，右侧上下 `shape.xl` 圆角，iOS 阴影 / 安卓 `elevation: 16`；主题、图标都走现有 `palette` / `themedStyles` / `AppIcon`。
+  - `App.tsx` 头部改成「菜单按钮 + 标题」，菜单按钮沿用 `GlassIconButton`（SF `line.3.horizontal`，安卓映射 `menu-outline`）；`drawerOpen` 状态传给抽屉，安卓返回键顺序改为「收抽屉 → 退子页面 → 回聊天 → 退出」。
+  - 移除 `LiquidTabBar` 的挂载与对应 import；`src/LiquidTabBar.tsx` 文件保留，作为以后想恢复底栏的现成实现。
+  - 连带调整：`ChatWorkspace` 不再传 `bottomInset={76}`（默认 0）；`scrollContent` / `modelList` 的 `paddingBottom` 96 → 28；令牌页 FAB `bottom` 84 → 24、列表 `paddingBottom` 176 → 100，避免悬浮按钮压住最后一条；账户页删掉与顶部余额卡重复的「剩余额度」行。
+  - 英文词典补 `打开菜单`（`关闭菜单` 原本已有）。
+- 用户确认（同日）：「历史记录一条问题一条记录」的问题不存在，不用再查；抽屉与整体样式保留现状，不再改回底部标签。
+- 验证：
+  - 安卓 release 包（增量 7–8s，`adb install -r` 覆盖 `~/Downloads/QMSZAI-Mobile-1.0.0.apk`）：菜单按钮打开抽屉、选中态高亮；抽屉 → 概览 / 模型目录 / API 令牌 / 账户中心都能切；抽屉 → 账户卡进个人设置、钱包进钱包页；返回键先收抽屉不退出，再按退回聊天；令牌页 FAB 落在右下安全区上方不挡列表；聊天页键盘弹起时输入条贴在键盘上方。
+  - iOS 模拟器（Fast Refresh）：抽屉动画与圆角、遮罩点击关闭、账户卡 / 消息 / 钱包入口、概览与令牌页布局正常；`Expo Go` 自带的右下齿轮悬浮钮不属于 App。
+  - `npx tsc --noEmit --noUnusedLocals`、`git diff --check` 通过。未提交、未推送。
 
 #### 2026-11-27 · P0：修复令牌分组「返回」失灵 + 登录页隐私政策 + 安卓返回键
 

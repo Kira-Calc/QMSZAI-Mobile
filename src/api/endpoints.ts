@@ -16,6 +16,7 @@ import type {
   CheckinStatus,
   DataSelfPoint,
   FreeDailyModelUsage,
+  GroupStabilityMap,
   LogStat,
   LoginResult,
   Paged,
@@ -189,6 +190,11 @@ export function fetchPlaygroundModels() {
 
 export function fetchUserGroups() {
   return apiRequest<Record<string, { ratio: number; desc: string }>>('/api/user/groups', { auth: true });
+}
+
+// 分组最近 24 小时的稳定性：分组 -> 2 小时一段的 status 列表。
+export function fetchGroupStability() {
+  return apiRequest<GroupStabilityMap>('/api/user/self/groups/stability', { auth: true });
 }
 
 export type VoiceOption = { label: string; value: string };
@@ -414,7 +420,13 @@ export function fetchConversationMessages(id: number, limit = 50, offset = 0) {
   );
 }
 
-export function appendMessage(id: number, role: 'user' | 'assistant', content: string, extra?: Record<string, unknown>) {
+export function appendMessage(
+  id: number,
+  role: 'user' | 'assistant',
+  // 带图片 / 文件的消息传 OpenAI 内容块数组，服务端会存成 JSON 字符串。
+  content: string | unknown[],
+  extra?: Record<string, unknown>,
+) {
   return apiRequest<ChatMessage>(`/api/chat/conversations/${id}/messages`, {
     method: 'POST',
     body: { role, content, ...extra },

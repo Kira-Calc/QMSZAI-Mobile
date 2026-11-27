@@ -181,6 +181,15 @@ export type Paged<T> = {
   total: number;
 };
 
+/** 分组稳定性接口返回的单个时间段；status 常见值为 normal / error / no_data。 */
+export type GroupStabilitySegment = {
+  start: number;
+  end: number;
+  status: string;
+};
+
+export type GroupStabilityMap = Record<string, GroupStabilitySegment[]>;
+
 export type UsageLogItem = {
   id: number;
   user_id: number;

@@ -248,6 +248,84 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return parsed.data as T;
 }
 
+// 接口返回的是站内相对路径（如 /uploads/xxx.png），展示与发给模型前拼成绝对地址。
+export function absoluteUrl(path: string): string {
+  if (!path) return path;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path)) return path;
+  return `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
+}
+
+export type UploadedAttachment = {
+  name: string;
+  size: number;
+  mimeType: string;
+  /** 服务端判定：image（图片）/ text（纯文本）/ other（其余，如 PDF、Office 文档）。 */
+  type: string;
+  /** 图片与二进制文件是 base64 data URL，纯文本是原文。 */
+  content: string;
+  /** 站内相对路径，展示或发给模型前用 absoluteUrl() 拼绝对地址。 */
+  url: string;
+};
+
+// 聊天附件上传：POST /api/upload（multipart，字段名 file，单文件）。
+// 用 XHR 而不是 expo/fetch：RN 的 XHR 支持 {uri,name,type} 直接流式上传本地文件。
+export function uploadChatFile(input: {
+  uri: string;
+  name?: string;
+  mimeType?: string;
+}): Promise<UploadedAttachment> {
+  const fallbackName = decodeURIComponent(input.uri.split('/').pop() || 'file');
+  const name = input.name || fallbackName;
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    // RN 的 FormData 接受文件描述对象；类型声明只覆盖 Blob，这里收窄掉。
+    form.append('file', {
+      uri: input.uri,
+      name,
+      type: input.mimeType || 'application/octet-stream',
+    } as unknown as Blob);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE_URL}/api/upload`);
+    xhr.timeout = 120000;
+    xhr.setRequestHeader('Accept', 'application/json');
+    // 不要手工设置 Content-Type，multipart 的 boundary 由原生生成。
+    const headers = authHeaders();
+    Object.keys(headers).forEach((key) => xhr.setRequestHeader(key, headers[key]));
+
+    xhr.onload = () => {
+      notifyUnauthorized(xhr.status, '/api/upload');
+      let parsed: Envelope<Record<string, unknown>> | null = null;
+      try {
+        parsed = xhr.responseText ? (JSON.parse(xhr.responseText) as Envelope<Record<string, unknown>>) : null;
+      } catch {
+        parsed = null;
+      }
+      const data = parsed?.data;
+      if (xhr.status < 200 || xhr.status >= 300 || !parsed || parsed.success === false || !data) {
+        reject(new ApiError(extractError(parsed?.message ?? '', xhr.status, xhr.responseText ?? ''), xhr.status));
+        return;
+      }
+      const url = typeof data.url === 'string' ? data.url : '';
+      if (!url) {
+        reject(new ApiError(t('上传失败，请稍后重试'), xhr.status));
+        return;
+      }
+      resolve({
+        name: typeof data.name === 'string' && data.name ? data.name : name,
+        size: Number(data.size ?? 0),
+        mimeType: typeof data.mimeType === 'string' ? data.mimeType : input.mimeType ?? '',
+        type: typeof data.type === 'string' ? data.type : 'other',
+        content: typeof data.content === 'string' ? data.content : '',
+        url,
+      });
+    };
+    xhr.onerror = () => reject(new ApiError(t('网络连接失败，请检查网络后重试'), 0));
+    xhr.ontimeout = () => reject(new ApiError(t('请求超时，请稍后重试'), 0));
+    xhr.send(form);
+  });
+}
+
 // /pg/*：上游原生格式（无 success 包裹），错误为 {error:{message}}。
 export async function pgRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const response = await rawRequest(path, { ...options, auth: true });

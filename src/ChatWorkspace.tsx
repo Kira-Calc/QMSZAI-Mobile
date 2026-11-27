@@ -4,11 +4,13 @@ import NativeMaskedView from '@react-native-masked-view/masked-view';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactElement, type ComponentProps, type ComponentRef, type ReactNode } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   AppState,
   BackHandler,
   Easing,
+  Image,
   Keyboard,
   Modal,
   Platform,
@@ -23,6 +25,8 @@ import {
   type ViewProps,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { File } from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { ModelLogo } from './components/ModelLogo';
@@ -34,7 +38,7 @@ import {
   fetchConversationMessages,
   fetchConversations,
 } from './api/endpoints';
-import { isUnauthorized, streamChat } from './api/client';
+import { isUnauthorized, absoluteUrl, streamChat, uploadChatFile } from './api/client';
 import type { ChatConversation } from './api/types';
 import type { Model } from './types';
 import { AlphabetRail, GlassIconButton, GlassSurface, SheetHeader, palette } from './ui';
@@ -56,12 +60,34 @@ const MaskedView = NativeMaskedView as unknown as ComponentType<ViewProps & {
 const ios = Platform.OS === 'ios';
 
 
+// 与网页端一致：一次最多 4 个附件、单个 5MB；文本文件超过 50KB 时截断后再塞进提示词。
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024;
+const TEXT_INLINE_LIMIT = 50 * 1024;
+const TEXT_TRUNCATE_LIMIT = 100000;
+
+type ChatAttachment = {
+  /** 仅本地渲染用；历史消息里用索引或文件名生成。 */
+  id: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  kind: 'image' | 'text' | 'other';
+  /** 站内相对路径；渲染前用 absoluteUrl() 拼绝对地址。 */
+  url: string;
+  /** 纯文本文件的原文，发送时注入提示词。 */
+  content?: string;
+};
+
 type ChatMessage = {
   id: number;
   role: 'user' | 'assistant';
   text: string;
   modelId?: string;
   createdAt?: number;
+  attachments?: ChatAttachment[];
+  /** 发给模型的原始内容（字符串或图片内容块），用于多轮上下文与历史还原。 */
+  apiContent?: unknown;
 };
 
 type Conversation = {
@@ -98,6 +124,107 @@ function toConversation(item: ChatConversation): Conversation {
     messages: [],
     loaded: false,
   };
+}
+
+// 与网页端相同的拼装规则：
+// - 文本文件注入 <file name="...">，超过 50KB 时截到 100000 字符；
+// - 其他附件（PDF / Office 等）只给名称和可访问地址；
+// - 图片单独走 image_url 内容块，不重复写进文本。
+function buildAttachmentContent(prompt: string, attachments: ChatAttachment[]) {
+  const images = attachments.filter((item) => item.kind === 'image');
+  const partials = attachments
+    .filter((item) => item.kind !== 'image')
+    .map((item) => {
+      if (item.kind === 'text') {
+        const raw = item.content ?? '';
+        const body = raw.length > TEXT_INLINE_LIMIT ? raw.slice(0, TEXT_TRUNCATE_LIMIT) : raw;
+        return `<file name="${item.name}">\n${body}\n</file>`;
+      }
+      return `Attachment: ${item.name}\nURL: ${absoluteUrl(item.url)}`;
+    });
+  const text = [prompt, ...partials].filter((part) => part.trim().length > 0).join('\n\n');
+  if (images.length === 0) return text;
+  return [
+    { type: 'text', text },
+    ...images.map((item) => ({ type: 'image_url', image_url: { url: absoluteUrl(item.url) } })),
+  ];
+}
+
+// 历史消息里存的是拼装后的内容：气泡只显示用户真正输入的文字。
+function displayRoleText(raw: string) {
+  return raw
+    .replace(/<file name="[^"]*">[\s\S]*?<\/file>/g, '')
+    .replace(/^Attachment: .*\nURL: .*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// 服务端把数组内容存成 JSON 字符串，加载时要还原成图片块和附件。
+function parseStoredMessage(content: unknown, messageId: number): {
+  text: string;
+  attachments: ChatAttachment[];
+  apiContent?: unknown;
+} {
+  if (typeof content !== 'string') return { text: '', attachments: [] };
+  const trimmed = content.trim();
+  if (trimmed.startsWith('[')) {
+    try {
+      const blocks = JSON.parse(trimmed) as unknown;
+      if (Array.isArray(blocks)) {
+        let text = '';
+        const attachments: ChatAttachment[] = [];
+        blocks.forEach((block, index) => {
+          const entry = block as { type?: string; text?: string; image_url?: { url?: string } };
+          if (entry?.type === 'text' && typeof entry.text === 'string') {
+            text = text ? `${text}\n\n${entry.text}` : entry.text;
+          } else if (entry?.type === 'image_url' && typeof entry.image_url?.url === 'string') {
+            attachments.push({
+              id: `stored-image-${messageId}-${index}`,
+              name: t('图片'),
+              size: 0,
+              mimeType: '',
+              kind: 'image',
+              url: entry.image_url.url,
+            });
+          }
+        });
+        // 文本块里的文件注入还原成附件条，气泡里不再显示文件全文。
+        const names = Array.from(text.matchAll(/<file name="([^"]*)">/g));
+        names.forEach((match, index) => {
+          attachments.push({
+            id: `stored-text-${messageId}-${index}`,
+            name: match[1],
+            size: 0,
+            mimeType: 'text/plain',
+            kind: 'text',
+            url: '',
+          });
+        });
+        const links = Array.from(text.matchAll(/Attachment: ([^\n]+)\nURL: ([^\n]+)/g));
+        links.forEach((match, index) => {
+          attachments.push({
+            id: `stored-other-${messageId}-${index}`,
+            name: match[1],
+            size: 0,
+            mimeType: '',
+            kind: 'other',
+            url: match[2],
+          });
+        });
+        return { text: displayRoleText(text), attachments, apiContent: blocks };
+      }
+    } catch {
+      // 不是合法 JSON 就按普通文本处理。
+    }
+  }
+  return { text: content, attachments: [] };
+}
+
+function formatAttachmentSize(size: number) {
+  if (!size) return '';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export type ChatToolKey = 'media' | 'experience' | 'fusion' | 'pricing';
@@ -152,6 +279,11 @@ export function ChatWorkspace({
   const [modelAnchor, setModelAnchor] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const [toolsVisible, setToolsVisible] = useState(false);
   const [toolsAnchor, setToolsAnchor] = useState({ x: 111, y: 170, width: 228, height: 36 });
+  // 待发送的附件：上传成功后进列表，发送时一起拼进请求。
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const [attachMenuVisible, setAttachMenuVisible] = useState(false);
+  const [attachAnchor, setAttachAnchor] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const { visible: keyboardVisible, inset: keyboardInset } = useKeyboardInsets(true);
   const safeAreaInsets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -176,6 +308,7 @@ export function ChatWorkspace({
   // 模型弹层里有搜索框，键盘弹出不能关掉；改成重新量一次页面尺寸让弹层跟着上移。
   useEffect(() => {
     setToolsVisible(false);
+    setAttachMenuVisible(false);
     if (!modelPickerVisible) return;
     const root = rootRef.current;
     if (!root) return;
@@ -186,6 +319,7 @@ export function ChatWorkspace({
     if (active) return;
     setToolsVisible(false);
     setModelPickerVisible(false);
+    setAttachMenuVisible(false);
   }, [active]);
 
   const generation = useRef(0);
@@ -196,6 +330,7 @@ export function ChatWorkspace({
   const rootRef = useRef<ComponentRef<typeof View>>(null);
   const modelButton = useRef<ComponentRef<typeof View>>(null);
   const toolsButton = useRef<ComponentRef<typeof View>>(null);
+  const attachButton = useRef<ComponentRef<typeof View>>(null);
   // 弹层不再走 Modal：Modal 会抢走焦点，键盘随之收起，输入条下移后锚点也失效。
   // 改为在当前页面内绝对定位，坐标按页面自身换算，键盘保持原样。
   const [popoverBounds, setPopoverBounds] = useState({ width: 0, height: 0 });
@@ -334,18 +469,24 @@ export function ChatWorkspace({
     if (conversation?.modelId) setSelectedModelId(conversation.modelId);
     setDraft('');
     setEditing(null);
+    setAttachments([]);
     setHistoryVisible(false);
     playThreadTransition();
     if (conversation && !conversation.loaded) {
       fetchConversationMessages(id, 100, 0)
         .then((page) => {
-          const messages: ChatMessage[] = (page.items ?? []).map((item) => ({
-            id: item.ID,
-            role: item.Role === 'assistant' ? 'assistant' : 'user',
-            text: item.Content ?? '',
-            modelId: item.Model || conversation.modelId,
-            createdAt: Number.isNaN(Date.parse(item.CreatedAt)) ? undefined : Date.parse(item.CreatedAt),
-          }));
+          const messages: ChatMessage[] = (page.items ?? []).map((item) => {
+            const parsed = parseStoredMessage(item.Content, item.ID);
+            return {
+              id: item.ID,
+              role: item.Role === 'assistant' ? 'assistant' : 'user',
+              text: parsed.text,
+              modelId: item.Model || conversation.modelId,
+              createdAt: Number.isNaN(Date.parse(item.CreatedAt)) ? undefined : Date.parse(item.CreatedAt),
+              attachments: parsed.attachments,
+              apiContent: parsed.apiContent,
+            };
+          });
           setConversations((items) =>
             items.map((entry) => (entry.id === id ? { ...entry, messages, loaded: true } : entry)),
           );
@@ -359,6 +500,7 @@ export function ChatWorkspace({
     setSelected(null);
     setDraft('');
     setEditing(null);
+    setAttachments([]);
     setHistoryVisible(false);
     playThreadTransition();
   };
@@ -411,6 +553,110 @@ export function ChatWorkspace({
     });
   };
 
+  const openAttachMenu = () => {
+    measureInPage(attachButton.current, (anchor) => {
+      setAttachAnchor(anchor);
+      setAttachMenuVisible(true);
+    });
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((items) => items.filter((item) => item.id !== id));
+  };
+
+  // 选中的文件先上传，拿到站内地址后才允许发送。
+  const addAttachments = async (
+    files: Array<{ uri: string; name: string; mimeType?: string; size?: number }>,
+  ) => {
+    if (files.length === 0) return;
+    const room = MAX_ATTACHMENTS - attachments.length;
+    if (room <= 0) {
+      Alert.alert(tf('最多上传 {0} 个文件', MAX_ATTACHMENTS));
+      return;
+    }
+    const accepted = files.slice(0, room);
+    if (files.length > room) Alert.alert(tf('最多上传 {0} 个文件', MAX_ATTACHMENTS));
+
+    for (const item of accepted) {
+      if (item.size && item.size > MAX_ATTACHMENT_SIZE) {
+        Alert.alert(tf('单个文件不能超过 {0}', '5MB'));
+        continue;
+      }
+      setUploading((count) => count + 1);
+      try {
+        const uploaded = await uploadChatFile({
+          uri: item.uri,
+          name: item.name,
+          mimeType: item.mimeType,
+        });
+        if (uploaded.size > MAX_ATTACHMENT_SIZE) {
+          Alert.alert(tf('单个文件不能超过 {0}', '5MB'));
+          continue;
+        }
+        const kind = uploaded.type === 'image' ? 'image' : uploaded.type === 'text' ? 'text' : 'other';
+        setAttachments((items) => [
+          ...items,
+          {
+            id: `att-${Date.now()}-${items.length}`,
+            name: uploaded.name,
+            size: uploaded.size,
+            mimeType: uploaded.mimeType,
+            kind,
+            url: uploaded.url,
+            content: kind === 'text' ? uploaded.content : undefined,
+          },
+        ]);
+      } catch (error) {
+        if (isUnauthorized(error)) return;
+        Alert.alert(t('上传失败'), error instanceof Error ? error.message : t('请稍后重试'));
+      } finally {
+        setUploading((count) => count - 1);
+      }
+    }
+  };
+
+  const pickPhotos = async () => {
+    setAttachMenuVisible(false);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        selectionLimit: MAX_ATTACHMENTS,
+      });
+      if (result.canceled) return;
+      await addAttachments(
+        (result.assets ?? []).map((asset, index) => ({
+          uri: asset.uri,
+          name:
+            asset.fileName ||
+            `image-${Date.now()}-${index}.${(asset.mimeType || 'image/jpeg').split('/')[1] || 'jpg'}`,
+          mimeType: asset.mimeType,
+          size: asset.fileSize,
+        })),
+      );
+    } catch (error) {
+      Alert.alert(t('无法打开相册'), error instanceof Error ? error.message : t('请稍后重试'));
+    }
+  };
+
+  const pickDocuments = async () => {
+    setAttachMenuVisible(false);
+    try {
+      const result = await File.pickFileAsync({ multipleFiles: true });
+      if (result.canceled || !result.result) return;
+      await addAttachments(
+        result.result.map((file) => ({
+          uri: file.uri,
+          name: file.name,
+          mimeType: file.type || undefined,
+          size: file.size,
+        })),
+      );
+    } catch (error) {
+      Alert.alert(t('无法打开文件'), error instanceof Error ? error.message : t('请稍后重试'));
+    }
+  };
+
   const deleteConversation = (id: number) => {
     Alert.alert(t('删除对话？'), t('删除后无法恢复。'), [
       { text: t('取消'), style: 'cancel' },
@@ -436,7 +682,9 @@ export function ChatWorkspace({
 
   const send = async (preset?: string, editTargetId?: number) => {
     const prompt = (preset ?? draft).trim();
-    if (!prompt || busy || !currentModel) return;
+    const outgoing = attachments.length > 0 ? buildAttachmentContent(prompt, attachments) : prompt;
+    // 只有附件、没有文字时也允许发送（例如直接发图片让模型识别）。
+    if ((!prompt && attachments.length === 0) || busy || uploading > 0 || !currentModel) return;
     if (!currentModel.id) {
       Alert.alert(t('请先选择模型'));
       return;
@@ -446,7 +694,15 @@ export function ChatWorkspace({
     let conversationId = selected;
     const request = ++generation.current;
     const now = Date.now();
-    const userMessage: ChatMessage = { id: Date.now(), role: 'user', text: prompt, createdAt: now };
+    const sentAttachments = attachments;
+    const userMessage: ChatMessage = {
+      id: Date.now(),
+      role: 'user',
+      text: prompt,
+      createdAt: now,
+      attachments: sentAttachments,
+      apiContent: outgoing,
+    };
     const assistantId = userMessage.id + 1;
 
     // 编辑用户消息时，从被编辑的那一条开始截断，后面所有回复都重新生成。
@@ -463,18 +719,22 @@ export function ChatWorkspace({
 
     setDraft('');
     setEditing(null);
+    setAttachments([]);
     setBusy(true);
+
+    // 只发附件时用附件名当会话标题，避免空标题。
+    const title = prompt || sentAttachments[0]?.name || t('新对话');
 
     try {
       if (conversationId === null) {
         const created = await createConversationRequest(
-          prompt.length > 22 ? `${prompt.slice(0, 22)}…` : prompt,
+          title.length > 22 ? `${title.slice(0, 22)}…` : title,
           model.id,
         );
         conversationId = created.ID;
         const newConversation: Conversation = {
           id: created.ID,
-          title: created.Title || prompt.slice(0, 22),
+          title: created.Title || title.slice(0, 22),
           modelId: model.id,
           updatedAt: now,
           messages: [userMessage],
@@ -500,12 +760,16 @@ export function ChatWorkspace({
       }
 
       const activeId = conversationId;
-      appendMessage(activeId, 'user', prompt).catch(() => undefined);
+      appendMessage(activeId, 'user', outgoing).catch(() => undefined);
 
+      // 带图片 / 文件的历史消息要用当时的原始内容，否则多轮对话会丢附件。
       const history = historyMessages
-        .filter((message) => message.text.trim())
-        .map((message) => ({ role: message.role, content: message.text }));
-      const payloadMessages = [...history, { role: 'user' as const, content: prompt }];
+        .filter((message) => (message.apiContent ? true : message.text.trim().length > 0))
+        .map((message) => ({
+          role: message.role,
+          content: message.apiContent ?? message.text,
+        }));
+      const payloadMessages = [...history, { role: 'user' as const, content: outgoing }];
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -568,6 +832,8 @@ export function ChatWorkspace({
       // 401 已经自动回到登录页，不再弹错误框。
       if (isUnauthorized(error)) return;
       Alert.alert(t('发送失败'), error instanceof Error ? error.message : t('请稍后重试'));
+      // 附件已经上传成功，失败时放回输入条，用户不用重新选。
+      if (sentAttachments.length > 0) setAttachments(sentAttachments);
       if (conversationId !== null) {
         const target = conversationId;
         setConversations((items) =>
@@ -585,15 +851,17 @@ export function ChatWorkspace({
     if (busy) return;
     setEditing({ id: message.id });
     setDraft(message.text);
+    setAttachments(message.attachments ?? []);
     setTimeout(() => inputRef.current?.focus(), 80);
   };
 
   const cancelEdit = () => {
     setEditing(null);
     setDraft('');
+    setAttachments([]);
   };
 
-  const canSend = draft.trim().length > 0 && !busy;
+  const canSend = (draft.trim().length > 0 || attachments.length > 0) && !busy && uploading === 0;
 
   // 安卓的对话历史是浮层卡片：遮罩淡入、卡片从底部滑上来，关闭时倒放。
   // iOS 继续交给原生 pageSheet 做动画，这里不参与。
@@ -947,6 +1215,58 @@ export function ChatWorkspace({
             />
           </MaskedView>
         </Animated.View>
+        {attachments.length > 0 || uploading > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            style={styles.attachmentTrayScroll}
+            contentContainerStyle={styles.attachmentTray}
+          >
+            {attachments.map((item) => (
+              <View key={item.id} style={styles.attachmentChip}>
+                {item.kind === 'image' ? (
+                  <Image
+                    source={{ uri: absoluteUrl(item.url) }}
+                    style={styles.attachmentThumb}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Icon
+                    name="doc.text.magnifyingglass"
+                    size={16}
+                    color={palette.blue}
+                  />
+                )}
+                <View style={styles.attachmentMain}>
+                  <Text numberOfLines={1} style={styles.attachmentName}>
+                    {item.name}
+                  </Text>
+                  {formatAttachmentSize(item.size) ? (
+                    <Text style={styles.attachmentSize}>{formatAttachmentSize(item.size)}</Text>
+                  ) : null}
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t('移除附件')}
+                  onPress={() => removeAttachment(item.id)}
+                  hitSlop={8}
+                  style={({ pressed }) => [
+                    styles.attachmentRemove,
+                    pressed ? styles.pressed : null,
+                  ]}
+                >
+                  <Icon name="xmark" size={12} color={palette.secondaryLabel} />
+                </Pressable>
+              </View>
+            ))}
+            {uploading > 0 ? (
+              <View style={[styles.attachmentChip, styles.attachmentChipLoading]}>
+                <ActivityIndicator size="small" color={palette.blue} />
+              </View>
+            ) : null}
+          </ScrollView>
+        ) : null}
         <View style={styles.composerRow}>
           <View ref={toolsButton} collapsable={false} style={styles.toolsButton}>
             <GlassIconButton
@@ -959,6 +1279,17 @@ export function ChatWorkspace({
             />
           </View>
           <View style={styles.composerField}>
+            <View ref={attachButton} collapsable={false} style={styles.attachButton}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t('添加附件')}
+                onPress={openAttachMenu}
+                hitSlop={8}
+                style={({ pressed }) => [styles.attachPress, pressed ? styles.pressed : null]}
+              >
+                <Icon name="paperclip" fallback="📎" size={19} color={palette.secondaryLabel} />
+              </Pressable>
+            </View>
             <TextInput
               keyboardAppearance={isDark() ? 'dark' : 'light'}
               ref={inputRef}
@@ -1160,6 +1491,39 @@ export function ChatWorkspace({
             <Text style={styles.toolMenuLabel}>{tool.label}</Text>
           </Pressable>
         ))}
+      </ChatPopover>
+
+      <ChatPopover
+        visible={attachMenuVisible}
+        anchor={attachAnchor}
+        onClose={() => setAttachMenuVisible(false)}
+        estimatedHeight={112}
+        width={232}
+        bounds={popoverBounds}
+        overlayTop={0}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t('照片')}
+          onPress={() => void pickPhotos()}
+          style={({ pressed }) => [
+            styles.toolRow,
+            styles.popoverRowBorder,
+            pressed ? styles.popoverRowPressed : null,
+          ]}
+        >
+          <Icon name="camera" fallback="◎" size={21} color={palette.blue} />
+          <Text style={styles.toolMenuLabel}>{t('照片')}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t('文件')}
+          onPress={() => void pickDocuments()}
+          style={({ pressed }) => [styles.toolRow, pressed ? styles.popoverRowPressed : null]}
+        >
+          <Icon name="doc.text.magnifyingglass" fallback="▤" size={21} color={palette.blue} />
+          <Text style={styles.toolMenuLabel}>{t('文件')}</Text>
+        </Pressable>
       </ChatPopover>
     </View>
   );
@@ -1368,12 +1732,40 @@ function MessageBubble({
   const timeText = time ? <Text style={styles.messageTime}>{time}</Text> : null;
 
   if (isUser) {
+    const images = (message.attachments ?? []).filter((item) => item.kind === 'image');
+    const files = (message.attachments ?? []).filter((item) => item.kind !== 'image');
     return (
       <View style={styles.userRow}>
-        <View style={styles.userBubble}>
-          <Text selectable style={styles.userText}>
-            {message.text}
-          </Text>
+        <View style={[styles.userBubble, images.length > 0 ? styles.userBubbleWithMedia : null]}>
+          {images.length > 0 ? (
+            <View style={styles.bubbleImages}>
+              {images.map((image) => (
+                <Image
+                  key={image.id}
+                  source={{ uri: absoluteUrl(image.url) }}
+                  style={styles.bubbleImage}
+                  resizeMode="cover"
+                />
+              ))}
+            </View>
+          ) : null}
+          {files.length > 0 ? (
+            <View style={styles.bubbleFiles}>
+              {files.map((file) => (
+                <View key={file.id} style={styles.bubbleFile}>
+                  <Icon name="doc.text.magnifyingglass" size={15} color="#FFFFFF" />
+                  <Text numberOfLines={1} style={styles.bubbleFileName}>
+                    {file.name}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {message.text ? (
+            <Text selectable style={styles.userText}>
+              {message.text}
+            </Text>
+          ) : null}
         </View>
         <View style={[styles.messageMeta, styles.messageMetaUser]}>
           {timeText}
@@ -1549,6 +1941,47 @@ const styles = themedStyles(() => StyleSheet.create({
     paddingVertical: 10,
   },
   userText: { color: '#FFFFFF', fontSize: ios ? 17 : 16, lineHeight: ios ? 23 : 22 },
+  // 带图片时气泡只负责包住缩略图，避免蓝底被撑成一条空带。
+  userBubbleWithMedia: { paddingHorizontal: 6, paddingTop: 6, paddingBottom: 8 },
+  bubbleImages: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 4 },
+  bubbleImage: {
+    width: 126,
+    height: 126,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+  },
+  bubbleFiles: { gap: 4, marginBottom: 4, paddingHorizontal: 4 },
+  bubbleFile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  bubbleFileName: { color: '#FFFFFF', fontSize: 12.5, maxWidth: 210 },
+  attachmentTrayScroll: { marginBottom: 6 },
+  attachmentTray: { gap: 6, paddingHorizontal: 2, paddingVertical: 2 },
+  attachmentChip: {
+    maxWidth: 190,
+    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingLeft: 7,
+    paddingRight: 5,
+    paddingVertical: 4,
+    borderRadius: ios ? 14 : shape.md,
+    backgroundColor: palette.card,
+    ...(ios ? { borderWidth: StyleSheet.hairlineWidth, borderColor: palette.separatorSoft } : elevation.level1),
+  },
+  attachmentChipLoading: { width: 52, justifyContent: 'center', paddingHorizontal: 0, paddingVertical: 0 },
+  attachmentThumb: { width: 30, height: 30, borderRadius: 8, backgroundColor: palette.fill },
+  attachmentMain: { flexShrink: 1 },
+  attachmentName: { color: palette.label, fontSize: 12.5, fontWeight: '500' },
+  attachmentSize: { color: palette.secondaryLabel, fontSize: 10.5, fontVariant: ['tabular-nums'] },
+  attachmentRemove: { width: 22, height: 22, alignItems: 'center', justifyContent: 'center' },
   messageMeta: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1693,7 +2126,7 @@ const styles = themedStyles(() => StyleSheet.create({
     backgroundColor: palette.card,
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingLeft: 16,
+    paddingLeft: 6,
     paddingRight: 5,
     paddingVertical: 5,
     ...(ios
@@ -1703,6 +2136,8 @@ const styles = themedStyles(() => StyleSheet.create({
         }
       : elevation.level1),
   },
+  attachButton: { width: 34, height: 38, justifyContent: 'center' },
+  attachPress: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   input: { flex: 1, minHeight: 38, maxHeight: 120, paddingTop: 8, paddingBottom: 8, color: palette.label, fontSize: ios ? 17 : 16, lineHeight: 22 },
   sendButton: {
     width: ios ? 38 : 42,

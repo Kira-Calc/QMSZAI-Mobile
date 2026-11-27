@@ -1,6 +1,6 @@
 # QMSZAI Mobile：CLI 接手文档
 
-更新日期：2026-11-17。以本文和实际代码为准；**需求来源与开发过程记录在 `DEV_RECORD.md`**（提示词档案、开发顺序、目录结构、设计规范、按日开发日志），本文只写接手需要的代码事实与命令。旧交接里“未接真实业务接口”的描述已失效，键盘避让与阴影方案仍以本文为准。
+更新日期：2026-11-27。以本文和实际代码为准；**需求来源与开发过程记录在 `DEV_RECORD.md`**（提示词档案、开发顺序、目录结构、设计规范、按日开发日志），本文只写接手需要的代码事实与命令。旧交接里“未接真实业务接口”的描述已失效，键盘避让与阴影方案仍以本文为准。
 
 > ## ⚠️ 硬性约定：iOS / 安卓的登录态都不要动（2026-11-24，用户明确要求）
 >
@@ -12,6 +12,51 @@
 > - 不要为了看数据去改 `src/api/client.ts` 的 `restoreSession()` / `clearSession()`，也不要调 `/api/user/logout`，任何可能让服务端 session 失效的操作都要先确认登录态可恢复。
 > - 需要重启模拟器 / 模拟器被关掉时，先告诉用户会掉登录，等用户同意再动；安卓重启后如果必须 `adb reverse tcp:8091 tcp:8091`，也先确认这是不是会触发 Expo Go 重新加载。
 > - 万一掉登录：如实告诉用户，请用户手动输入账号密码，**不要**尝试伪造登录、也不要从浏览器 jar 里取 session 顶上（旧 session 很可能已经 401）。
+
+## 主导航：左上角菜单 + 左侧抽屉（2026-11-27，P1）
+
+- 底部五个标签（`LiquidTabBar`）已从界面移除，文件保留但不再挂载；所有一级页面改由左上角圆形菜单按钮打开左侧抽屉进入。
+- 新组件 `src/NavDrawer.tsx`：透明 `Modal` + 遮罩 + `Animated` 从左侧滑入（开 260ms / 关 200ms，`useNativeDriver`），面板宽 `min(320, 窗口宽 - 56)`，右侧上下圆角 `shape.xl`；iOS 阴影、安卓 `elevation: 16`。
+- 抽屉内容：品牌行、「头像 + 显示名 + @用户名 + 余额」账户卡（点按进个人设置）、主导航（聊天 / 概览 / 模型目录 / API 令牌 / 账户中心）、分隔线、消息（未读数）/ 钱包。
+- `App.tsx` 用 `drawerOpen` 状态；安卓返回键顺序为「收抽屉 → 退子页面 → 回聊天 → 退出」。
+- 移除底栏后 `ChatWorkspace` 不再传 `bottomInset`（默认 0），底部安全区仍由根 `SafeAreaView` 负责；`scrollContent` / `modelList` 底部留白 96 → 28，令牌页 FAB 与列表留白同步下移（`bottom: 24`、`paddingBottom: 100`）。
+- 账户页去掉与顶部余额卡重复的「剩余额度」行。
+
+## 聊天附件：图片与文档上传（2026-11-27，P2）
+
+- 上传接口：`POST /api/upload`，multipart 字段 `file`，带会话 Cookie + `New-Api-User`（安卓手工 Cookie，iOS 走原生 Cookie jar）。返回 `{data:{name,size,mimeType,type,content,url}}`，`type` 为 `image | text | other`；`url` 是 `/uploads/...` 相对路径。
+- 封装：`src/api/client.ts` 的 `uploadChatFile()`（XHR + `{uri,name,type}`）与 `absoluteUrl()`。不要手写 `Content-Type`。
+- 聊天页：`src/ChatWorkspace.tsx` 输入框内回形针 → 「照片 / 文件」。照片用 `expo-image-picker`（多选），文件用 `expo-file-system` 的 `File.pickFileAsync({ multipleFiles: true })`，没有新增依赖。
+- 限制：最多 4 个、单个 5MB；上传中禁用发送。
+- 拼装（与网页端一致）：
+  - 图片 → `[{type:'text'},{type:'image_url',image_url:{url:绝对地址}}]`；
+  - 文本文件 → `<file name="...">原文</file>`，超过 50KB 截到 100000 字符；
+  - 其他文件 → `Attachment: 名称\nURL: 绝对地址`。
+- 持久化：`appendMessage()` 现在接受 `string | unknown[]`；加载历史时 `Content` 可能是 JSON 字符串，需 `JSON.parse` 还原图片块，并从注入文本还原附件条。
+- 多轮：发请求时历史消息用 `apiContent ?? text`，否则第二轮会丢图片和文件。
+- 已验证（安卓）：图片 + txt + pdf 三附件上传、模型识别纯红图片与 txt 内容、强停重开历史还原、二次追问正常。iOS 当时会话失效停在登录页，未实测。
+
+## App 图标：公司 QN 品牌图（2026-11-27）
+
+- 源图：`/Users/wenze/Downloads/微信图片_2026-11-27_112939_238.jpg`（2048×2048，白底蓝色 QN）。生成参数与原因见 `DEV_RECORD.md` 当天条目；临时脚本 `/tmp/make_qn_icons.py`（未入库，丢了可按记录重写）。
+- `assets/`：
+  - `icon.png` 1024×1024 RGB、**无 alpha**（iOS + 安卓 legacy 共用，整幅原图）；
+  - `android-icon-foreground.png` 1024 RGB，原图 75% 居中 + 白底（自适应安全区内留 ≥4.6%）；
+  - `android-icon-background.png` 1024 纯白；
+  - `android-icon-monochrome.png` 1024 RGBA，亮度转 alpha 的 QN 剪影（主题图标）；
+  - `favicon.png` 64。
+- `app.json`：`android.adaptiveIcon.backgroundColor` = `#FFFFFF`，三个图路径不变。
+- 安卓 `res/mipmap-*` 是 prebuild 产物：重新 `npx expo prebuild -p android` 会从上面的 assets 重新生成，别只改 webp 不改 assets。
+- 图标必须重打 APK 才会在启动器生效；`adb install -r` 在包不存在时是全新安装（本次 `firstInstallTime` 即安装时间），会回到登录页，属预期。
+- iOS 无 `ios/` 工程，图标在打包时由 `assets/icon.png` 生成；Expo Go 里看不到应用图标。
+
+## 分组稳定性：令牌分组选择页的 24h 可用率（2026-11-27，P2）
+
+- 接口：`GET /api/user/self/groups/stability`，会话 Cookie + `New-Api-User`；返回 `{success,data:{分组:[{start,end,status}]}}`，`start/end` 为秒级时间戳、单段 2 小时。
+- 封装：`src/api/endpoints.ts` 的 `fetchGroupStability()`；类型是 `src/api/types.ts` 的 `GroupStabilitySegment` / `GroupStabilityMap`。
+- 展示：`App.tsx` 的 `TokenFormPanel` 打开时与分组列表并行拉取；分组行第二行显示状态点 + `24h 可用率 xx%`，无样本显示「24h 可用率 无数据」。
+- 统计口径：`normal` 计可用；`error / down / fail / failure / unavailable / outage / degraded` 计故障；`no_data / unknown / maintenance` 不计入分母。色点 ≥98% 绿、≥90% 橙、<90% 红、无样本灰。
+- 测试站目前 46 个分组全是 `no_data`，只能验证空态；有真实数据时重点看百分比与三种颜色。安卓 release APK 与 iOS 模拟器均实测空态和选中态，`tsc` / `git diff --check` 通过。
 
 ## 项目与授权
 
@@ -111,8 +156,8 @@
 
 聊天页已由 KAV 改为普通 View，调用 `useKeyboardInsets(true)`：
 
-- Android 用键盘事件高度；展开时底部间距为键盘高度，收起恢复 `bottomInset`（76）。不要减安卓底部安全区。
-- iOS 用 `screen.height - keyboard.screenY`；底部间距 `max(bottomInset, keyboardInset - safeAreaInsets.bottom)`。
+- Android 用键盘事件高度；展开时底部间距为键盘高度，收起为 0（2026-11-27 移除底栏后聊天页不再传 `bottomInset`）。不要减安卓底部安全区。
+- iOS 用 `screen.height - keyboard.screenY`；底部间距 `max(0, keyboardInset - safeAreaInsets.bottom)`。
 - 监听 didShow/didHide，iOS 另监听 willShow/willChangeFrame；相同高度去重。
 - iOS 首次上移最多 180ms easeOut，完全收起最多 140ms easeOut，其余用系统动画。
 
@@ -203,7 +248,7 @@ iOS 登录页右上角齿轮是 Expo Go 悬浮按钮，不是应用 UI。恢复�
 - 用户气泡额外有铅笔按钮：点击后原文本回填输入框并聚焦，输入条上方显示「正在编辑消息，发送后将重新生成回复」+「取消」。发送时从被编辑的消息开始截断，重新流式生成回复；失败会回滚到编辑前的消息列表。
 - **限制**：服务端只有会话级删除和追加消息接口，没有单条消息编辑/删除接口，所以编辑只改本地会话；重新进入该对话时会按服务端记录恢复（表现为旧消息仍在、等于多了一轮）。如后续需要真正覆盖历史，必须先在服务端补消息编辑/删除接口。
 
-## 底部导航栏收起/展开动画（2026-11-12 新增）
+## 底部导航栏收起/展开动画（2026-11-12 新增；底栏已于 2026-11-27 P1 移除，本段只作实现记录）
 
 - 现象：模型目录等可滚动页面下滑时，底部导航栏从完整栏跳到小圆钮，中间没有过渡，看起来是「瞬切」。
 - 原因：收起状态原先靠切换 `minimized` 换整套样式（`styles.barMinimized`），再用 `LayoutAnimation` 包一层；`LayoutAnimation` 只做 opacity 属性动画，不插值宽度/圆角，且在动画期间 `bar.onLayout` 会把中间宽度写回状态，形成反馈抖动。
@@ -489,7 +534,7 @@ iOS 登录页右上角齿轮是 Expo Go 悬浮按钮，不是应用 UI。恢复�
 - **图标**：`任务` 从 `square.stack.3d.up`（与「模型目录」重复）换成 `checklist`，安卓映射 `checkbox-outline`（`src/components/AppIcon.tsx`）。
 - **安卓概览不动**：本来就是 `Group` / `Row`，但统计行用偏大的 `accessory` 数字（`overviewStatValue`），属安卓风格，保留。
 - **约定**：以后新增列表页 / 分组项一律用 `Group` / `Row`，不要再写「自己的白色卡片 + 自绘分隔线 + `›` 文本箭头」；`Row` 的箭头是 `SymbolView chevron.right`，用文本 `›` 会和账户页明显不一致。
-- **操作坑（写脚本的同事注意）**：iOS 底部五项标签栏在列表滚动后会自动收起，此时按底部坐标点不到，先滚回顶部再点；`Row` 的 accessibility 值形如 `hdr, 模型目录, Forward`（图标名 + 标题），按标题定位要用这个完整串或直接点坐标。
+- **操作坑（写脚本的同事注意）**：底部五项标签栏已于 2026-11-27 移除，切页用左上角菜单按钮打开左侧抽屉（点条目后自动关闭）；抽屉打开时先按返回键收抽屉，不要按底部坐标找旧标签。`Row` 的 accessibility 值形如 `hdr, 模型目录, Forward`（图标名 + 标题），按标题定位要用这个完整串或直接点坐标。
 
 ## 会话列表与网页端同步（2026-11-24）
 
